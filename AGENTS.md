@@ -319,11 +319,15 @@ only if no target exists.
 <!-- PROJECT: replace with this project's actual gates -->
 
 ```bash
-make fmt-check    # formatter drift
-make build        # default build
-make test         # unit + integration tests
-make lint         # static analysis (if configured)
+make fmt-check    # formatter drift (cargo fmt --all --check)
+cargo build       # default build
+cargo test        # unit + integration tests
+cargo clippy      # static analysis (lint)
 ```
+
+<!-- PROJECT: pre-commit hook checks formatter drift via `make fmt-check`
+     and runs no other hard blocks by default. Lint/statics are
+     available via `cargo clippy` but not enforced pre-commit. -->
 
 If any of those fail, the commit isn't ready. If you changed a CLI
 flag, grep the docs for the old flag name before opening the PR.

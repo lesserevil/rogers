@@ -56,3 +56,8 @@ vendor/
 .beads/*.db-journal
 .beads/*.db-wal
 .beads/*.db-shm
+
+
+# Added by cargo
+
+/target

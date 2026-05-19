@@ -54,19 +54,19 @@ init: ## Initialize repo: git init, ensure bd installed, bd init, link bd to git
 # so the documented workflow stays accurate.
 
 fmt: ## Format all source files in place.
-	@echo "fmt: not yet configured — edit Makefile" && exit 1
+	@cargo fmt --all
 
 fmt-check: ## Check formatting without modifying files.
-	@echo "fmt-check: not yet configured — edit Makefile" && exit 1
+	@cargo fmt --all --check
 
 build: ## Build the project.
-	@echo "build: not yet configured — edit Makefile" && exit 1
+	@cargo build --all
 
 test: ## Run the test suite.
-	@echo "test: not yet configured — edit Makefile" && exit 1
+	@cargo test --all
 
 lint: ## Run static analysis / linters.
-	@echo "lint: not yet configured — edit Makefile" && exit 1
+	@cargo clippy --all -- -D warnings
 
 clean: ## Remove build artifacts.
-	@echo "clean: not yet configured — edit Makefile" && exit 1
+	@cargo clean

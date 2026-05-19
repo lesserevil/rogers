@@ -30,7 +30,9 @@ fi
 # question worth answering, not an obstacle to dismiss; bypass with
 # judgment for pure refactors or bug fixes that don't shift design.
 #
-# PROJECT: replace `^src/` with the actual source-tree prefix(es).
+# PROJECT: this hook hard-blocks on formatter drift (cargo fmt --all --check).
+# No other checks run pre-commit by default. Lint/statics are gated
+# behind `cargo clippy` in CI, not this hook.
 #
 # staged=$(git diff --cached --name-only)
 # if echo "$staged" | grep -q '^src/' && ! echo "$staged" | grep -q '^plans/.*\.md$'; then
