@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Pre-commit hook.
+#
+# Install once per clone:
+#   git config core.hooksPath scripts/githooks
+#
+# Runs from the repo root. Hard checks block the commit; soft checks
+# warn but allow the commit through. Tune per project — see the
+# `PROJECT:` markers below.
+
+set -euo pipefail
+
+fail() { echo "pre-commit: error: $*" >&2; exit 1; }
+warn() { echo "pre-commit: warning: $*" >&2; }
+
+# ─── Hard checks (block commit on failure) ────────────────────────
+
+# Formatter drift. Uses the Makefile target so the rule matches what
+# `make fmt-check` does in CI.
+if [[ -f Makefile ]] && grep -q '^fmt-check:' Makefile; then
+    if ! make fmt-check >/dev/null 2>&1; then
+        fail "formatter drift — run 'make fmt' and stage the changes"
+    fi
+fi
+
+# ─── Soft checks (warn but allow) ─────────────────────────────────
+
+# Plan-doc sync — warn when staged code under a watched source tree
+# changes but no plans/*.md is also staged. Treat the warning as a
+# question worth answering, not an obstacle to dismiss; bypass with
+# judgment for pure refactors or bug fixes that don't shift design.
+#
+# PROJECT: replace `^src/` with the actual source-tree prefix(es).
+#
+# staged=$(git diff --cached --name-only)
+# if echo "$staged" | grep -q '^src/' && ! echo "$staged" | grep -q '^plans/.*\.md$'; then
+#     warn "code under src/ staged but no plans/*.md updated — confirm this is a non-design change"
+# fi
+
+# Plan-ref lint — every open bead carries a `Plan:` line (or an
+# exemption label). Opt-in; uncomment once the script is in place.
+#
+# if [[ -x scripts/bd-plan-ref-lint.sh ]]; then
+#     scripts/bd-plan-ref-lint.sh --quiet || \
+#         warn "open beads missing 'Plan:' reference — run scripts/bd-plan-ref-lint.sh for details"
+# fi
+
+exit 0

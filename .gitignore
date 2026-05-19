@@ -1,0 +1,58 @@
+# ─── OS ───────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Editors / IDEs ───────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.envrc
+
+# ─── Secrets / local config ───────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ─── Build artifacts (language-agnostic) ──────────────────────────
+build/
+dist/
+out/
+target/
+*.o
+*.a
+*.so
+*.dylib
+
+# ─── Python ───────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ─── Node ─────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ─── Go ───────────────────────────────────────────────────────────
+vendor/
+
+# ─── Logs ─────────────────────────────────────────────────────────
+*.log
+
+# ─── Beads ────────────────────────────────────────────────────────
+# Keep .beads/issues.jsonl (the canonical export) under version
+# control; ignore the local SQLite DB and its sidecar files.
+.beads/*.db
+.beads/*.db-journal
+.beads/*.db-wal
+.beads/*.db-shm
