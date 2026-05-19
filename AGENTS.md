@@ -395,14 +395,14 @@ want to diverge.
 3. **Pre-commit hook checks** — Fill in the `<!-- PROJECT: -->`
    placeholder under "Pre-commit hooks" with what the hook actually
    runs.
-4. **Canonical user-doc filenames** — Below `docs/`, list the files
-   that must stay in sync with code (e.g. `installation.md`,
-   `getting-started.md`, `troubleshooting.md`, per-CLI-binary
-   pages). The "Documentation must match code" section enumerates
-   *categories* of changes; this list enumerates the *files*.
-5. **Configuration surface** — If the project has a runtime config
-   mechanism (`.env`, `config.toml`, env-var conventions),
-   document where tunables live vs. what stays in code/workflow.
+4. **Canonical user-doc filenames** — Files in `docs/` that must stay in sync with code:
+   - `docs/cli.md` — Full CLI reference (flags, commands, exit codes)
+   - `docs/getting-started.md` — Installation, prerequisites, and first-run guide
+   - `docs/configuration.md` — Runtime config schema, env var overrides, auth
+5. **Configuration surface** — `config.yaml` at the repo root (see
+   `config.example.yaml`). Environment variable overrides supported via
+   `ROGERS_<UPPER_SNAKE_CASE_KEY>` pattern. Token stored in env var,
+   not in the YAML file.
 6. **Commit attribution trailer** — Only if this project has a real
    bot GitHub account. Fill in the trailer under "Commit
    attribution" and install a `prepare-commit-msg` hook. Otherwise

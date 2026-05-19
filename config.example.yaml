@@ -1,0 +1,25 @@
+# Rogers configuration
+# Copy this file to config.yaml and fill in your values.
+# Never commit config.yaml with real credentials.
+
+github:
+  owner: NVIDIA-Omniverse
+  repo: trickle
+  # token: Set via ROGERS_GITHUB_TOKEN environment variable or .netrc
+
+scheduler:
+  interval_minutes: 60  # Triage polling interval
+
+beads:
+  # remote: dolt remote URL (omit for local-only)
+  database: rogers      # dolt database name
+
+triage:
+  default_labels:
+    - triage
+  bot_labels:
+    - luditus
+    - circular
+  close_labels:
+    - stale
+  assignees: []
