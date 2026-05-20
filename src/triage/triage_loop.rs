@@ -18,6 +18,7 @@ use crate::feature_bug::will_not_do::{
 };
 use crate::feature_bug::{
     FeatureBugIssue, TransitionSummary, check_bug_completeness, check_feature_completeness,
+    execute_breakdown,
 };
 use serde::{Deserialize, Serialize};
 
@@ -44,6 +45,8 @@ pub struct TriageIssue {
     pub labels: Vec<String>,
     /// Issue state (open/closed)
     pub state: IssueState,
+    /// GitHub issue URL (for bead references)
+    pub url: Option<String>,
 }
 
 /// GitHub issue state.
@@ -83,8 +86,8 @@ pub enum TriageAction {
     AlreadyReadyForReview,
     /// Human has applied will-not-do - closure comment needed
     WillNotDo,
-    /// Issue has a human gate label (ready-for-work)
-    HumanGateDetected,
+    /// Human has applied ready-for-work - breakdown initiated (beads filed)
+    BreakdownComplete,
     /// Issue is closed or archived
     SkippedClosed,
     /// Issue is not a bug or feature
@@ -144,11 +147,19 @@ pub fn process_issue(issue: &TriageIssue) -> TriageResult {
     }
 
     if has_ready_for_work {
+        // Human has applied ready-for-work - trigger breakdown
+        // (epic + children if epic-scale, single epic otherwise)
+        let url = issue
+            .url
+            .as_deref()
+            .unwrap_or("https://github.com/org/repo");
+        let breakdown = execute_breakdown(&issue.body, &issue.title, issue.number, url, is_bug);
+
         return TriageResult {
             issue_number: issue.number,
-            processed: false,
-            action: TriageAction::HumanGateDetected,
-            comment_to_post: None,
+            processed: true,
+            action: TriageAction::BreakdownComplete,
+            comment_to_post: Some(breakdown.breakdown_comment),
             labels_to_add: Vec::new(),
             labels_to_remove: Vec::new(),
         };
@@ -235,6 +246,7 @@ mod tests {
             author: "testuser".to_string(),
             labels: labels.into_iter().map(String::from).collect(),
             state,
+            url: Some("https://github.com/org/repo/issues/1".to_string()),
         }
     }
 
@@ -423,14 +435,20 @@ Linux
     }
 
     #[test]
-    fn test_human_gate_approved_for_work() {
-        // When human applies ready-for-work (approved), triage detects but waits
-        let issue = create_test_issue(vec!["bug", "ready-for-work"], "Body", IssueState::Open);
+    fn test_ready_for_work_triggers_breakdown() {
+        // When human applies ready-for-work, triage processes breakdown in ONE run
+        let issue = create_test_issue(
+            vec!["bug", "ready-for-work"],
+            "Bug with ready-for-work applied",
+            IssueState::Open,
+        );
 
         let result = process_issue(&issue);
 
-        assert!(!result.processed);
-        assert_eq!(result.action, TriageAction::HumanGateDetected);
+        assert!(result.processed);
+        assert_eq!(result.action, TriageAction::BreakdownComplete);
+        assert!(result.comment_to_post.is_some());
+        assert!(result.comment_to_post.as_ref().unwrap().contains("Rodgers"));
     }
 
     #[test]
@@ -800,5 +818,127 @@ Linux
         // Second issue - will-not-do - closure
         assert_eq!(results[1].action, TriageAction::WillNotDo);
         assert!(results[1].comment_to_post.is_some());
+    }
+
+    // CRIT-4 tests - ready-for-work breakdown
+
+    #[test]
+    fn test_ready_for_work_detect_and_trigger_in_one_run() {
+        // Verify that ready-for-work detection AND breakdown trigger happen in ONE run
+        let issue = create_test_issue(
+            vec!["bug", "ready-for-work"],
+            "Acceptable bug",
+            IssueState::Open,
+        );
+
+        // Single call to process_issue should result in BreakdownComplete
+        let result = process_issue(&issue);
+
+        // All of these happen in ONE triage run:
+        // 1. ready-for-work detected
+        assert_eq!(result.action, TriageAction::BreakdownComplete);
+        // 2. Breakdown comment generated
+        assert!(result.comment_to_post.is_some());
+        // 3. Issue marked processed
+        assert!(result.processed);
+    }
+
+    #[test]
+    fn test_ready_for_work_comment_posted() {
+        // Breakdown comment should be posted on the GitHub issue
+        let issue = create_test_issue(
+            vec!["feature", "ready-for-work"],
+            "Feature request",
+            IssueState::Open,
+        );
+
+        let result = process_issue(&issue);
+
+        assert!(result.comment_to_post.is_some());
+        let comment = result.comment_to_post.as_ref().unwrap();
+        // Should reference Rodgers work tracking
+        assert!(comment.contains("Rodgers"));
+    }
+
+    #[test]
+    fn test_ready_for_work_with_epic_scale_issue() {
+        // Epic-scale issue (multi-area) triggers breakdown with child beads
+        let epic_body = r#"
+## Use Case
+Full-stack feature
+
+## Areas
+- CLI admin
+- API endpoints
+- Database
+
+## Acceptance Criteria
+- [ ] CLI works
+- [ ] API works
+- [ ] Data persists
+"#;
+
+        let issue = create_test_issue(
+            vec!["feature", "ready-for-work"],
+            epic_body,
+            IssueState::Open,
+        );
+
+        let result = process_issue(&issue);
+
+        assert!(result.processed);
+        assert_eq!(result.action, TriageAction::BreakdownComplete);
+        assert!(result.comment_to_post.is_some());
+    }
+
+    #[test]
+    fn test_batch_with_ready_for_work() {
+        // Test batch processing includes ready-for-work handling
+        let complete_bug = r#"
+## Behavior Observed
+Bug 1
+
+## Behavior Expected
+No bug
+
+## Reproduction Steps
+1. Step
+
+## Environment
+Linux
+"#;
+
+        let issues = vec![
+            create_test_issue(vec!["bug"], complete_bug, IssueState::Open),
+            create_test_issue(
+                vec!["bug", "ready-for-work"],
+                complete_bug,
+                IssueState::Open,
+            ),
+        ];
+
+        let results = process_issues_batch(&issues);
+
+        assert_eq!(results.len(), 2);
+        // First issue - complete bug - ready-for-review
+        assert_eq!(results[0].action, TriageAction::AppliedReadyForReview);
+        // Second issue - ready-for-work - breakdown
+        assert_eq!(results[1].action, TriageAction::BreakdownComplete);
+        assert!(results[1].comment_to_post.is_some());
+    }
+
+    #[test]
+    fn test_ready_for_work_feature_type() {
+        // Feature-type ready-for-work is processed correctly
+        let issue = create_test_issue(
+            vec!["feature", "ready-for-work"],
+            "Feature request body",
+            IssueState::Open,
+        );
+
+        let result = process_issue(&issue);
+
+        assert!(result.processed);
+        assert_eq!(result.action, TriageAction::BreakdownComplete);
     }
 }
