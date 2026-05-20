@@ -9,6 +9,7 @@
 
 pub mod categories;
 pub mod drift;
+pub mod fix;
 pub mod report;
 
 use serde::{Deserialize, Serialize};

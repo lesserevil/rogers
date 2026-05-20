@@ -7,6 +7,7 @@
 mod cli;
 mod doctor;
 mod error;
+mod github;
 mod labels;
 
 use anyhow::Result;
@@ -15,7 +16,7 @@ use cli::Commands;
 use doctor::report::{OutputFormat, ReportGenerator};
 use doctor::{
     ALL_CATEGORIES, CATEGORY_AUTH, CATEGORY_BEADS, CATEGORY_CONFIG, CATEGORY_DRIFT, CATEGORY_PLANS,
-    CATEGORY_REPO, CategoryResult, CategoryStatus, DoctorResult, categories, drift,
+    CATEGORY_REPO, CategoryResult, CategoryStatus, DoctorResult, categories, drift, fix,
 };
 use std::path::PathBuf;
 
@@ -37,7 +38,7 @@ async fn main() -> Result<()> {
         Commands::Doctor {
             verbose,
             only,
-            fix: _,
+            fix: fix_mode,
             json,
             config,
         } => {
@@ -51,7 +52,25 @@ async fn main() -> Result<()> {
                 OutputFormat::Text
             };
 
-            // Run doctor checks
+            // In fix mode, we need to be interactive
+            if fix_mode {
+                // Check for non-interactive environment
+                if !fix::is_interactive() {
+                    eprintln!(
+                        "Error: --fix requires interactive mode. \
+                         Set CI or RODGERS_NON_INTERACTIVE to skip."
+                    );
+                    std::process::exit(2);
+                }
+
+                // Run fix session
+                let result = run_fix_session(&config_path).await;
+
+                // Exit with appropriate code based on fix results
+                std::process::exit(result.exit_code());
+            }
+
+            // Run doctor checks (no fix mode)
             let result = run_doctor_checks(&config_path, &only, verbose).await;
 
             // Generate and print report
@@ -281,6 +300,155 @@ async fn run_doctor_checks(
     result.is_healthy = result.all_categories_passed() && !result.has_drift();
 
     result
+}
+
+/// Result of a fix session
+struct FixSessionResult {
+    /// Total drift events processed
+    total_events: usize,
+    /// Fixes that were applied
+    applied: usize,
+    /// Fixes that were skipped
+    skipped: usize,
+    /// Fixes that failed
+    failed: usize,
+    /// Whether user cancelled the session
+    cancelled: bool,
+}
+
+impl FixSessionResult {
+    /// Exit code based on fix results
+    fn exit_code(&self) -> i32 {
+        if self.cancelled {
+            // User cancelled - partial results
+            1
+        } else if self.failed > 0 {
+            // Some fixes failed
+            1
+        } else if self.applied > 0 && self.skipped == 0 && self.total_events > 0 {
+            // All fixes applied successfully
+            0
+        } else {
+            // No drift or all skipped - healthy
+            0
+        }
+    }
+}
+
+/// Run interactive fix session for drift events
+///
+/// Presents each drift event with options and prompts for confirmation
+/// before applying fixes via the GitHub API.
+async fn run_fix_session(config_path: &PathBuf) -> FixSessionResult {
+    // Load configuration
+    let config = match load_config(config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error: Failed to load config from {:?}: {}", config_path, e);
+            return FixSessionResult {
+                total_events: 0,
+                applied: 0,
+                skipped: 0,
+                failed: 0,
+                cancelled: true,
+            };
+        }
+    };
+
+    let owner = &config.github.owner;
+    let repo = &config.github.repo;
+    let token = config.github.token.as_deref().unwrap_or("");
+    let api_url = config.github.api_url.as_deref();
+
+    // Validate required config
+    if owner.is_empty() || repo.is_empty() || token.is_empty() {
+        eprintln!("Error: --fix requires github.owner, github.repo, and github.token in config");
+        return FixSessionResult {
+            total_events: 0,
+            applied: 0,
+            skipped: 0,
+            failed: 0,
+            cancelled: true,
+        };
+    }
+
+    // Get drift events first (run drift check)
+    let drift_result = match drift::check_drift(owner, repo, token, api_url, true).await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Error: Failed to run drift check: {}", e);
+            return FixSessionResult {
+                total_events: 0,
+                applied: 0,
+                skipped: 0,
+                failed: 0,
+                cancelled: true,
+            };
+        }
+    };
+
+    let events = drift_result.drift_events;
+
+    if events.is_empty() {
+        println!("No drift detected. Rodgers is healthy!");
+        return FixSessionResult {
+            total_events: 0,
+            applied: 0,
+            skipped: 0,
+            failed: 0,
+            cancelled: false,
+        };
+    }
+
+    println!("Found {} drift events to address.\n", events.len());
+    println!("Starting interactive fix session...");
+    println!("For each event, choose (y)es to apply first option, or enter to skip");
+    println!("Press Ctrl+C at any time to cancel.\n");
+
+    // Create fix session
+    let mut session = fix::FixSession::new(
+        owner.clone(),
+        repo.clone(),
+        token.to_string(),
+        config.github.api_url,
+    );
+
+    let mut results: Vec<fix::FixResult> = Vec::new();
+    let mut cancelled = false;
+
+    // Process each event
+    for event in &events {
+        let result = session.fix_event(event).await;
+        results.push(result);
+
+        // Check if user cancelled
+        if results
+            .last()
+            .map(|r| r.action == "user_cancelled")
+            .unwrap_or(false)
+        {
+            cancelled = true;
+            break;
+        }
+    }
+
+    // Summarize results
+    let summary = fix::summarize_results(&results);
+    println!("\n{}", summary);
+
+    // Count results
+    let total = results.len();
+    let applied = results.iter().filter(|r| r.applied).count();
+    let skipped = results.iter().filter(|r| r.action == "skipped").count();
+    let failed = results.iter().filter(|r| r.error.is_some()).count();
+
+    FixSessionResult {
+        total_events: total,
+        applied,
+        skipped,
+        failed,
+        cancelled,
+    }
 }
 
 #[cfg(test)]
