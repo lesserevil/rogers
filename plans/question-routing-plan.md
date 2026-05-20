@@ -107,7 +107,17 @@ The human or agent working the `chore` bead (metadata: `rodgers:type=docs`) upda
 
 ### Step 5: Sync Bead to GitHub Issue
 
-When the `chore` bead (metadata: `rodgers:type=docs`) is closed, Rodgers verifies that the GitHub issue has a comment linking to the new documentation. If the comment is missing, Rodgers posts the link.
+**Timing:** Passive, checked on every triage run. Rodgers does not verify synchronously when the bead closes — it verifies on the next scheduled run.
+
+**Verification:** When Rodgers detects a `chore` bead (`rodgers:type=docs`) in `closed` status, it checks the linked GitHub issue for any comment that contains a link to the documentation file added by the chore bead. A comment is considered valid if it contains a URL matching the doc file path referenced in the bead's acceptance criteria.
+
+**If a valid link comment is found:** No action. Rodgers closes the loop for this bead+issue pair.
+
+**If the link comment is missing:** Rodgers posts the documentation link as a comment on the GitHub issue, closes the issue if still open, and logs the sync as complete.
+
+**If the issue is already closed:** Rodgers still posts the link comment — GitHub allows comments on closed issues. This ensures the requestor gets the answer regardless.
+
+**Verification failure:** If Rodgers cannot read the issue comments (GitHub API error), it logs the failure, retries on the next triage run. It does not block or alert on transient read failures.
 
 ---
 
@@ -152,6 +162,6 @@ flowchart TD
 - [ ] CRIT-1: When a `question` issue exists and docs exist that answer it, Rodgers posts a comment within one triage run with the correct doc link
 - [ ] CRIT-2: When a `question` issue exists and no docs answer it, Rodgers searches the source code if the question is about implementation details before filing a doc-gap bead
 - [ ] CRIT-3: When Rodgers finds an answer in the source code, it posts a plain-language explanation citing the relevant file, function, and line numbers, then closes the issue if fully answered
-- [ ] CRIT-4: When a `chore` bead (`rodgers:type=docs`) is closed, Rodgers verifies the GitHub issue has a documentation link and closes or updates the issue accordingly
+- [ ] CRIT-4: When a `chore` bead (`rodgers:type=docs`) is closed, Rodgers verifies the GitHub issue has a documentation link comment; if the link is missing, Rodgers posts it within one triage run; if the issue is already closed, Rodgers posts the link comment anyway; on GitHub API read failure, Rodgers retries on the next triage run without alerting
 - [ ] CRIT-5: Rodgers never closes a question issue without either answering it or filing a `chore` bead (`rodgers:type=docs`)
 - [ ] CRIT-6: Rodgers never routes a non-question issue through this workflow
