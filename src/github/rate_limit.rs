@@ -3,10 +3,10 @@
 //! This module implements rate limit detection, warning generation,
 //! and automatic retry with exponential backoff.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use crate::github::models::RateLimitResponse;
 use crate::error::{Result, RogersError};
+use crate::github::models::RateLimitResponse;
 
 /// Default warning threshold for remaining API calls.
 pub const DEFAULT_WARNING_THRESHOLD: i32 = 100;
@@ -268,11 +268,9 @@ pub async fn execute_with_rate_limit<T>(
         }
     }
 
-    Err(last_error.unwrap_or_else(|| {
-        RogersError::GitHubStatus {
-            code: 429,
-            message: "Max retries exceeded due to rate limiting".to_string(),
-        }
+    Err(last_error.unwrap_or_else(|| RogersError::GitHubStatus {
+        code: 429,
+        message: "Max retries exceeded due to rate limiting".to_string(),
     }))
 }
 
@@ -304,6 +302,7 @@ pub fn is_not_found_error(error: &RogersError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::github::models::{RateLimitResource, RateLimitResponse, Resources};
 
     #[test]
     fn test_new_handler() {

@@ -1,8 +1,8 @@
 //! Configuration validation logic for Rodgers.
 
 use crate::config::schema::{
-    apply_env_interpolation, interpolate_env_var, Config, PLACEHOLDER_TOKEN_PATTERNS,
-    rodgers_required_label_names,
+    apply_env_interpolation, interpolate_env_var, rodgers_required_label_names, Config,
+    PLACEHOLDER_TOKEN_PATTERNS,
 };
 use crate::error::{Result, RogersError};
 use std::path::Path;
@@ -78,7 +78,8 @@ fn validate_github_config(github: &crate::config::schema::GitHubConfig) -> Resul
     // Check repo
     if github.repo.trim().is_empty() {
         return Err(RogersError::Config(
-            "github.repo: required key missing or empty. Set the GitHub repository name.".to_string(),
+            "github.repo: required key missing or empty. Set the GitHub repository name."
+                .to_string(),
         ));
     }
 
@@ -216,7 +217,9 @@ fn validate_release_config(
         } else {
             for branch in branches {
                 if branch.trim().is_empty() {
-                    result.add_warning("release.active_branches: contains empty branch name".to_string());
+                    result.add_warning(
+                        "release.active_branches: contains empty branch name".to_string(),
+                    );
                 }
             }
         }
@@ -256,7 +259,9 @@ fn validate_rogation_config(
                 ));
             }
             if label.trim().is_empty() {
-                result.add_warning("rogation.labels_never_bot_managed: contains empty label name".to_string());
+                result.add_warning(
+                    "rogation.labels_never_bot_managed: contains empty label name".to_string(),
+                );
             }
         }
     }
@@ -273,7 +278,9 @@ fn validate_rogation_config(
     // Validate security_label
     if let Some(label) = &rogation.security_label {
         if label.trim().is_empty() {
-            result.add_warning("rogation.security_label: empty string. Using default 'security'.".to_string());
+            result.add_warning(
+                "rogation.security_label: empty string. Using default 'security'.".to_string(),
+            );
         }
     }
 
@@ -337,11 +344,7 @@ pub fn load_and_validate_config(path: &Path) -> Result<(Config, ValidationResult
             Some(loc) => format!("line {}, column {}", loc.line(), loc.column()),
             None => "unknown location".to_string(),
         };
-        RogersError::Config(format!(
-            "config.yaml: invalid YAML at {}. {}",
-            location,
-            e
-        ))
+        RogersError::Config(format!("config.yaml: invalid YAML at {}. {}", location, e))
     })?;
 
     // Apply environment variable interpolation BEFORE validation
@@ -392,7 +395,11 @@ mod tests {
     fn test_valid_config_passes() {
         let config = valid_config();
         let result = validate_config(&config);
-        assert!(result.is_ok(), "Valid config should pass: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Valid config should pass: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -501,7 +508,10 @@ mod tests {
         assert!(result.is_ok());
         let result = result.unwrap();
         assert!(result.has_warnings());
-        assert!(result.warnings.iter().any(|w| w.contains("llm.api_key") && w.contains("placeholder")));
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.contains("llm.api_key") && w.contains("placeholder")));
     }
 
     #[test]
@@ -515,7 +525,10 @@ mod tests {
         assert!(result.is_ok());
         let result = result.unwrap();
         assert!(result.has_warnings());
-        assert!(result.warnings.iter().any(|w| w.contains("release.active_branches") && w.contains("empty")));
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.contains("release.active_branches") && w.contains("empty")));
     }
 
     #[test]
@@ -529,14 +542,21 @@ mod tests {
         assert!(result.is_ok());
         let result = result.unwrap();
         assert!(result.has_warnings());
-        assert!(result.warnings.iter().any(|w| w.contains("labels_never_bot_managed") && w.contains("needs-information")));
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.contains("labels_never_bot_managed") && w.contains("needs-information")));
     }
 
     #[test]
     fn test_labels_never_bot_managed_with_multiple_required_labels_warning() {
         let mut config = valid_config();
         config.rogation = Some(RogationConfig {
-            labels_never_bot_managed: Some(vec!["bug".to_string(), "feature".to_string(), "ready-for-review".to_string()]),
+            labels_never_bot_managed: Some(vec![
+                "bug".to_string(),
+                "feature".to_string(),
+                "ready-for-review".to_string(),
+            ]),
             ..RogationConfig::default()
         });
         let result = validate_config(&config);
@@ -544,7 +564,11 @@ mod tests {
         let result = result.unwrap();
         assert!(result.has_warnings());
         // Should have warnings for each required label
-        let warning_count = result.warnings.iter().filter(|w| w.contains("labels_never_bot_managed")).count();
+        let warning_count = result
+            .warnings
+            .iter()
+            .filter(|w| w.contains("labels_never_bot_managed"))
+            .count();
         assert_eq!(warning_count, 3);
     }
 
@@ -581,21 +605,31 @@ mod tests {
         assert!(result.is_ok());
         let result = result.unwrap();
         assert!(result.has_warnings());
-        assert!(result.warnings.iter().any(|w| w.contains("log_level") && w.contains("verbose")));
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.contains("log_level") && w.contains("verbose")));
     }
 
     #[test]
     fn test_empty_label_in_default_labels_warning() {
         let mut config = valid_config();
         config.triage = Some(TriageConfig {
-            default_labels: Some(vec!["bug".to_string(), "".to_string(), "feature".to_string()]),
+            default_labels: Some(vec![
+                "bug".to_string(),
+                "".to_string(),
+                "feature".to_string(),
+            ]),
             ..TriageConfig::default()
         });
         let result = validate_config(&config);
         assert!(result.is_ok());
         let result = result.unwrap();
         assert!(result.has_warnings());
-        assert!(result.warnings.iter().any(|w| w.contains("default_labels") && w.contains("empty")));
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.contains("default_labels") && w.contains("empty")));
     }
 
     #[test]
@@ -609,7 +643,10 @@ mod tests {
         assert!(result.is_ok());
         let result = result.unwrap();
         assert!(result.has_warnings());
-        assert!(result.warnings.iter().any(|w| w.contains("active_branches") && w.contains("empty")));
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.contains("active_branches") && w.contains("empty")));
     }
 
     #[test]
@@ -620,7 +657,10 @@ mod tests {
         assert!(result.is_ok());
         let result = result.unwrap();
         assert!(result.has_warnings());
-        assert!(result.warnings.iter().any(|w| w.contains("base_url") && w.contains("not-a-url")));
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.contains("base_url") && w.contains("not-a-url")));
     }
 
     // === Schema tests ===
@@ -637,10 +677,11 @@ mod tests {
     }
 
     #[test]
-    fn test_scheduler_type_validation() { // scheduler.interval_minutes is correct type (u32)
+    fn test_scheduler_type_validation() {
+        // scheduler.interval_minutes is correct type (u32)
         let config = valid_config();
         assert!(config.scheduler.interval_minutes >= 1);
-        
+
         // Verify we can set values beyond int16 range to confirm u32
         let mut config = valid_config();
         config.scheduler.interval_minutes = 1000000;
@@ -691,14 +732,31 @@ mod tests {
     fn test_llm_defaults() {
         let default = LlmConfig::default();
         assert_eq!(default.provider, Some("openai".to_string()));
-        assert_eq!(default.base_url, Some("https://api.openai.com/v1".to_string()));
+        assert_eq!(
+            default.base_url,
+            Some("https://api.openai.com/v1".to_string())
+        );
     }
 
     #[test]
     fn test_triage_defaults() {
         let default = TriageConfig::default();
-        assert_eq!(default.default_labels, Some(vec!["bug".to_string(), "enhancement".to_string(), "question".to_string()]));
-        assert_eq!(default.close_labels, Some(vec!["wontfix".to_string(), "duplicate".to_string(), "not planned".to_string()]));
+        assert_eq!(
+            default.default_labels,
+            Some(vec![
+                "bug".to_string(),
+                "enhancement".to_string(),
+                "question".to_string()
+            ])
+        );
+        assert_eq!(
+            default.close_labels,
+            Some(vec![
+                "wontfix".to_string(),
+                "duplicate".to_string(),
+                "not planned".to_string()
+            ])
+        );
     }
 
     #[test]
@@ -861,12 +919,45 @@ rogation:
         assert_eq!(config.llm.model, "gpt-4o-mini");
 
         // Verify structure types
-        assert_eq!(config.triage.as_ref().unwrap().default_labels.as_ref().unwrap().len(), 2);
-        assert_eq!(config.release.as_ref().unwrap().active_branches.as_ref().unwrap().len(), 2);
-        assert_eq!(config.rogation.as_ref().unwrap().security_label.as_ref().unwrap(), "security-policy");
+        assert_eq!(
+            config
+                .triage
+                .as_ref()
+                .unwrap()
+                .default_labels
+                .as_ref()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            config
+                .release
+                .as_ref()
+                .unwrap()
+                .active_branches
+                .as_ref()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            config
+                .rogation
+                .as_ref()
+                .unwrap()
+                .security_label
+                .as_ref()
+                .unwrap(),
+            "security-policy"
+        );
 
         // Check no required field errors
-        assert!(!validation_result.has_warnings(), "Unexpected warnings: {:?}", validation_result.warnings);
+        assert!(
+            !validation_result.has_warnings(),
+            "Unexpected warnings: {:?}",
+            validation_result.warnings
+        );
 
         unsafe {
             std::env::remove_var("MY_TEST_TOKEN");
@@ -934,7 +1025,11 @@ llm:
         // This test documents current behavior - unknown keys are silently ignored.
         // Required fields are validated even with unknown keys present.
         let result = load_and_validate_config(&config_path);
-        assert!(result.is_ok(), "Config with unknown keys should still load: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Config with unknown keys should still load: {:?}",
+            result.err()
+        );
 
         unsafe {
             std::env::remove_var("MY_TEST_TOKEN");

@@ -153,9 +153,7 @@ pub mod bead_type {
     pub const TASK: &str = "task";
 
     /// Valid type values.
-    pub const VALID_TYPES: &[&str] = &[
-        EPIC, FEATURE, BUG, CHORE, SPIKE, DECISION, MILESTONE, TASK,
-    ];
+    pub const VALID_TYPES: &[&str] = &[EPIC, FEATURE, BUG, CHORE, SPIKE, DECISION, MILESTONE, TASK];
 
     /// Check if a type value is valid.
     pub fn is_valid(type_: &str) -> bool {

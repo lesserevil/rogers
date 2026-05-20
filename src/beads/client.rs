@@ -14,7 +14,6 @@
 
 use crate::error::{Result, RogersError};
 use std::collections::HashMap;
-use std::path::Path;
 use std::process::{Command, Stdio};
 
 /// Environment variable for the database path.
@@ -164,8 +163,12 @@ impl BeadsClient {
         // Parse JSON result from dolt
         let stdout = String::from_utf8_lossy(&output.stdout);
         tracing::debug!("Query result: {}", stdout);
-            serde_json::from_str(&stdout).map_err(|e| {
-                RogersError::Beads(format!("Failed to parse query result: {} - output: {}", e, stdout))
+        let result: Vec<HashMap<String, serde_json::Value>> = serde_json::from_str(&stdout)
+            .map_err(|e| {
+                RogersError::Beads(format!(
+                    "Failed to parse query result: {} - output: {}",
+                    e, stdout
+                ))
             })?;
 
         Ok(result)
@@ -210,9 +213,8 @@ impl BeadsClient {
     ///
     /// Returns an error if the insert fails.
     pub fn insert<T: serde::Serialize>(&self, table: &str, row: &T) -> Result<()> {
-        let row_json = serde_json::to_string(row).map_err(|e| {
-            RogersError::Beads(format!("Failed to serialize row: {}", e))
-        })?;
+        let row_json = serde_json::to_string(row)
+            .map_err(|e| RogersError::Beads(format!("Failed to serialize row: {}", e)))?;
 
         let sql = format!("INSERT INTO {} VALUES {}", table, row_json);
         self.execute(&sql)
