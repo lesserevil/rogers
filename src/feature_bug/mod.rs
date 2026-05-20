@@ -9,15 +9,321 @@
 //! - Transition to ready-for-review when complete
 //! - Application of needs-information when incomplete
 //! - Generating summary comments and acceptance criteria
+//!
+//! ## Standalone Bead Validation (CRIT-5)
+//!
+//! Every child bead is validated for standalone criteria per AGENTS.md §Beads must stand alone.
+//! Beads used for implementation MUST be standalone-ready before being filed.
 
 mod breakdown;
 mod completeness;
 pub mod will_not_do;
 
-pub use breakdown::{BreakdownResult, analyze_epic_scale, execute_breakdown};
+pub use breakdown::{
+    BeadValidationResult, BreakdownResult, StandaloneBead, StandaloneIssue, StandaloneValidation,
+    analyze_epic_scale, execute_breakdown, validate_beads_standalone,
+};
 pub use completeness::{
     CompletenessCheckResult, check_bug_completeness, check_feature_completeness,
 };
+
+// =============================================================================
+// Standalone Bead Validation (CRIT-5)
+// =============================================================================
+
+/// Validate that a bead description contains all 5 required standalone sections.
+///
+/// Required sections per AGENTS.md §Beads must stand alone:
+/// - WHAT TO DO: Concrete files, packages, functions, or commands
+/// - WHY: User-visible behavior, constraint, or design rule
+/// - HOW TO VERIFY: Test, command, or observable result
+/// - EDGE CASES: Non-obvious constraints a careful reader could miss
+/// - PROJECT-SPECIFIC TERMINOLOGY: Terms that only make sense in context
+pub fn validate_standalone_sections(description: &str) -> StandaloneSectionValidation {
+    let description_upper = description.to_uppercase();
+
+    let has_what = description_upper.contains("WHAT TO DO");
+    let has_why = description_upper.contains("WHY");
+    let has_how = description_upper.contains("HOW TO VERIFY");
+    let has_edge = description_upper.contains("EDGE CASES")
+        || description_upper.contains("EDGE CASES AND PITFALLS");
+    let has_terms = description_upper.contains("PROJECT-SPECIFIC TERMINOLOGY")
+        || description_upper.contains("TERMINOLOGY");
+
+    let missing_sections: Vec<String> = {
+        let mut v = Vec::new();
+        if !has_what {
+            v.push("WHAT TO DO".to_string());
+        }
+        if !has_why {
+            v.push("WHY".to_string());
+        }
+        if !has_how {
+            v.push("HOW TO VERIFY".to_string());
+        }
+        if !has_edge {
+            v.push("EDGE CASES".to_string());
+        }
+        if !has_terms {
+            v.push("TERMINOLOGY".to_string());
+        }
+        v
+    };
+
+    let all_present = missing_sections.is_empty();
+
+    StandaloneSectionValidation {
+        has_what,
+        has_why,
+        has_how,
+        has_edge,
+        has_terms,
+        missing_sections,
+        all_present,
+    }
+}
+
+/// Result of validating standalone sections in a bead description.
+#[derive(Debug, Clone, Default)]
+pub struct StandaloneSectionValidation {
+    /// Whether WHAT TO DO section is present
+    pub has_what: bool,
+    /// Whether WHY section is present
+    pub has_why: bool,
+    /// Whether HOW TO VERIFY section is present
+    pub has_how: bool,
+    /// Whether EDGE CASES section is present
+    pub has_edge: bool,
+    /// Whether TERMINOLOGY section is present
+    pub has_terms: bool,
+    /// List of missing section headers
+    pub missing_sections: Vec<String>,
+    /// Whether all sections are present
+    pub all_present: bool,
+}
+
+impl StandaloneSectionValidation {
+    /// Check if validation passed.
+    pub fn passed(&self) -> bool {
+        self.all_present
+    }
+}
+
+/// Validate that a bead description has no compound "...and then..." patterns.
+///
+/// Compound beads should be split into separate beads per the breakdown rules.
+pub fn validate_no_compound_pattern(description: &str) -> CompoundPatternValidation {
+    let desc_lower = description.to_lowercase();
+
+    // Check for various compound patterns
+    let has_and_then = desc_lower.contains("and then");
+    let has_sequential_first_second =
+        desc_lower.contains("first ") && desc_lower.contains("second ");
+    // More strict - require explicit "step N:" pattern
+    let has_step_pattern = (desc_lower.contains("step 1:")
+        || desc_lower.contains("step one:")
+        || desc_lower.contains("\nstep 1 "))
+        && (desc_lower.contains("step 2:")
+            || desc_lower.contains("step two:")
+            || desc_lower.contains("\nstep 2 ")
+            || desc_lower.contains("step three:"));
+
+    let has_compound = has_and_then || has_sequential_first_second || has_step_pattern;
+
+    let suggestion = if has_compound {
+        "Split this bead into separate beads. Each bead should cover one logical unit of work."
+            .to_string()
+    } else {
+        String::new()
+    };
+
+    let patterns_found: Vec<String> = {
+        let mut v = Vec::new();
+        if has_and_then {
+            v.push("'and then' sequential pattern".to_string());
+        }
+        if has_sequential_first_second {
+            v.push("'first/second' sequential pattern".to_string());
+        }
+        if has_step_pattern {
+            v.push("'step 1:/step 2:' sequential pattern".to_string());
+        }
+        v
+    };
+
+    CompoundPatternValidation {
+        has_compound_pattern: has_compound,
+        patterns_found,
+        suggestion,
+    }
+}
+
+/// Result of validating for compound patterns.
+#[derive(Debug, Clone, Default)]
+pub struct CompoundPatternValidation {
+    /// Whether a compound pattern was detected
+    pub has_compound_pattern: bool,
+    /// List of compound patterns found
+    pub patterns_found: Vec<String>,
+    /// Suggestion for fixing issues
+    pub suggestion: String,
+}
+
+impl CompoundPatternValidation {
+    /// Check if validation passed (no compound patterns).
+    pub fn passed(&self) -> bool {
+        !self.has_compound_pattern
+    }
+}
+
+/// Validate that a bead touches a single codebase part.
+///
+/// A compound bead touching multiple areas (CLI + API + DB) should be split.
+pub fn validate_single_codebase_part(description: &str) -> SinglePartValidation {
+    let desc_lower = description.to_lowercase();
+
+    let mut areas = Vec::new();
+
+    if desc_lower.contains("cli")
+        || desc_lower.contains("command-line")
+        || desc_lower.contains("command-")
+    {
+        areas.push("CLI".to_string());
+    }
+    if desc_lower.contains("api") || desc_lower.contains("rest") || desc_lower.contains("endpoint")
+    {
+        areas.push("API".to_string());
+    }
+    if desc_lower.contains("database")
+        || desc_lower.contains("db ")
+        || desc_lower.contains("storage")
+        || desc_lower.contains("persist")
+    {
+        areas.push("Database".to_string());
+    }
+    if desc_lower.contains("ui")
+        || desc_lower.contains("dashboard")
+        || desc_lower.contains("frontend")
+        || desc_lower.contains("interface")
+    {
+        areas.push("UI".to_string());
+    }
+    if desc_lower.contains("config") || desc_lower.contains("settings") {
+        areas.push("Config".to_string());
+    }
+    if desc_lower.contains("auth")
+        || desc_lower.contains("permission")
+        || desc_lower.contains("login")
+    {
+        areas.push("Auth".to_string());
+    }
+
+    let area_count = areas.len();
+    let is_single = area_count <= 1
+        || (area_count == 2
+            && ((areas.contains(&"API".to_string()) || areas.contains(&"REST".to_string()))
+                && (areas.contains(&"Database".to_string())
+                    || areas.contains(&"storage".to_string())
+                    || areas.contains(&"persist".to_string()))));
+
+    let suggestion = if !is_single && area_count > 1 {
+        "Split into separate beads per codebase area (CLI, API, DB, UI, Config, Auth)".to_string()
+    } else {
+        String::new()
+    };
+
+    SinglePartValidation {
+        areas_detected: areas,
+        is_single_codebase_part: is_single,
+        suggestion,
+    }
+}
+
+/// Result of validating for single codebase part.
+#[derive(Debug, Clone, Default)]
+pub struct SinglePartValidation {
+    /// Distinct codebase areas detected
+    pub areas_detected: Vec<String>,
+    /// Whether only one area is present
+    pub is_single_codebase_part: bool,
+    /// Suggestion for fixing issues
+    pub suggestion: String,
+}
+
+impl SinglePartValidation {
+    /// Check if validation passed.
+    pub fn passed(&self) -> bool {
+        self.is_single_codebase_part
+    }
+}
+
+/// Full standalone validation for a bead description.
+///
+/// Runs all standalone checks and returns combined results.
+pub fn validate_bead_standalone(description: &str) -> FullStandaloneValidation {
+    let sections = validate_standalone_sections(description);
+    let compound = validate_no_compound_pattern(description);
+    let single_part = validate_single_codebase_part(description);
+
+    let all_passed = sections.passed() && compound.passed() && single_part.passed();
+
+    FullStandaloneValidation {
+        sections,
+        compound,
+        single_part,
+        all_passed,
+    }
+}
+
+/// Combined results of all standalone validations.
+#[derive(Debug, Clone, Default)]
+pub struct FullStandaloneValidation {
+    /// Section presence validation
+    pub sections: StandaloneSectionValidation,
+    /// Compound pattern validation
+    pub compound: CompoundPatternValidation,
+    /// Single codebase part validation
+    pub single_part: SinglePartValidation,
+    /// Whether all checks passed
+    pub all_passed: bool,
+}
+
+impl FullStandaloneValidation {
+    /// Check if validation passed.
+    pub fn passed(&self) -> bool {
+        self.all_passed
+    }
+
+    /// Get human-readable summary of all issues.
+    pub fn issue_summary(&self) -> Vec<String> {
+        let mut issues = Vec::new();
+
+        if !self.sections.passed() {
+            issues.push(format!(
+                "Missing sections: {}",
+                self.sections.missing_sections.join(", ")
+            ));
+        }
+
+        if !self.compound.passed() {
+            issues.push(format!(
+                "Compound pattern detected: {}",
+                self.compound.patterns_found.join(", ")
+            ));
+            issues.push(self.compound.suggestion.clone());
+        }
+
+        if !self.single_part.passed() {
+            issues.push(format!(
+                "Multiple codebase areas: {}",
+                self.single_part.areas_detected.join(", ")
+            ));
+            issues.push(self.single_part.suggestion.clone());
+        }
+
+        issues
+    }
+}
 
 use serde::{Deserialize, Serialize};
 
@@ -433,5 +739,238 @@ Something right.
         // Both operations should complete in this single run
         assert!(result.is_complete);
         assert!(transition.applied_ready_for_review);
+    }
+
+    // =============================================================================
+    // Standalone Bead Validation Tests (CRIT-5)
+    // =============================================================================
+
+    #[test]
+    fn test_validate_standalone_sections_all_present() {
+        let desc = r#"
+WHAT TO DO
+Create the user API endpoint.
+
+WHY
+Users need to view their profiles.
+
+HOW TO VERIFY
+curl /api/users/1 returns JSON.
+
+EDGE CASES AND PITFALLS
+Handle missing user gracefully.
+
+PROJECT-SPECIFIC TERMINOLOGY
+None.
+"#;
+        let result = validate_standalone_sections(desc);
+        assert!(result.passed());
+        assert!(result.all_present);
+        assert!(result.missing_sections.is_empty());
+    }
+
+    #[test]
+    fn test_validate_standalone_sections_missing_one() {
+        let desc = r#"
+WHAT TO DO
+Create the API.
+
+WHY
+Users need this.
+
+HOW TO VERIFY
+curl works.
+
+PROJECT-SPECIFIC TERMINOLOGY
+None.
+"#;
+        let result = validate_standalone_sections(desc);
+        assert!(!result.passed());
+        assert!(!result.all_present);
+        assert!(result.missing_sections.contains(&"EDGE CASES".to_string()));
+    }
+
+    #[test]
+    fn test_validate_standalone_sections_case_insensitive() {
+        let desc = r#"
+what to do
+Create this.
+
+why
+Because.
+
+how to verify
+Run test.
+
+edge cases
+None.
+
+terminology
+None.
+"#;
+        let result = validate_standalone_sections(desc);
+        // Should detect uppercase headers even when description uses different case
+        assert!(result.has_what);
+    }
+
+    #[test]
+    fn test_validate_no_compound_pattern_clean() {
+        let desc = "Implement the database schema for user storage.";
+        let result = validate_no_compound_pattern(desc);
+        assert!(result.passed());
+        assert!(!result.has_compound_pattern);
+    }
+
+    #[test]
+    fn test_validate_no_compound_pattern_and_then() {
+        let desc = "First, create the database schema, and then add the API endpoints.";
+        let result = validate_no_compound_pattern(desc);
+        assert!(!result.passed());
+        assert!(result.has_compound_pattern);
+        assert!(
+            result
+                .patterns_found
+                .contains(&"'and then' sequential pattern".to_string())
+        );
+    }
+
+    #[test]
+    fn test_validate_no_compound_pattern_first_second() {
+        let desc = "First implement auth, second add the UI.";
+        let result = validate_no_compound_pattern(desc);
+        assert!(!result.passed());
+        assert!(result.has_compound_pattern);
+    }
+
+    #[test]
+    fn test_validate_no_compound_pattern_step_numbers() {
+        let desc = "Step 1: Create schema. Step 2: Add data.";
+        let result = validate_no_compound_pattern(desc);
+        assert!(!result.passed());
+        assert!(result.has_compound_pattern);
+    }
+
+    #[test]
+    fn test_validate_no_compound_pattern_numbered_list_ok() {
+        // Numbered list items without "step" prefix should NOT be considered compound
+        let desc = "1. First do this.\n2. Then do that.";
+        let result = validate_no_compound_pattern(desc);
+        assert!(result.passed());
+        assert!(!result.has_compound_pattern);
+    }
+
+    #[test]
+    fn test_validate_single_codebase_part_api_only() {
+        let desc = "Implement the user API endpoint.";
+        let result = validate_single_codebase_part(desc);
+        assert!(result.passed());
+        assert!(result.is_single_codebase_part);
+        assert_eq!(result.areas_detected, vec!["API"]);
+    }
+
+    #[test]
+    fn test_validate_single_codebase_part_multiple_areas() {
+        let desc = "Update both the CLI commands and the API endpoints and the database.";
+        let result = validate_single_codebase_part(desc);
+        assert!(!result.passed());
+        assert!(!result.is_single_codebase_part);
+        assert!(result.areas_detected.contains(&"CLI".to_string()));
+        assert!(result.areas_detected.contains(&"API".to_string()));
+        assert!(result.areas_detected.contains(&"Database".to_string()));
+    }
+
+    #[test]
+    fn test_validate_single_codebase_part_api_and_db_allowed() {
+        // API + Database are closely related, should be allowed
+        let desc = "API handler that queries the database.";
+        let result = validate_single_codebase_part(desc);
+        assert!(result.passed());
+    }
+
+    #[test]
+    fn test_validate_bead_standalone_full_pass() {
+        let desc = r#"WHAT TO DO
+Implement the user profile API endpoint in src/api/users.rs.
+
+WHY
+Users need to view and update their profiles via REST API.
+
+HOW TO VERIFY
+Run `cargo test` - all tests pass. Curl the endpoint to verify it returns JSON with user data.
+
+EDGE CASES AND PITFALLS
+- Handle missing user (404 response)
+- Validate input (400 for invalid data)
+- Rate limit requests (429 when exceeded)
+
+PROJECT-SPECIFIC TERMINOLOGY
+**REST API endpoint**: HTTP resource URL that accepts JSON requests.
+"#;
+        let result = validate_bead_standalone(desc);
+        assert!(result.passed());
+    }
+
+    #[test]
+    fn test_validate_bead_standalone_missing_sections() {
+        let desc = r#"WHAT TO DO
+Implement API endpoint.
+
+No WHY section here.
+"#;
+        let result = validate_bead_standalone(desc);
+        assert!(!result.passed());
+        assert!(!result.sections.passed());
+    }
+
+    #[test]
+    fn test_validate_bead_standalone_compound_pattern() {
+        let desc = r#"WHAT TO DO
+Update CLI, and then add API support, and then fix DB.
+
+WHY
+Need all features.
+
+HOW TO VERIFY
+Test each part.
+
+EDGE CASES
+Handle errors.
+
+TERMINOLOGY
+CLI: command-line interface.
+"#;
+        let result = validate_bead_standalone(desc);
+        assert!(!result.passed());
+        assert!(!result.compound.passed());
+    }
+
+    #[test]
+    fn test_validate_bead_standalone_multiple_areas() {
+        let desc = r#"WHAT TO DO
+CLI and UI and API and Database all need updates.
+
+WHY
+Multi-area feature.
+
+HOW TO VERIFY
+Test each area.
+
+EDGE CASES
+Handle all.
+
+TERMINOLOGY
+None.
+"#;
+        let result = validate_bead_standalone(desc);
+        assert!(!result.passed());
+        assert!(!result.single_part.passed());
+    }
+
+    #[test]
+    fn test_full_validation_issue_summary() {
+        let desc = r#"Missing sections and has compound patterns."#;
+        let result = validate_bead_standalone(desc);
+        let summary = result.issue_summary();
+        assert!(!summary.is_empty());
     }
 }
