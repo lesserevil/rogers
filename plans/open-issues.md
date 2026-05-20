@@ -7,19 +7,9 @@
 3. ✅ LLM tool signatures absent — FIXED: LLM Tool Registry with 14 tools in architecture-plan.md
 4. ✅ No backport approval Discussion AC — FIXED: CRIT-7 through CRIT-10 added to backport-plan.md
 
-5. **ISSUE 5 — Epic-scale assessment bead has no procedure**
-   - triage-workflow-plan.md mentions filing an "assessment bead" for epic-scale work
-   - No creation procedure, no AC, no next-steps after assessment
-   - Decision pending: A (stub+defer) | B (LLM-driven auto-breakdown) | C (human fills bead)
-
-6. **ISSUE 6 — IN_PROGRESS state has no exit criteria**
-   - State diagram shows `[*]` looping to itself with no termination condition
-   - "When all child beads are closed AND issue is resolved" — trigger not defined
-   - No recovery procedure for stalled in-progress issues
-
-7. **ISSUE 7 — Step 5 sync verification is described but not defined**
-   - question-routing-plan.md §Step 5: "Rodgers verifies doc-link comment was posted when chore bead closes"
-   - No procedure, no time window, no recovery if comment never posted despite bead closing
+5. ✅ **ISSUE 5 — Epic-scale assessment bead has no procedure** — FIXED: Full procedure added to triage-workflow-plan.md (epic detection at READY-FOR-WORK, LLM-driven breakdown, children deferred with human review gate, CRIT-9/CRIT-10 added)
+6. ✅ **ISSUE 6 — IN_PROGRESS state has no exit criteria** — FIXED: Passive/next-poll mechanism made explicit in triage-workflow-plan.md; stalled recovery with one-time alert; CRIT-11 added
+7. ✅ **ISSUE 7 — Step 5 sync verification is described but not defined** — FIXED: Full procedure added to question-routing-plan.md (timing, verification method, if-missing path, already-closed path, API error retry path); CRIT-4 updated
 
 ## HIGH
 
