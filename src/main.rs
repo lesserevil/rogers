@@ -10,6 +10,7 @@ mod error;
 mod github;
 mod labels;
 mod llm;
+mod question_router;
 mod triage;
 
 use cli::{Cli, Commands};

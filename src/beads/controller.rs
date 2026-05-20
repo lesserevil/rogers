@@ -25,9 +25,7 @@ impl BeadController {
 
     /// Create a new bead controller from configuration.
     pub fn from_client(db: BeadsClient) -> Self {
-        Self {
-            db: Arc::new(db),
-        }
+        Self { db: Arc::new(db) }
     }
 
     /// File an epic bead for a GitHub issue.
@@ -39,8 +37,11 @@ impl BeadController {
             id: nanoid::simple(),
             title: request.title,
             description: request.description,
-            bead_type: request.bead_type.unwrap_or_else(|| bead_type::EPIC.to_string()),
-            status: status::CLOSED, // Deferred - closed initially
+            bead_type: request
+                .bead_type
+                .unwrap_or_else(|| bead_type::EPIC.to_string()),
+            // Create the epic with status "deferred" (closed initially since it's deferred work)
+            status: status::CLOSED.to_string(), // Deferred - closed initially
             github_issue_url: request.github_issue_url,
             github_issue_state: Some("open".to_string()),
             rodgers_type: request.rodgers_type,
@@ -75,8 +76,11 @@ impl BeadController {
                 parent_id: parent_id.to_string(),
                 title: request.title,
                 description: request.description,
-                bead_type: request.bead_type.unwrap_or_else(|| bead_type::TASK.to_string()),
-                status: status::CLOSED, // Deferred - closed initially
+                bead_type: request
+                    .bead_type
+                    .unwrap_or_else(|| bead_type::TASK.to_string()),
+                // Create the epic with status "deferred" (closed initially since it's deferred work)
+                status: status::CLOSED.to_string(), // Deferred - closed initially
                 github_issue_url: None,
                 rodgers_type: request.rodgers_type,
                 rodgers_labels: request.rodgers_labels,
@@ -295,40 +299,49 @@ impl BeadController {
             sql_escape(&child.id),
             sql_escape(&child.parent_id),
             sql_escape(&child.title),
-            child.description
+            child
+                .description
                 .as_ref()
                 .map(|s| format!("'{}'", sql_escape(s)))
                 .unwrap_or_else(|| "NULL".to_string()),
             sql_escape(&child.bead_type),
             sql_escape(&child.status),
-            child.github_issue_url
+            child
+                .github_issue_url
                 .as_ref()
                 .map(|s| format!("'{}'", sql_escape(s)))
                 .unwrap_or_else(|| "NULL".to_string()),
-            child.rodgers_type
+            child
+                .rodgers_type
                 .as_ref()
                 .map(|s| format!("'{}'", sql_escape(s)))
                 .unwrap_or_else(|| "NULL".to_string()),
-            child.rodgers_labels
+            child
+                .rodgers_labels
                 .as_ref()
                 .map(|s| format!("'{}'", sql_escape(s)))
                 .unwrap_or_else(|| "NULL".to_string()),
-            child.rodgers_parent
+            child
+                .rodgers_parent
                 .as_ref()
                 .map(|s| format!("'{}'", sql_escape(s)))
                 .unwrap_or_else(|| "NULL".to_string()),
-            child.discovered_from
+            child
+                .discovered_from
                 .as_ref()
                 .map(|s| format!("'{}'", sql_escape(s)))
                 .unwrap_or_else(|| "NULL".to_string()),
-            child.acceptance_criteria
+            child
+                .acceptance_criteria
                 .as_ref()
                 .map(|s| format!("'{}'", sql_escape(s)))
                 .unwrap_or_else(|| "NULL".to_string()),
-            child.priority
+            child
+                .priority
                 .map(|p| p.to_string())
                 .unwrap_or_else(|| "NULL".to_string()),
-            child.assignee
+            child
+                .assignee
                 .as_ref()
                 .map(|s| format!("'{}'", sql_escape(s)))
                 .unwrap_or_else(|| "NULL".to_string()),
@@ -340,13 +353,15 @@ impl BeadController {
     }
 
     /// Convert a database row to an Epic.
-    fn row_to_epic(&self, row: &serde_json::Value) -> Result<Epic> {
+    fn row_to_epic(
+        &self,
+        row: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<Epic> {
         let get_str = |key: &str| -> Option<String> {
             row.get(key).and_then(|v| v.as_str()).map(String::from)
         };
-        let get_i64 = |key: &str| -> Option<i32> {
-            row.get(key).and_then(|v| v.as_i64()).map(|n| n as i32)
-        };
+        let get_i64 =
+            |key: &str| -> Option<i32> { row.get(key).and_then(|v| v.as_i64()).map(|n| n as i32) };
         let get_datetime = |key: &str| -> chrono::DateTime<Utc> {
             row.get(key)
                 .and_then(|v| v.as_str())
@@ -376,13 +391,15 @@ impl BeadController {
     }
 
     /// Convert a database row to a Child.
-    fn row_to_child(&self, row: &serde_json::Value) -> Result<Child> {
+    fn row_to_child(
+        &self,
+        row: &std::collections::HashMap<String, serde_json::Value>,
+    ) -> Result<Child> {
         let get_str = |key: &str| -> Option<String> {
             row.get(key).and_then(|v| v.as_str()).map(String::from)
         };
-        let get_i64 = |key: &str| -> Option<i32> {
-            row.get(key).and_then(|v| v.as_i64()).map(|n| n as i32)
-        };
+        let get_i64 =
+            |key: &str| -> Option<i32> { row.get(key).and_then(|v| v.as_i64()).map(|n| n as i32) };
         let get_datetime = |key: &str| -> chrono::DateTime<Utc> {
             row.get(key)
                 .and_then(|v| v.as_str())

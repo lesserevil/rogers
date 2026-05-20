@@ -11,9 +11,11 @@
 //! - **rodgers_state**: Key-value store for scheduler state and configuration
 
 pub mod client;
+pub mod controller;
 pub mod migration;
 pub mod schema;
 
 pub use client::BeadsClient;
+pub use controller::BeadController;
 pub use migration::{run_migrations, verify_schema};
 pub use schema::{Child, Epic, State, SCHEMA_VERSION};

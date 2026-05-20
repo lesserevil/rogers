@@ -502,6 +502,101 @@ Consider the project structure and how work could be parallelized."#,
     }
 }
 
+/// Question routing prompt for determining search scope.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionRoutingPrompt {
+    /// System prompt for the LLM.
+    pub system_prompt: String,
+    /// User prompt for question analysis.
+    pub user_prompt: String,
+}
+
+impl QuestionRoutingPrompt {
+    /// Create a question routing prompt.
+    pub fn for_routing(metadata: &IssueMetadata, domain_context: Option<&str>) -> Self {
+        let system_prompt = Self::routing_system_prompt();
+        let user_prompt = Self::routing_user_prompt(metadata, domain_context);
+
+        Self {
+            system_prompt,
+            user_prompt,
+        }
+    }
+
+    /// System prompt for question routing.
+    fn routing_system_prompt() -> String {
+        r#"You are Rodgers, determining how to route a GitHub question issue.
+
+QUESTION ROUTING RULES:
+- If this is not a genuine question (it's a bug report or feature request), indicate it should be re-labeled
+- If this is a genuine question, determine the best search scope:
+  - "docs" - answer is in user-facing documentation (package usage, configuration, workflow)
+  - "code" - answer requires looking at source code (how X works internally, implementation details)
+  - "both" - both docs and code might have relevant info
+  - "none" - question cannot be answered from available sources (file a doc gap)
+
+IMPLEMENTATION QUESTION INDICATORS:
+- Keywords: "how does", "what function", "what method", "which module", "internals", "implementation"
+- "under the hood", "source code", "can you walk me through", "flow of"
+- Asking about a specific function, class, module by name
+- Asking how a feature is implemented vs how to use it
+
+RESPONSE DRAFTING:
+- Be warm, patient, and genuine
+- Lead with gratitude before any redirect
+- Never sound dismissive
+
+OUTPUT FORMAT:
+Respond with valid JSON:
+- is_question: boolean (is this a genuine question?)
+- is_implementation_question: boolean (does this ask about code internals?)
+- search_scope: string (docs|code|both|none)
+- re_label_to: string (optional, if this should be re-labeled as bug/feature/etc.)
+- answer_context: string (what info would answer this question?)
+- confidence: number (0.0 to 1.0)"#
+            .to_string()
+    }
+
+    /// User prompt for question routing.
+    fn routing_user_prompt(metadata: &IssueMetadata, domain_context: Option<&str>) -> String {
+        let mut prompt = String::new();
+
+        if let Some(ctx) = domain_context {
+            prompt.push_str(&format!("## Project Context\n{}\n\n", ctx));
+        }
+
+        prompt.push_str("## Question Issue\n");
+        prompt.push_str(&format!("- Number: #{}\n", metadata.number));
+        prompt.push_str(&format!("- Title: {}\n", metadata.title));
+
+        if let Some(ref body) = metadata.body {
+            prompt.push_str("- Body:\n```\n");
+            prompt.push_str(body);
+            prompt.push_str("\n```\n");
+        }
+
+        prompt.push_str(&format!(
+            "- Author: @{} ({})\n",
+            metadata.author,
+            metadata.author_type.as_deref().unwrap_or("User")
+        ));
+
+        prompt.push_str(
+            r#"
+ANALYZE THIS QUESTION:
+1. Is this a genuine question (as opposed to a bug report or feature request)?
+2. Does this ask about implementation internals (how something works under the hood)?
+3. Should Rodgers search documentation, source code, or both?
+4. What specific information would answer this question?
+5. Should this be re-labeled to a different type?
+
+Respond with JSON only."#,
+        );
+
+        prompt
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -612,5 +707,32 @@ mod tests {
         assert_eq!(parsed.number, 123);
         assert_eq!(parsed.title, "Test Issue");
         assert_eq!(parsed.author, "testuser");
+    }
+
+    #[test]
+    fn test_question_routing_prompt() {
+        let metadata = create_test_metadata();
+        let prompt = QuestionRoutingPrompt::for_routing(&metadata, None);
+
+        assert!(prompt.system_prompt.contains("QUESTION ROUTING"));
+        assert!(prompt.user_prompt.contains("Question Issue"));
+        assert!(prompt.user_prompt.contains("123"));
+    }
+
+    #[test]
+    fn test_question_routing_prompt_with_impl_context() {
+        let metadata = IssueMetadata {
+            number: 789,
+            title: "How does the router work?".to_string(),
+            body: Some("I want to understand the implementation internals.".to_string()),
+            author: "devel".to_string(),
+            author_type: None,
+            labels: vec!["question".to_string()],
+            prior_comments: vec![],
+        };
+
+        let prompt = QuestionRoutingPrompt::for_routing(&metadata, None);
+        assert!(prompt.system_prompt.contains("implementation"));
+        assert!(prompt.user_prompt.contains("internals"));
     }
 }
