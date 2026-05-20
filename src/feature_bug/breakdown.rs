@@ -452,20 +452,45 @@ fn extract_ac_logical_units(body: &str) -> Vec<ChildBeadSpec> {
 ///
 /// This function:
 /// 1. Analyzes the issue for epic-scale indicators
-/// 2. Files the epic bead (deferred)
-/// 3. Files child beads (if epic-scale, all deferred)
-/// 4. Returns the breakdown result with comment to post
+/// 2. Extracts ALL acceptance criteria from issue body AND comments (CRIT-6)
+/// 3. Generates an LLM-summarized "What and Why" from the issue (CRIT-6)
+/// 4. Builds the enriched epic bead description with criteria and summary
+/// 5. Files child beads (if epic-scale, all deferred)
+/// 6. Returns the breakdown result with comment to post
+///
+/// Comments are used to extract Rodgers-generated criteria and human-modified
+/// criteria that may have been added after Rodgers posted draft criteria.
 pub fn execute_breakdown(
     issue_body: &str,
     issue_title: &str,
     github_issue_number: u64,
     github_issue_url: &str,
     is_bug: bool,
+    comments: &[crate::github::GitHubComment],
+    author: &str,
 ) -> BreakdownResult {
     // Step 1: Analyze for epic scale
     let scale_result = analyze_epic_scale(issue_body, github_issue_number, is_bug);
 
-    // Step 2: Build the epic bead request
+    // Step 2: Extract ALL acceptance criteria from body AND comments (CRIT-6)
+    let acceptance_criteria =
+        crate::feature_bug::extract_all_acceptance_criteria(issue_body, comments);
+
+    // Step 3: Generate "What and Why" summary (CRIT-6)
+    let what_why_summary =
+        crate::feature_bug::generate_what_why_summary(issue_body, issue_title, author, is_bug);
+
+    // Step 4: Build the enriched epic bead description (CRIT-6)
+    let plan_ref = "plans/feature-bug-plan.md §Bead Breakdown";
+    let epic_description = build_epic_description_enriched(
+        plan_ref,
+        github_issue_number,
+        github_issue_url,
+        &acceptance_criteria,
+        &what_why_summary,
+    );
+
+    // Step 5: Build the epic bead request with the enriched description
     let client = BeadClient::new();
     let bead_type = if is_bug {
         BeadType::Bug
@@ -473,13 +498,10 @@ pub fn execute_breakdown(
         BeadType::Feature
     };
 
-    // Extract acceptance criteria from body for epic description
-    let acceptance_criteria = extract_acceptance_criteria_text(issue_body);
-
-    let epic_request = client.build_epic_request(
+    let epic_request = client.build_epic_request_enriched(
         github_issue_number,
         issue_title,
-        issue_body,
+        &epic_description,
         github_issue_url,
         &acceptance_criteria,
         scale_result.is_epic_scale,
@@ -487,7 +509,7 @@ pub fn execute_breakdown(
         2, // priority: medium
     );
 
-    // Step 3: Generate child bead requests if epic-scale
+    // Step 6: Generate child bead requests if epic-scale
     let mut child_requests = Vec::new();
     if scale_result.is_epic_scale {
         for spec in &scale_result.child_beads {
@@ -501,9 +523,8 @@ pub fn execute_breakdown(
         }
     }
 
-    // Step 4: Build breakdown comment
+    // Step 7: Build breakdown comment
     let breakdown_comment = if scale_result.is_epic_scale {
-        // Comment with child bead placeholders (IDs filled in after filing)
         client.build_breakdown_comment("TBD-epic", &[][..], true)
     } else {
         client.build_breakdown_comment("TBD-epic", &[][..], false)
@@ -515,6 +536,7 @@ pub fn execute_breakdown(
         breakdown_comment,
         is_epic_scale: scale_result.is_epic_scale,
         reasons: scale_result.reasons,
+        acceptance_criteria,
     }
 }
 
@@ -564,6 +586,59 @@ fn extract_acceptance_criteria_text(body: &str) -> String {
     }
 }
 
+// =============================================================================
+// CRIT-6: Full Acceptance Criteria in Epic Bead Description
+// =============================================================================
+//
+// When ready-for-work is applied, the epic bead description includes:
+// - Plan: plans/feature-bug-plan.md §Bead Breakdown
+// - GitHub Issue: #<number> (with URL)
+// - Full acceptance criteria from issue (Rodgers-generated + human-modified)
+// - LLM-summarized 'What and Why' from issue
+//
+// Acceptance criteria are extracted from:
+// 1. The GitHub issue body (explicit AC section, checkbox list, or AC-N: patterns)
+// 2. Issue comments (Rodgers-generated criteria and human-modified criteria)
+//
+// Rodgers-generated criteria are identified by comments from Rodgers or comments
+// containing "Rodgers" + "Acceptance Criteria". Human-modified criteria preserve
+// any changes humans made to the criteria.
+
+/// Generate an enriched epic bead description for CRIT-6.
+///
+/// Builds an epic description that includes:
+/// - Plan reference: `Plan: plans/feature-bug-plan.md §Bead Breakdown`
+/// - GitHub issue link: `GitHub Issue: #<number>`
+/// - Full acceptance criteria from issue body AND comments
+/// - LLM-summarized What and Why summary
+///
+/// If no criteria are found, includes a "pending human review" note.
+pub fn build_epic_description_enriched(
+    plan_ref: &str,
+    github_issue_number: u64,
+    github_issue_url: &str,
+    acceptance_criteria: &crate::feature_bug::AllAcceptanceCriteria,
+    what_why_summary: &crate::feature_bug::WhatWhySummary,
+) -> String {
+    let criteria_text = acceptance_criteria.format_for_epic();
+    let what_why_text = what_why_summary.format_for_epic();
+
+    format!(
+        "{what_why}\n\
+         ---\n\n\
+         **Plan:** {plan_ref}\n\
+         **GitHub Issue:** #{issue_number}\n\
+         **discovered-from:** {url}\n\n\
+         ## Acceptance Criteria\n\n\
+         {criteria}\n",
+        plan_ref = plan_ref,
+        issue_number = github_issue_number,
+        url = github_issue_url,
+        criteria = criteria_text,
+        what_why = what_why_text
+    )
+}
+
 /// Result of a breakdown operation.
 #[derive(Debug, Clone)]
 pub struct BreakdownResult {
@@ -577,6 +652,8 @@ pub struct BreakdownResult {
     pub is_epic_scale: bool,
     /// Reasons for the epic-scale decision
     pub reasons: Vec<String>,
+    /// Full acceptance criteria extracted from issue body and comments (CRIT-6)
+    pub acceptance_criteria: crate::feature_bug::AllAcceptanceCriteria,
 }
 
 // =============================================================================
@@ -1126,6 +1203,8 @@ Export button downloads CSV.
             42,
             "https://github.com/org/repo/issues/42",
             false,
+            &[],
+            "testuser",
         );
 
         assert!(!result.is_epic_scale);
@@ -1153,6 +1232,8 @@ Multi-area feature.
             42,
             "https://github.com/org/repo/issues/42",
             false,
+            &[],
+            "testuser",
         );
 
         assert!(result.is_epic_scale);
@@ -1268,6 +1349,8 @@ Bug.
             1,
             "https://github.com/org/repo/issues/1",
             true, // is_bug = true
+            &[],
+            "reporter",
         );
 
         assert_eq!(
@@ -1285,6 +1368,8 @@ Bug.
             1,
             "https://github.com/org/repo/issues/1",
             false, // is_bug = false
+            &[],
+            "requester",
         );
 
         assert_eq!(
@@ -1301,6 +1386,8 @@ Bug.
             1,
             "https://github.com/org/repo/issues/1",
             false,
+            &[],
+            "testuser",
         );
 
         assert_eq!(
@@ -1318,6 +1405,8 @@ Bug.
             1,
             "https://github.com/org/repo/issues/1",
             false,
+            &[],
+            "testuser",
         );
 
         for child in &result.child_requests {
@@ -1613,5 +1702,370 @@ Bug.
 
         // This bead mentions API and DB, which are closely related
         assert!(bead.is_single_codebase_part());
+    }
+
+    // =============================================================================
+    // CRIT-6: Epic Bead Description - Acceptance Criteria
+    // =============================================================================
+
+    #[test]
+    fn test_epic_description_has_plan_reference() {
+        // Unit test: Epic description has Plan reference
+        let body = r#"
+## Use Case
+Test feature.
+
+## Acceptance Criteria
+- [ ] AC-1: Test passes
+"#;
+        let result = execute_breakdown(
+            body,
+            "Test Issue",
+            42,
+            "https://github.com/org/repo/issues/42",
+            false,
+            &[],
+            "testuser",
+        );
+
+        assert!(
+            result
+                .epic_request
+                .description
+                .contains("plans/feature-bug-plan.md"),
+            "Epic description should contain Plan reference"
+        );
+        assert!(
+            result.epic_request.description.contains("§Bead Breakdown"),
+            "Epic description should contain §Bead Breakdown reference"
+        );
+    }
+
+    #[test]
+    fn test_epic_description_has_github_issue_number() {
+        // Unit test: GitHub issue number linked
+        let body = r#"
+## Use Case
+Test feature.
+
+## Acceptance Criteria
+- [ ] AC-1: Test passes
+"#;
+        let result = execute_breakdown(
+            body,
+            "Test Issue",
+            42,
+            "https://github.com/org/repo/issues/42",
+            false,
+            &[],
+            "reporter",
+        );
+
+        assert!(
+            result.epic_request.description.contains("#42"),
+            "Epic description should contain GitHub issue number #42"
+        );
+        assert!(
+            result
+                .epic_request
+                .description
+                .contains("https://github.com/org/repo/issues/42"),
+            "Epic description should contain GitHub issue URL"
+        );
+        assert!(
+            result.epic_request.description.contains("discovered-from:"),
+            "Epic description should contain discovered-from link"
+        );
+    }
+
+    #[test]
+    fn test_epic_description_has_all_acceptance_criteria() {
+        // Unit test: ALL acceptance criteria (Rodgers + human) copied
+        let body = r#"
+## Use Case
+Multi-step feature implementation.
+
+## Acceptance Criteria
+- [ ] AC-1: Feature is implemented correctly
+- [ ] AC-2: Tests pass
+- [ ] AC-3: Documentation is updated
+"#;
+        let result = execute_breakdown(
+            body,
+            "Multi-step Feature",
+            99,
+            "https://github.com/org/repo/issues/99",
+            false,
+            &[],
+            "testuser",
+        );
+
+        assert!(
+            result
+                .epic_request
+                .description
+                .contains("## Acceptance Criteria"),
+            "Epic description should have Acceptance Criteria section"
+        );
+        assert!(
+            result.epic_request.description.contains("AC-1"),
+            "Epic description should contain AC-1"
+        );
+        assert!(
+            result.epic_request.description.contains("AC-2"),
+            "Epic description should contain AC-2"
+        );
+        assert!(
+            result.epic_request.description.contains("AC-3"),
+            "Epic description should contain AC-3"
+        );
+    }
+
+    #[test]
+    fn test_epic_description_has_what_why_summary() {
+        // Unit test: What/Why summarized from issue
+        let body = r#"
+## Use Case
+I need to export data to CSV format.
+
+## Proposed Behavior
+A button that downloads CSV when clicked.
+
+## Why It Matters
+Users can analyze data in their preferred tools.
+"#;
+        let result = execute_breakdown(
+            body,
+            "CSV Export Feature",
+            55,
+            "https://github.com/org/repo/issues/55",
+            false,
+            &[],
+            "analyst",
+        );
+
+        let desc = &result.epic_request.description;
+        assert!(
+            desc.contains("## Summary") || desc.contains("What") || desc.contains("Why"),
+            "Epic description should contain Summary/What/Why section"
+        );
+        assert!(
+            desc.contains("analyst"),
+            "Epic description should reference issue author"
+        );
+        assert!(
+            desc.contains("CSV Export Feature"),
+            "Epic description should reference issue title"
+        );
+    }
+
+    #[test]
+    fn test_epic_description_acceptance_criteria_from_comments() {
+        // Unit test: acceptance criteria from comments (Rodgers + human)
+        use crate::github::{GitHubComment, GitHubUser};
+
+        let body = r#"
+## Use Case
+Feature with criteria that will be added by Rodgers and human.
+"#;
+        let comments = vec![
+            GitHubComment {
+                id: 1,
+                body: "## Rodgers Generated Acceptance Criteria\n\n- [ ] AC-1: Rodgers criterion one\n- [ ] AC-2: Rodgers criterion two".to_string(),
+                user: GitHubUser {
+                    login: "rodgers-app".to_string(),
+                    id: 1,
+                },
+                created_at: "2024-01-01T00:00:00Z".to_string(),
+                updated_at: "2024-01-01T00:00:00Z".to_string(),
+            },
+            GitHubComment {
+                id: 2,
+                body: "I updated the criteria:\n- [x] AC-1: Rodgers criterion one\n- [ ] AC-3: Human-added criterion".to_string(),
+                user: GitHubUser {
+                    login: "human-reviewer".to_string(),
+                    id: 2,
+                },
+                created_at: "2024-01-02T00:00:00Z".to_string(),
+                updated_at: "2024-01-02T00:00:00Z".to_string(),
+            },
+        ];
+
+        let result = execute_breakdown(
+            body,
+            "Feature with criteria in comments",
+            77,
+            "https://github.com/org/repo/issues/77",
+            false,
+            &comments,
+            "human-reviewer",
+        );
+
+        let desc = &result.epic_request.description;
+        assert!(
+            desc.contains("AC-1") || desc.contains("AC-3"),
+            "Epic description should contain criteria from comments"
+        );
+
+        // Acceptance criteria should be in the BreakdownResult too
+        assert!(
+            result.acceptance_criteria.has_criteria,
+            "BreakdownResult should have acceptance criteria from comments"
+        );
+        assert!(
+            !result.acceptance_criteria.rodgers_generated.is_empty()
+                || !result.acceptance_criteria.human_modified.is_empty(),
+            "Should have Rodgers-generated or human-modified criteria"
+        );
+    }
+
+    #[test]
+    fn test_epic_description_no_criteria_pending_review() {
+        // Unit test: no criteria yet - note "pending human review"
+        use crate::github::GitHubComment;
+
+        let body = "## Use Case\n\nI need something but not sure what.";
+
+        let result = execute_breakdown(
+            body,
+            "Vague Issue",
+            88,
+            "https://github.com/org/repo/issues/88",
+            false,
+            &[],
+            "newuser",
+        );
+
+        // Should have a pending review note when no criteria found
+        assert!(
+            result.acceptance_criteria.no_criteria_yet,
+            "Should flag as no criteria pending review"
+        );
+        let desc = &result.epic_request.description;
+        assert!(
+            desc.contains("pending") || desc.contains("Pending") || desc.contains("_pending"),
+            "Epic description should mention pending review when no criteria"
+        );
+    }
+
+    #[test]
+    fn test_build_epic_description_enriched_full() {
+        // Integration test of build_epic_description_enriched
+        use crate::feature_bug::{
+            AcceptanceCriteriaSource, AcceptanceCriterion, AllAcceptanceCriteria, WhatWhySummary,
+            generate_what_why_summary,
+        };
+
+        let ac = AllAcceptanceCriteria {
+            criteria: vec![
+                AcceptanceCriterion {
+                    text: "AC-1: Criterion one".to_string(),
+                    is_checked: false,
+                    source: AcceptanceCriteriaSource::IssueBody,
+                },
+                AcceptanceCriterion {
+                    text: "AC-2: Criterion two".to_string(),
+                    is_checked: false,
+                    source: AcceptanceCriteriaSource::RodgersGenerated,
+                },
+                AcceptanceCriterion {
+                    text: "AC-3: Criterion three".to_string(),
+                    is_checked: false,
+                    source: AcceptanceCriteriaSource::HumanModified,
+                },
+            ],
+            rodgers_generated: vec![AcceptanceCriterion {
+                text: "AC-2: Criterion two".to_string(),
+                is_checked: false,
+                source: AcceptanceCriteriaSource::RodgersGenerated,
+            }],
+            human_modified: vec![AcceptanceCriterion {
+                text: "AC-3: Criterion three".to_string(),
+                is_checked: false,
+                source: AcceptanceCriteriaSource::HumanModified,
+            }],
+            has_criteria: true,
+            no_criteria_yet: false,
+        };
+
+        let why = WhatWhySummary {
+            what: "A CSV export feature is needed".to_string(),
+            why: "Users want to analyze data in Excel".to_string(),
+            issue_title: "CSV Export".to_string(),
+            author: "analyst".to_string(),
+        };
+
+        let desc = build_epic_description_enriched(
+            "plans/feature-bug-plan.md §Bead Breakdown",
+            42,
+            "https://github.com/org/repo/issues/42",
+            &ac,
+            &why,
+        );
+
+        // Verify all required sections
+        assert!(desc.contains("plans/feature-bug-plan.md"));
+        assert!(desc.contains("#42"));
+        assert!(desc.contains("https://github.com/org/repo/issues/42"));
+        assert!(desc.contains("discovered-from:"));
+        assert!(desc.contains("## Acceptance Criteria"));
+        assert!(desc.contains("AC-1"));
+        assert!(desc.contains("AC-2"));
+        assert!(desc.contains("AC-3"));
+        assert!(desc.contains("## What"));
+        assert!(desc.contains("## Why"));
+        assert!(desc.contains("CSV Export"));
+        assert!(desc.contains("analyst"));
+    }
+
+    #[test]
+    fn test_all_acceptance_criteria_tracks_sources() {
+        use crate::feature_bug::{
+            AcceptanceCriteriaSource, AcceptanceCriterion, AllAcceptanceCriteria,
+        };
+
+        let ac = AllAcceptanceCriteria {
+            criteria: vec![
+                AcceptanceCriterion {
+                    text: "Body criterion".to_string(),
+                    is_checked: false,
+                    source: AcceptanceCriteriaSource::IssueBody,
+                },
+                AcceptanceCriterion {
+                    text: "Rodgers criterion".to_string(),
+                    is_checked: false,
+                    source: AcceptanceCriteriaSource::RodgersGenerated,
+                },
+                AcceptanceCriterion {
+                    text: "Human criterion".to_string(),
+                    is_checked: false,
+                    source: AcceptanceCriteriaSource::HumanModified,
+                },
+            ],
+            rodgers_generated: vec![AcceptanceCriterion {
+                text: "Rodgers criterion".to_string(),
+                is_checked: false,
+                source: AcceptanceCriteriaSource::RodgersGenerated,
+            }],
+            human_modified: vec![AcceptanceCriterion {
+                text: "Human criterion".to_string(),
+                is_checked: false,
+                source: AcceptanceCriteriaSource::HumanModified,
+            }],
+            has_criteria: true,
+            no_criteria_yet: false,
+        };
+
+        assert_eq!(ac.criteria.len(), 3);
+        assert_eq!(ac.rodgers_generated.len(), 1);
+        assert_eq!(ac.human_modified.len(), 1);
+        assert_eq!(
+            ac.summary(),
+            "3 total criteria (1 Rodgers-generated, 1 human-modified)"
+        );
+
+        let formatted = ac.format_for_epic();
+        assert!(formatted.contains("Body criterion"));
+        assert!(formatted.contains("- [ ] Body criterion"));
     }
 }
