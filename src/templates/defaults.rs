@@ -91,7 +91,11 @@ labels: question
 /// All default templates as a slice for iteration.
 pub const ALL_DEFAULT_TEMPLATES: &[(&str, &str, &str)] = &[
     ("bug_report.md", "Bug Report Template", BUG_REPORT_TEMPLATE),
-    ("feature_request.md", "Feature Request Template", FEATURE_REQUEST_TEMPLATE),
+    (
+        "feature_request.md",
+        "Feature Request Template",
+        FEATURE_REQUEST_TEMPLATE,
+    ),
     ("question.md", "Question Template", QUESTION_TEMPLATE),
 ];
 
@@ -147,18 +151,18 @@ mod tests {
     fn test_templates_match_plan_definitions() {
         // Verify templates from the plan are correctly embedded
         // Plan: plans/issue-templates-plan.md
-        
+
         // Bug report fields map to completeness requirements
         assert!(BUG_REPORT_TEMPLATE.contains("## Environment"));
         assert!(BUG_REPORT_TEMPLATE.contains("## Steps to Reproduce"));
         assert!(BUG_REPORT_TEMPLATE.contains("## Expected Behavior"));
         assert!(BUG_REPORT_TEMPLATE.contains("## Actual Behavior"));
-        
+
         // Feature request fields map to completeness requirements
         assert!(FEATURE_REQUEST_TEMPLATE.contains("## Use Case"));
         assert!(FEATURE_REQUEST_TEMPLATE.contains("## Proposed Behavior"));
         assert!(FEATURE_REQUEST_TEMPLATE.contains("## Acceptance Criteria"));
-        
+
         // Question fields map to completeness requirements
         assert!(QUESTION_TEMPLATE.contains("## Question"));
         assert!(QUESTION_TEMPLATE.contains("## Context"));

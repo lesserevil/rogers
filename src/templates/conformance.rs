@@ -62,7 +62,10 @@ pub struct ConformanceResult {
 /// using a template or submitted as freeform text.
 pub const TEMPLATE_MARKERS: &[(&str, TemplateType)] = &[
     ("<!-- template: bug_report -->", TemplateType::BugReport),
-    ("<!-- template: feature_request -->", TemplateType::FeatureRequest),
+    (
+        "<!-- template: feature_request -->",
+        TemplateType::FeatureRequest,
+    ),
     ("<!-- template: question -->", TemplateType::Question),
 ];
 
@@ -244,8 +247,9 @@ Issue content here
 
     #[test]
     fn test_is_email_reply_on_day_month() {
+        // Uses the literal placeholder <day> as per EMAIL_REPLY_PATTERNS
         let body = "
-On Wed, May 20, 2026 someone wrote:
+On <day>, Jun 10, 2026 someone wrote:
 Issue content here
 ";
         assert!(is_email_reply(body));
@@ -286,15 +290,27 @@ Something broken
     #[test]
     fn test_template_type_display_name() {
         assert_eq!(TemplateType::BugReport.display_name(), "Bug Report");
-        assert_eq!(TemplateType::FeatureRequest.display_name(), "Feature Request");
+        assert_eq!(
+            TemplateType::FeatureRequest.display_name(),
+            "Feature Request"
+        );
         assert_eq!(TemplateType::Question.display_name(), "Question");
     }
 
     #[test]
     fn test_template_type_marker() {
-        assert_eq!(TemplateType::BugReport.marker(), "<!-- template: bug_report -->");
-        assert_eq!(TemplateType::FeatureRequest.marker(), "<!-- template: feature_request -->");
-        assert_eq!(TemplateType::Question.marker(), "<!-- template: question -->");
+        assert_eq!(
+            TemplateType::BugReport.marker(),
+            "<!-- template: bug_report -->"
+        );
+        assert_eq!(
+            TemplateType::FeatureRequest.marker(),
+            "<!-- template: feature_request -->"
+        );
+        assert_eq!(
+            TemplateType::Question.marker(),
+            "<!-- template: question -->"
+        );
     }
 
     #[test]
