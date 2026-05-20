@@ -48,10 +48,11 @@ Rodgers then closes the issue or leaves it open based on the answer quality — 
 
 ### Step 3b: Documentation Not Found
 
-The absence of documentation is a documentation gap. Rodgers treats this as a `docs` work item and proceeds:
+The absence of documentation is a documentation gap. Rodgers files a `chore` bead (`rodgers:type=docs`) to track the gap and proceeds:
 
-1. **File a `docs` bead** with:
-   - Type: `docs`
+1. **File a `chore` bead** (metadata: `rodgers:type=docs`) with:
+   - Type: `chore`
+   - Tag: `rodgers:type=docs`
    - Title: `Answer question: [one-line restatement of the question]`
    - Description: the full question text from the issue, the full issue body, and any relevant context
    - Acceptance: a new section in the relevant doc that answers the question; the section must be linked from the issue when filed
@@ -67,29 +68,25 @@ Hi @[requestor], thanks for the question! We do not currently have documentation
 
 ### Step 4: Update Docs (Sideband)
 
-The human or agent working the `docs` bead updates the relevant documentation file with a section that answers the question. When the doc section is written and checked in, the implementer posts the link as a comment on the GitHub issue and closes the issue.
+The human or agent working the `chore` bead (metadata: `rodgers:type=docs`) updates the relevant documentation file with a section that answers the question. When the doc section is written and checked in, the implementer posts the link as a comment on the GitHub issue and closes the issue.
 
 ### Step 5: Sync Bead to GitHub Issue
 
-When the `docs` bead is closed, Rodgers verifies that the GitHub issue has a comment linking to the new documentation. If the comment is missing, Rodgers posts the link.
+When the `chore` bead (metadata: `rodgers:type=docs`) is closed, Rodgers verifies that the GitHub issue has a comment linking to the new documentation. If the comment is missing, Rodgers posts the link.
 
 ---
 
 ## Question Router Decision Tree
 
-```
-issue labeled question?
-  │
-  └─► Rodgers has already commented?
-        │
-        └─► YES ──► No-op (already handled)
-        │
-        └─► NO ──► Search docs/
-              │
-              ├─► Doc found ──► Post comment with link, close issue
-              │
-              └─► Doc not found ──► File docs bead, comment on issue,
-                                    label needs-documentation, remove question
+```mermaid
+flowchart TD
+    A["issue labeled question?"] --> B["Rodgers has already\ncommented?"]
+    B -->|"YES"| C["No-op\n(already handled)"]
+    B -->|"NO"| D["Search docs/"]
+    D -->|"Doc found"| E["Post comment with link\nclose issue if fully answered"]
+    D -->|"Doc not found"| F["File chore bead\nrodgers:type=docs"]
+    F --> G["Post acknowledgment\non issue"]
+    G --> H["Label issue\nneeds-documentation\nremove question label"]
 ```
 
 ---
@@ -100,9 +97,9 @@ issue labeled question?
 
 **Question is too vague to answer.** Rodgers posts a comment asking for clarification before the doc search. Once clarification is received, it restarts from Step 2.
 
-**Multiple questions in one issue.** Treat as one question — the primary question. If the issue clearly contains semantically distinct questions, file separate `docs` beads for each.
+**Multiple questions in one issue.** Treat as one question — the primary question. If the issue clearly contains semantically distinct questions, file separate `chore` beads (`rodgers:type=docs`) for each.
 
-**Doc search returns false positives.** Rodgers presents the most relevant doc link. If the requestor says the linked doc doesn't answer their question, treat as Step 3b — file a `docs` bead.
+**Doc search returns false positives.** Rodgers presents the most relevant doc link. If the requestor says the linked doc doesn't answer their question, treat as Step 3b — file a `chore` bead (`rodgers:type=docs`).
 
 **Requestor adds more context after Rodgers responds.** Rodgers processes the new comment as a new triage event — restarts from Step 1.
 
@@ -111,7 +108,7 @@ issue labeled question?
 ## Acceptance Criteria
 
 - [ ] CRIT-1: When a `question` issue exists and docs exist that answer it, Rodgers posts a comment within one triage run with the correct doc link
-- [ ] CRIT-2: When a `question` issue exists and no docs answer it, Rodgers files a `docs` bead within one triage run and posts an acknowledgment comment on the issue
-- [ ] CRIT-3: When the `docs` bead is closed, Rodgers verifies the GitHub issue has a documentation link and closes or updates the issue accordingly
-- [ ] CRIT-4: Rodgers never closes a question issue without either answering it or filing a docs bead
+- [ ] CRIT-2: When a `question` issue exists and no docs answer it, Rodgers files a `chore` bead (`rodgers:type=docs`) within one triage run and posts an acknowledgment comment on the issue
+- [ ] CRIT-3: When the `chore` bead (`rodgers:type=docs`) is closed, Rodgers verifies the GitHub issue has a documentation link and closes or updates the issue accordingly
+- [ ] CRIT-4: Rodgers never closes a question issue without either answering it or filing a `chore` bead (`rodgers:type=docs`)
 - [ ] CRIT-5: Rodgers never routes to a non-question issue through this workflow

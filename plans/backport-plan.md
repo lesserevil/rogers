@@ -71,7 +71,7 @@ Source issue: #{number}
 Target branch: {branch_name}
 
 WHAT TO DO
-Cherry-pick commit {full_sha} to release/{X.Y}. Create a PR targeting
+Cherry-pick commit #{full_sha} to release/{X.Y}. Create a PR targeting
 release/{X.Y} with the cherry-pick. Resolve any merge conflicts.
 
 ACCEPTANCE
@@ -87,8 +87,9 @@ PITFALLS
   in the bead before closing.
 EOF
 )"
+  --type=chore
+  --tag=rodgers:type=backport
   --acceptance="Backport #{sha} to {branch_name} is merged or explicitly closed without merging"
-  --type=backport
   --priority={1 for security, 2 otherwise}
 ```
 
@@ -115,25 +116,25 @@ Backport will be filed as a PR targeting release/{X.Y}.
 
 ## Backport Execution
 
-When approved:
+When approved, Rodgers:
 
-1. Rodgers creates a branch `backport/{sha_short}/{branch_name}` from the target release branch
-2. Cherry-picks the source commit onto the new branch
-3. Opens a PR targeting the target release branch with the title format: `[backport] {short description} (#{original_pr})`
-4. Posts a comment on the original issue linking to the backport PR
-5. Closes the approval Discussion
+1. Creates a branch `backport/{sha_short}/{branch_name}` from the target release branch head
+2. Files a `chore` bead (`rodgers:type=backport`) describing what needs to be cherry-picked, which release branch, and what the child bead acceptance criteria are
+3. Posts a comment on the original issue noting the backport is in progress and linking to the bead
+
+Rodgers does not perform the cherry-pick. The cherry-pick is work for an actor outside Rodgers, tracked via the `chore` bead.
 
 ---
 
 ## Conflict Handling
 
-If a cherry-pick has conflicts:
+If a cherry-pick has conflicts, Rodgers:
 
-1. Rodgers opens the backport branch with the partial cherry-pick and posts a comment: "Backport has merge conflicts. A human must resolve conflicts before this can be merged. Branch: backport/{sha}/{branch}"
-2. Files a bead for the conflict resolution: type=`backport-conflict`, linked to the backport PR
-3. The conflict-resolution bead waits for a human to resolve and merge
+1. Files a `chore` bead (`rodgers:type=backport-conflict`) noting the target branch, the source commit, and that merge conflict resolution is needed
+2. Posts a comment on the original issue: "Backport needs to be applied to `release/{X.Y}` but there are merge conflicts. A human must resolve them. Bead filed for tracking."
+3. Closes the approval Discussion
 
-Rodgers does not autonomously resolve merge conflicts.
+Rodgers does not attempt the cherry-pick or any partial application. It files the bead and moves on.
 
 ---
 

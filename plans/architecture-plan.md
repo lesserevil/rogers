@@ -89,21 +89,24 @@ Thin wrapper around `reqwest` for the GitHub REST API. Handles auth via PAT from
 | `ready-for-work` | Human has approved this for implementation |
 | `in-progress` | Work is underway |
 
-### Bead States (work-tracking)
+### Bead Types
 
-Beads follow the standard bd workflow: `open → claimed → closed`, supplemented by type and priority.
+Rodgers uses **bd built-in types** only. All specialization is conveyed via metadata (bd tags), not custom types. Rodgers uses the tag `rodgers:type` to carry workflow routing information:
 
-| Bead Type | Use |
-|-----------|-----|
-| `epic` | Top-level work unit covering a feature or fix |
-| `feature` | Implementation work for a specific part of an epic |
-| `bug` | Bug fix work |
-| `docs` | Documentation update work |
-| `release` | Release management work |
-| `backport` | Cherry-pick fix to older release branch |
-| `backport-conflict` | Merge conflict on a backport PR requires manual resolution |
-| `triage` | Triage state machine step (interrogative, informational) |
-| `assessment` | Scope evaluation for epic-scale issues |
+| Bead Type | Use | Metadata (`rodgers:type`) |
+|-----------|-----|---------------------------|
+| `epic` | Top-level work unit covering a feature or bug fix | — |
+| `feature` | Implementation work for a specific part of an epic | `rodgers:type=feature` |
+| `bug` | Bug fix work | `rodgers:type=bug` |
+| `chore` | Documentation update | `rodgers:type=docs` |
+| `chore` | Release management | `rodgers:type=release` |
+| `chore` | Cherry-pick fix to older release branch | `rodgers:type=backport` |
+| `chore` | Merge conflict on a backport PR (requires human resolution) | `rodgers:type=backport-conflict` |
+| `spike` | Timeboxed scope evaluation for epic-scale issues | `rodgers:type=assessment` |
+| `decision` | Human gate decision required (e.g., release approval, backport approval) | `rodgers:type=decision` |
+| `milestone` | Milestone tracking (if project uses this) | — |
+
+**Do not add custom bead types.** Use built-in types and `rodgers:type` metadata for all routing and classification. If a new specialization is needed, add a metadata value to the existing `rodgers:type` tag rather than defining a new type.
 
 ---
 

@@ -142,7 +142,7 @@ When Rodgers sees `needs-information` applied, it checks:
 
 **Entry:** Rodgers found no documentation answering the question.
 
-**Action:** Rodgers files a `docs` bead and applies `needs-documentation` label. Posts acknowledgment comment on the issue. See plans/question-routing-plan.md §Step 3b.
+**Action:** Rodgers files a `chore` bead (`rodgers:type=docs`) and applies `needs-documentation` label. Posts acknowledgment comment on the issue. See plans/question-routing-plan.md §Step 3b.
 
 ### READY-FOR-REVIEW
 
