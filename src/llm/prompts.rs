@@ -100,6 +100,41 @@ Example for missing use_case and acceptance_criteria:
 Respond with ONLY the comment text.
 "#;
 
+/// Prompt for generating a warm closure comment when an issue is declined (will-not-do).
+///
+/// The comment should:
+/// - Express gratitude for the report/request
+/// - Politely explain the decision not to pursue
+/// - Be warm and respectful, NOT curt or dismissive
+/// - Never just say "no" or "we won't do this"
+pub const WARM_CLOSURE_PROMPT: &str = r#"You are writing a closure comment for a GitHub issue that will not be pursued.
+
+Generate a warm, empathetic comment that:
+1. Thanks the requestor for taking the time to report/submit this issue
+2. Explains that after consideration, this will not be worked on at this time
+3. Expresses regret that we cannot address this right now
+4. Leaves the door open for future consideration
+
+TONE: Warm, grateful, respectful. This person took time to file an issue - acknowledge that.
+DO NOT USE: Curt phrases like "not a priority", "we won't implement this", or just "no"
+
+Example good response:
+"Thanks @username for the detailed feature request! I appreciate you taking the time to outline this use case.
+
+After careful consideration, we're unable to prioritize this at the moment. The team has weighed this against other planned work and has decided not to move forward with this specific request.
+
+We apologize for not being able to address this for you. If circumstances change in the future or you have other ideas, please don't hesitate to open a new issue.
+
+Thanks again for contributing to the project!"
+
+Issue details:
+- Title: {issue_title}
+- Author: @{issue_author}
+- Type: {issue_type}
+
+Respond with ONLY the comment text (no preamble or explanation).
+"#;
+
 /// Result from LLM field extraction for bug reports.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BugFieldExtraction {
@@ -432,5 +467,30 @@ mod tests {
     fn test_feature_missing_prompt_includes_missing_fields_placeholder() {
         assert!(FEATURE_MISSING_FIELDS_REQUEST_PROMPT.contains("{missing_fields}"));
         assert!(FEATURE_MISSING_FIELDS_REQUEST_PROMPT.contains("{feature_missing}"));
+    }
+
+    #[test]
+    fn test_warm_closure_prompt_includes_issue_details() {
+        assert!(WARM_CLOSURE_PROMPT.contains("{issue_title}"));
+        assert!(WARM_CLOSURE_PROMPT.contains("{issue_author}"));
+        assert!(WARM_CLOSURE_PROMPT.contains("{issue_type}"));
+    }
+
+    #[test]
+    fn test_warm_closure_prompt_tone_guidance() {
+        // The prompt should instruct for warm, grateful tone
+        assert!(WARM_CLOSURE_PROMPT.contains("Thanks"));
+        assert!(WARM_CLOSURE_PROMPT.contains("grateful") || WARM_CLOSURE_PROMPT.contains("Warm"));
+        assert!(WARM_CLOSURE_PROMPT.contains("regret"));
+        // Should instruct to NOT use curt phrases
+        assert!(WARM_CLOSURE_PROMPT.contains("DO NOT USE"));
+        assert!(WARM_CLOSURE_PROMPT.to_lowercase().contains("curt"));
+    }
+
+    #[test]
+    fn test_warm_closure_prompt_includes_example() {
+        // The prompt should include an example of a good response
+        assert!(WARM_CLOSURE_PROMPT.contains("Example good response"));
+        assert!(WARM_CLOSURE_PROMPT.contains("@username"));
     }
 }
