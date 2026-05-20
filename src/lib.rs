@@ -13,6 +13,7 @@
 pub mod beads;
 pub mod error;
 pub mod feature_bug;
+pub mod github;
 pub mod labels;
 pub mod llm;
 pub mod triage;

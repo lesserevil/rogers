@@ -163,7 +163,9 @@ impl BeadClient {
         Self
     }
 
-    /// Build an epic bead request from a GitHub issue.
+    /// Build an epic bead request.
+    ///
+    /// Description includes plan reference and acceptance criteria.
     pub fn build_epic_request(
         &self,
         github_issue_number: u64,
@@ -187,6 +189,43 @@ impl BeadClient {
         FileBeadRequest {
             title,
             description,
+            bead_type: if is_epic_scale {
+                BeadType::Epic
+            } else {
+                bead_type
+            },
+            priority,
+            is_epic: true,
+            parent_id: None,
+            status: BeadStatus::Deferred,
+            labels: vec!["rodgers:parent=rogers-ch2".to_string()],
+        }
+    }
+
+    /// Build an enriched epic bead request with CRIT-6 description.
+    ///
+    /// The description includes:
+    /// - Plan: plans/feature-bug-plan.md §Bead Breakdown
+    /// - GitHub Issue: #<number> with discovered-from link
+    /// - Full acceptance criteria from issue body AND comments
+    /// - LLM-summarized What and Why summary
+    ///
+    /// The enriched description is passed directly rather than being
+    /// constructed here.
+    pub fn build_epic_request_enriched(
+        &self,
+        _github_issue_number: u64,
+        github_issue_title: &str,
+        description: &str,
+        _github_issue_url: &str,
+        _acceptance_criteria: &crate::feature_bug::AllAcceptanceCriteria,
+        is_epic_scale: bool,
+        bead_type: BeadType,
+        priority: u8,
+    ) -> FileBeadRequest {
+        FileBeadRequest {
+            title: github_issue_title.to_string(),
+            description: description.to_string(),
             bead_type: if is_epic_scale {
                 BeadType::Epic
             } else {

@@ -153,7 +153,17 @@ pub fn process_issue(issue: &TriageIssue) -> TriageResult {
             .url
             .as_deref()
             .unwrap_or("https://github.com/org/repo");
-        let breakdown = execute_breakdown(&issue.body, &issue.title, issue.number, url, is_bug);
+        // For initial implementation, pass empty comments. In production, comments
+        // would be fetched from GitHub before this call (CRIT-6 enhancement).
+        let breakdown = execute_breakdown(
+            &issue.body,
+            &issue.title,
+            issue.number,
+            url,
+            is_bug,
+            &[],
+            &issue.author,
+        );
 
         return TriageResult {
             issue_number: issue.number,
