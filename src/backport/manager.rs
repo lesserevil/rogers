@@ -969,6 +969,190 @@ mod tests {
         assert!(body.to_lowercase().contains("approve"));
     }
 
+    // -----------------------------------------------------------------------
+    // CRIT-7: Backport Approval Discussion Content Tests
+    // -----------------------------------------------------------------------
+
+    /// CRIT-7: Verify discussion body contains the full 40-char commit SHA.
+    /// GitHub merge commit SHAs are 40 hexadecimal characters.
+    #[test]
+    fn test_discussion_body_has_full_commit_sha() {
+        // Use a full 40-character SHA to test the requirement
+        let full_sha = "abc123def456abc123def456abc123def456abc1";
+        let pr = fake_pr(42, "Fix critical bug", Some(full_sha), Some("Closes #99"));
+        let c = fake_candidate(pr, BackportReason::BugFix, 2);
+        let bead = BackportBead::build(&c, "release/1.x");
+        let body = format_discussion_body(&c, &bead);
+
+        // SHA must appear in the body
+        assert!(
+            body.contains(full_sha),
+            "Discussion body must contain full SHA: {}",
+            full_sha
+        );
+        // SHA must be 40 characters (full, not shortened)
+        assert_eq!(full_sha.len(), 40);
+        // Verify the full SHA appears in the **Commit:** line format
+        assert!(
+            body.contains(&format!("**Commit:** {}", full_sha)),
+            "Full SHA must appear in **Commit:** format"
+        );
+    }
+
+    /// CRIT-7: Verify discussion body contains the one-line commit message.
+    /// The commit message is taken from PR title which is already one-line.
+    #[test]
+    fn test_discussion_body_has_commit_message() {
+        let pr = fake_pr(
+            42,
+            "Fix critical bug in login handler",
+            Some("abc123def456abc123def456abc123def456abc1"),
+            Some("Closes #99"),
+        );
+        let c = fake_candidate(pr, BackportReason::BugFix, 2);
+        let bead = BackportBead::build(&c, "release/1.x");
+        let body = format_discussion_body(&c, &bead);
+
+        // PR title (commit message) must appear in body
+        assert!(
+            body.contains("Fix critical bug in login handler"),
+            "Commit message (PR title) must appear in discussion body"
+        );
+        // Must be in the **Commit:** line format: **Commit:** {sha} — "{message}"
+        assert!(
+            body.contains(r#"**Commit:** abc123def456abc123def456abc123def456abc1 — "Fix critical bug in login handler""#),
+            "Commit message must appear in **Commit:** format with full SHA"
+        );
+    }
+
+    /// CRIT-7: Verify discussion body contains the source GitHub issue number.
+    /// Issue number is extracted from PR body (e.g., "Closes #123").
+    #[test]
+    fn test_discussion_body_has_source_issue_number() {
+        let pr = fake_pr(
+            42,
+            "Fix critical bug",
+            Some("abc123def456abc123def456abc123def456abc1"),
+            Some("Closes #99"),
+        );
+        let c = fake_candidate(pr, BackportReason::BugFix, 2);
+        let bead = BackportBead::build(&c, "release/1.x");
+        let body = format_discussion_body(&c, &bead);
+
+        // Source issue must appear in body
+        assert!(
+            body.contains("**Source issue:** #99"),
+            "Source issue #99 must appear in discussion body"
+        );
+        // Issue number alone must appear (not just PR number fallback)
+        assert!(body.contains("#99"), "Issue number #99 must appear in body");
+    }
+
+    /// CRIT-7: Verify discussion body contains the target release branch.
+    /// Target branch is extracted from the bead title at creation time.
+    #[test]
+    fn test_discussion_body_has_target_branch() {
+        let pr = fake_pr(
+            42,
+            "Fix critical bug",
+            Some("abc123def456abc123def456abc123def456abc1"),
+            Some("Closes #99"),
+        );
+        let c = fake_candidate(pr, BackportReason::BugFix, 2);
+        let bead = BackportBead::build(&c, "release/1.x");
+        let body = format_discussion_body(&c, &bead);
+
+        // Target branch must appear in body
+        assert!(
+            body.contains("**Target branch:** release/1.x"),
+            "Target branch release/1.x must appear in discussion body"
+        );
+        assert!(
+            body.contains("release/1.x"),
+            "Target branch must appear in body"
+        );
+        // Also verify it appears in the approval instruction
+        assert!(
+            body.contains("PR targeting release/1.x"),
+            "Target branch must appear in approval instruction"
+        );
+    }
+
+    /// CRIT-7: Verify all data is extracted at creation time (immutable record).
+    /// All four required fields are extracted and embedded in the discussion body
+    /// when format_discussion_body() is called - no later fetching occurs.
+    #[test]
+    fn test_discussion_body_data_extracted_at_creation() {
+        let full_sha = "abc123def456abc123def456abc123def456abc1";
+        let pr = fake_pr(
+            42,
+            "Fix security vulnerability CVE-2024-12345",
+            Some(full_sha),
+            Some("Closes #77"),
+        );
+        let c = fake_candidate(pr, BackportReason::SecurityPatch, 1);
+        let bead = BackportBead::build(&c, "release/2.x");
+
+        // All data extracted at creation time - format_discussion_body runs synchronously
+        // and embeds all values directly in the returned string
+        let body = format_discussion_body(&c, &bead);
+
+        // Verify all 4 required fields are present in the immutable body
+        assert!(
+            body.contains(full_sha),
+            "Commit SHA must be extracted and embedded at creation"
+        );
+        assert!(
+            body.contains("Fix security vulnerability CVE-2024-12345"),
+            "Commit message must be extracted and embedded at creation"
+        );
+        assert!(
+            body.contains("#77"),
+            "Source issue number must be extracted and embedded at creation"
+        );
+        assert!(
+            body.contains("release/2.x"),
+            "Target branch must be extracted and embedded at creation"
+        );
+
+        // Verify body is self-contained - once created, no external data needed to interpret
+        assert!(
+            body.contains("## Backport Proposal"),
+            "Body must have proper header for human decision context"
+        );
+        assert!(
+            body.contains("Approve by reacting 👍"),
+            "Body must have approval instructions"
+        );
+    }
+
+    /// CRIT-7: Edge case - multiple issue references, first match selected.
+    /// When PR body has multiple issue references, the regex captures the first match.
+    #[test]
+    fn test_discussion_body_issue_reference_multiple() {
+        let pr = fake_pr(
+            42,
+            "Fix critical bug",
+            Some("abc123def456abc123def456abc123def456abc1"),
+            // Body has multiple issue references - first one found by regex is used
+            // The regex matches "Related to #10, closes #99, see also #88" -> first match is #10
+            Some("Related to #10, closes #99, see also #88"),
+        );
+        let c = fake_candidate(pr, BackportReason::BugFix, 2);
+        let bead = BackportBead::build(&c, "release/1.x");
+        let body = format_discussion_body(&c, &bead);
+
+        // First issue reference matched by regex should be used (no specific "primary" logic)
+        assert!(
+            body.contains("#10"),
+            "First issue reference #10 should appear (first regex match)"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // End CRIT-7 Tests
+    // -----------------------------------------------------------------------
+
     #[test]
     fn test_filed_backport_to_pending() {
         let filed = FiledBackport {
