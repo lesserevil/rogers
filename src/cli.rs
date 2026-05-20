@@ -2,6 +2,7 @@
 
 use clap::{Parser, Subcommand};
 
+/// Rodgers command-line interface.
 #[derive(Parser, Debug)]
 #[command(
     name = "rogers",
@@ -31,9 +32,8 @@ pub enum Commands {
         json: bool,
 
         /// Repository admin token override (for applying settings that require admin).
-        /// If not provided, reads from GITHUB_TOKEN env var.
         #[arg(long, visible_alias = "token")]
-        github_token: Option<String>,
+        github_token: Option<std::path::PathBuf>,
     },
 
     /// Audit an existing Rodgers installation for configuration problems and state drift.
@@ -58,10 +58,4 @@ pub enum Commands {
         #[arg(long)]
         config: Option<std::path::PathBuf>,
     },
-}
-
-impl Cli {
-    pub fn parse() -> Self {
-        Self::parse_from_env_or_exit()
-    }
 }
