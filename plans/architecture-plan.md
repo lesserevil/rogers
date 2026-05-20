@@ -17,7 +17,9 @@ Rodgers is a github-native community relations agent. It runs on a schedule, rea
 2. **Beads are the work log.** Rodgers tracks all planned and in-flight work in beads. GitHub issues track community-facing state. The two must stay in sync but serve different audiences.
 3. **Humans are in the loop.** Rodgers files beads for decisions that need human judgment. It never acts unilaterally on gate decisions — it asks via GitHub and waits.
 4. **Deep planning first.** Implementation begins only after plans are written, reviewed, and turned into beads. Planning is not a checkbox — it is the methodology.
-5. **Be kind and respectful.** Rodgers is named for Fred Rogers — the man who found quiet, genuine compassion compelling. Every comment Rodgers posts should reflect that. Requestors are not interrupting a busy project; they are reaching out and deserve warmth and patience. Even a closed `will-not-do` issue gets a human response. Even a redirect to docs should be warm. Rodgers never sounds curt, dismissive, or performatively helpful.
+5. **Be kind and respectful.** Rodgers is named for Fred Rogers — the man who found quiet, genuine compassion compelling. Every comment Rodgers posts should reflect that. Requestors are not interrupting a busy project; they are reaching out and deserve warmth and patience. Even a closed `will-not-do` issue deserves a human response. Even a redirect to docs should be warm. Rodgers never sounds curt, dismissive, or performatively helpful.
+
+6. **Read and obey per-project agent instructions.** Each project may have an `AGENTS.md`, `CONTRIBUTING.md`, `.claude/`, or similar file that defines project-specific conventions for how work is filed, how bead or issue formats should look, what metadata is required, or how child work units are structured. Rodgers reads this file on every run or at init time. Where the project's instructions contradict Rodgers' default bead methodology, the project's instructions take precedence for that project. Contradictions are surfaced as warnings — Rodgers does not silently override project conventions with its own.
 
 ---
 
@@ -55,29 +57,45 @@ graph LR
 
 Runs `rogers [command]` on a configurable interval (default: 60 minutes). No daemon — each run is a stateless invocation that reads state from GitHub + beads, then exits. State changes are durable in beads or GitHub after each run.
 
+**LLM Runtime**
+
+Rodgers' inference engine. All reasoning, drafting, classification, and decision-making flows through the LLM Runtime.
+
+- **Interface:** OpenAI-compatible API endpoint (configured via `llm.{provider, base_url, model, api_key}` in `config.yaml`)
+- **Prompt strategy:** Rodgers constructs structured prompts for each task type (triage, question-answer, release-decision, bead-filing). Each prompt is grounded with domain context: relevant plan files, recent beads, repo conventions from `AGENTS.md`, conversation history.
+- **Structured output:** Rodgers requests JSON or markdown structured output from the LLM where unambiguous parsing is needed (bead descriptions, label decisions, classification results). Rodgers validates LLM output before acting on it.
+- **Safety:** LLM-composed public comments are reviewed against Rodger's warmth principle before posting. Rodgers never posts raw LLM output without a sanity check.
+- **Tool use:** The LLM can call Rodgers' tools (search docs, search code, file bead, post comment) — Rodgers exposes these as tools in its context, not the LLM as a separate agent.
+
+> Note: "LLM" here means a hosted inference endpoint. Rodgers IS the AI — it thinks and operates using the LLM the same way a human thinks using their brain. The LLM is the engine; Rodgers is the agent.
+
 **Triage Engine**
 
-Reads new and updated issues since the last run. Classifies each as: Bug, Feature Request, Question, or Other. Applies the triage state machine (see plans/triage-workflow-plan.md).
+Reads new and updated issues since the last run. For each issue, Rodgers uses the LLM to classify intent (Bug, Feature Request, Question, or Other), determine information completeness, decide what labels to apply, and draft an initial response. Rodgers then applies the triage state machine (see plans/triage-workflow-plan.md).
 
 **Question Router**
 
-Handles issues classified as Questions. Checks existing docs for answers. Files doc-gap beads if no answer exists. Posts comment links to documentation when available, or informs requestor the question is being addressed when a doc-gap bead is filed.
+Handles issues classified as Questions. Rodgers uses the LLM to understand what the question is asking, then determines whether to source the answer from existing docs, search the codebase, or handle it as a gap. When docs or code provide an answer, Rodgers drafts the response with the LLM and posts it. When no answer exists, Rodgers works with the LLM to file a doc-gap bead and post an acknowledgment (see plans/question-routing-plan.md).
 
 **Release Manager**
 
-Monitors release branches and main for readiness. Proposes releases to a human via a GitHub Discussion when criteria are met. Creates the release branch, git tag, and GitHub Release on human approval. Artifacts are built by CI.
+Monitors release branches and main for readiness. Rodgers uses the LLM to evaluate release criteria, synthesize status across beads and issues, and compose the release proposal as a GitHub Discussion. On human approval, Rodgers creates the release branch, git tag, and GitHub Release. Artifacts are built by CI.
 
 **Backport Manager**
 
-When a fix lands on main or a release branch, creates beads to cherry-pick the fix to older released branches. Files those beads with the correct acceptance criteria and links them to the original fix.
+When a fix lands on main or a release branch, Rodgers uses the LLM to assess whether the fix is cherry-pick-worthy to older releases, draft the backport description, and file the backport bead (see plans/backport-plan.md).
 
 **Bead Controller**
 
-Reads and writes beads. Creates epic beads for complex work. Files child beads under epics. Closes beads when linked GitHub issues are resolved. Manages the bead-to-GitHub-issue linkage table.
+Reads and writes beads. Rodgers uses the LLM to compose bead descriptions from linked GitHub issues — the LLM drafts the "What" and "How" from the issue body, Rodgers links it to plans and acceptance criteria. Rodgers creates epic beads for complex work. Files child beads under epics. Closes beads when linked GitHub issues are resolved. Manages the bead-to-GitHub-issue linkage table.
 
 **GitHub API Client**
 
 Thin wrapper around `reqwest` for the GitHub REST API. Handles auth via PAT from env var. All communication with GitHub flows through this client — no raw API calls outside this module.
+
+**Structured Output Validator**
+
+Validates LLM output before Rodgers acts on it. Rodgers requests structured output from the LLM (JSON or structured markdown) — validator ensures required fields are present and values are within expected bounds before any GitHub or beads write occurs. Acts as a safety net between the LLM and live system state changes.
 
 ---
 
@@ -159,7 +177,37 @@ Every GitHub comment Rodgers posts should reflect genuine warmth and respect —
 
 ## Configuration
 
-All configuration via `config.yaml` at the repo root, with env-var overrides.
+Rodgers uses a two-layer configuration model:
+
+**Layer 1 — Host config (`config.yaml`)**
+Located at the Rodgers host's repo root. Contains all defaults: scheduler interval, GitHub credentials, beads storage, triage settings, release branches.
+
+**Layer 2 — Repo config (`rogers.yaml`)**
+Located at the root of the managed repository's default branch. If present, this file overrides and augments the host config for everything specific to how this project wants Rodgers to operate. The repo config is version-controlled alongside the project code — when someone changes `rogers.yaml`, it is reviewed and merged like any other file, and Rodgers picks up the new config on its next poll cycle.
+
+**Precedence:** Repo-level `rogers.yaml` wins over host-level `config.yaml` for any overlapping keys. Unspecified keys fall through to the host config. This means a minimal `rogers.yaml` can override just `triage.assignees` while leaving all other settings at host defaults.
+
+**What `rogers.yaml` can configure (any `config.yaml` key plus repo-specific keys):**
+- All `config.yaml` keys
+- `rogation.ignore_labels` — labels that suppress Rodger's processing (e.g., `pinned`, `ignore`)
+- `rogation.labels_never_bot_managed` — labels Rodgers will never add/manage (humans own these)
+- `rogation.custom_type_names` — any project-specific bead type aliases
+- `rogation.format` — project-specific bead description format (overrides Rodgers' default format)
+- `rogation.agent_file` — explicit path to the project's agent instruction file if non-standard
+
+**Lookup order for agent instruction files:**
+1. `rogation.agent_file` in `rogers.yaml` (if set)
+2. `.claude/AGENTS.md`
+3. `.claude/CONTRIBUTING.md`
+4. `AGENTS.md`
+5. `CONTRIBUTING.md`
+6. `.github/AGENTS.md`
+
+**What Rodgers does when `rogers.yaml` is changed:**
+- Rodgers detects config changes on every scheduler poll cycle (compares last-known SHA)
+- If the file changed, Rodgers logs the old vs. new SHA
+- Rodgers re-reads and merges the new config at the start of the next run
+- Rodgers surfaces any new contradictions with its bead methodology as `doctor` warnings in the next run
 
 Relevant config keys:
 - `scheduler.interval_minutes` — polling interval
@@ -168,6 +216,8 @@ Relevant config keys:
 - `triage.{default_labels, bot_labels, close_labels, assignees}` — triage behavior
 - `release.approval_discussion_category` — GitHub Discussion category for release approvals
 - `release.active_branches` — list of active release branches (for backport evaluation)
+- `rogation.{ignore_labels, labels_never_bot_managed, custom_type_names, format, agent_file}` — repo-level overrides
+- `llm.{provider, base_url, model, api_key}` — LLM inference endpoint
 
 ---
 
@@ -188,3 +238,6 @@ Relevant config keys:
 - [ ] AC-5: Configuration supports env-var overrides for all keys
 - [ ] AC-6: No code paths exist that communicate with anyone outside GitHub Issues or Discussions
 - [ ] AC-7: Rodgers posts no public comment that is not warm, respectful, and in keeping with the Fred Rogers namesake principle
+- [ ] AC-8: Rodgers uses an LLM (OpenAI-compatible API) for all reasoning, classification, drafting, and decision-making at runtime
+- [ ] AC-9: LLM output is validated by the Structured Output Validator before Rodgers acts on it (writes to GitHub or beads)
+- [ ] AC-10: Rodgers can operate with any OpenAI-compatible LLM endpoint configured via `llm.base_url`

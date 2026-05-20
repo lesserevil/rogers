@@ -115,16 +115,19 @@ When the `chore` bead (metadata: `rodgers:type=docs`) is closed, Rodgers verifie
 
 ```mermaid
 flowchart TD
-    A["issue labeled question?"] --> B["Rodgers has already\ncommented?"]
+    A["issue labeled question?"] --> B["LLM-driven triage:\nHas Rodgers already\ncommented?"]
     B -->|"YES"| C["No-op\n(already handled)"]
-    B -->|"NO"| D["Search docs/"]
-    D -->|"Doc found"| E["Post comment with link\nclose issue if fully answered"]
-    D -->|"Doc not found"| F["Question about\ncode internals?"]
-    F -->|"NO"| G["File chore bead\nrodgers:type=docs\nPost acknowledgment\nLabel issue needs-documentation\nremove question label"]
-    F -->|"YES"| H["Search source code\nsrc/, lib/, *.rs, *.py, etc."]
-    H -->|"Answer found in code"| I["Post code explanation\ncomment\nClose if fully answered\nDo NOT file bead"]
-    H -->|"No answer found"| G
+    B -->|"NO"| D["LLM understands the question\nPrompts: what is being asked?\nShould we answer from docs,\ncode, or file a gap?"]
+    D -->|"answer in docs"| E["LLM drafts warm reply\nwith doc link\npost and close if complete"]
+    D -->|"answer in code"| F["LLM reads source\nExplains implementation\nCite file, function, lines\nClose if fully answered"]
+    D -->|"no answer found"| G["LLM drafts acknowledgment\nFiles doc-gap chore bead\nPosts comment, labels\nneeds-documentation"]
 ```
+
+**LLM prompt for question routing (Step 1→2):**
+- Provide: question title, body, all prior comments, existing labels
+- Provide: project domain context from AGENTS.md
+- Ask: "Is this a genuine question that can be answered from documentation or source code? Or is this actually a bug report or feature request in disguise? What specific information would be needed to answer this question?"
+- Ask: "Should Rodgers search the codebase for implementation details, or is the answer in user-facing documentation?"
 
 ---
 
@@ -134,7 +137,7 @@ flowchart TD
 
 **Question is too vague to answer.** Rodgers posts a comment asking for clarification before the doc search. Once clarification is received, it restarts from Step 2.
 
-**Multiple questions in one issue.** Treat as one question — the primary question. If the issue clearly contains semantically distinct questions, file separate `chore` beads (`rodgers:type=docs`) for each.
+**Multiple questions in one issue.** Treat as multiple questions. Answer each question in a separate comment. For those questions which require beads, file separate `chore` beads (`rodgers:type=docs`) for each.
 
 **Doc search returns false positives.** Rodgers presents the most relevant doc link. If the requestor says the linked doc doesn't answer their question, treat as Step 3b — file a `chore` bead (`rodgers:type=docs`).
 

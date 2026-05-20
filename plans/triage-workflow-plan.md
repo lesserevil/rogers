@@ -31,13 +31,16 @@ Every issue starts in one of these top-level categories:
 | `question` | Question | plans/question-routing-plan.md |
 | (no relevant label) | Unclassified | Step 1 of this plan |
 
-Rodgers determines the initial label:
-- If the issue author or body suggests a bug → apply `bug`
-- If the issue author or body suggests a feature request → apply `feature`
-- If the issue is a question (phrased as a question, asking for help rather than requesting a change) → apply `question`
-- Otherwise → apply `question` as a default (people filing issues often have questions they don't know how to phrase)
+**How Rodgers classifies:** Rodgers sends the issue (title + body + author context) to the LLM with a structured prompt asking it to classify intent (Bug, Feature, Question), assess information completeness, and return a structured decision. Rodgers validates the LLM response with the Structured Output Validator before acting on it.
 
-Labels are applied only when Rodgers is the first to triage the issue. If another label is already present, Rodgers respects it and uses the existing classification.
+**Prompt strategy for classification:**
+- Provide: issue metadata (title, body, author, existing labels, prior comments)
+- Provide: brief domain context from AGENTS.md or rogers.yaml if found
+- Ask: "What type is this: Bug, Feature, Question, or Other? What information is present and what is missing? Should Rodgers act on this, ignore it, or escalate?"
+
+**Default behavior:** If the LLM cannot determine the type with confidence, Rodgers defaults to `question` — people filing issues often have questions they don't know how to phrase.
+
+**Respects existing human labels:** If another label is already present from a previous triage run, Rodgers uses the existing classification and does not override it. Rodgers only applies the initial label on first encounter.
 
 ---
 
@@ -99,7 +102,7 @@ stateDiagram-v2
 
 **Entry:** Issue is labeled `bug` or `feature` but is missing required information for its type.
 
-**Action:** Rodgers posts a comment requesting the specific missing information. Applies `needs-information` label. The specific field(s) requested are enumerated in the comment.
+**Action:** Rodgers prompts the LLM to read the issue and determine exactly what information is missing (reproduction steps for a bug, acceptance criteria for a feature, scope for a large feature). The LLM drafts a specific, warm comment requesting exactly what is needed. Rodgers validates the comment with the Structured Output Validator before posting. Rodgers applies `needs-information` label.
 
 **Exit:** When the requestor responds, the next triage run processes the new comment as a state machine restart from `NEW`.
 
@@ -107,7 +110,7 @@ stateDiagram-v2
 
 **Entry:** Issue is labeled `question` but Rodgers needs clarification to understand what is being asked.
 
-**Action:** Rodgers posts a comment asking for clarification. Applies `needs-information` label.
+**Action:** Rodgers prompts the LLM to read the issue and draft a question asking for clarification. Rodgers validates and posts the comment. Applies `needs-information` label.
 
 **Exit:** Same as bug/feature incomplete.
 
@@ -124,19 +127,19 @@ When Rodgers sees `needs-information` applied, it checks:
 
 **Entry:** No response for 28 days after `needs-information` was applied.
 
-**Action:** Rodgers posts a comment: "We haven't heard back on the information needed to move this forward. If you still want to pursue this, please reopen with the requested details." The issue is then closed.
+**Action:** Rodgers prompts the LLM to draft a warm, non-accusatory closure notice. Rodgers validates and posts the comment. Closes the issue.
 
 ### SEARCH_DOCS
 
 **Entry:** Issue labeled `question` has sufficient information to identify what is being asked.
 
-**Action:** Rodgers searches `docs/` for an answer. See plans/question-routing-plan.md for search scope and decision logic.
+**Action:** Rodgers searches `docs/` for an answer. See plans/question-routing-plan.md for search scope and decision logic. Rodgers also may ask the LLM to determine if a code search is warranted (questions about implementation details).
 
 ### DOC_FOUND
 
 **Entry:** Rodgers found documentation that answers the question.
 
-**Action:** Rodgers posts a comment with the doc link. Closes the issue if the answer fully resolves the question; leaves open if follow-up is expected. See plans/question-routing-plan.md §Step 3a.
+**Action:** Rodgers prompts the LLM to read the docs link and draft a comment that is warm, links to the relevant doc, and summarizes the answer in one or two sentences. Rodgers validates and posts the comment. Closes the issue if the answer fully resolves the question; leaves open if follow-up is expected. See plans/question-routing-plan.md §Step 3a.
 
 ### DOC_GAP
 
@@ -158,27 +161,13 @@ When Rodgers sees `needs-information` applied, it checks:
 
 **Entry:** Human has applied `will-not-do`.
 
-**Action:** Rodgers posts a comment on the issue:
-
-```
-Thank you for this [bug report / feature request]. After review, we have decided not to pursue this at this time.
-
-[Optional brief reason from the reviewer.]
-```
-
-Rodgers closes the issue. No further action.
+**Action:** Rodgers prompts the LLM to draft a warm, empathetic closure comment referencing the issue content. Optional: the human reviewer's brief reason (Rodgers extracts this from comments on the `will-not-do` label application). Rodgers validates and posts the comment. Rodgers closes the issue. No further action.
 
 ### READY-FOR-WORK
 
 **Entry:** Human has applied `ready-for-work`.
 
-**Action:** Rodgers triggers the appropriate workflow:
-
-- `bug` → creates epic bead + child beads following plans/feature-bug-plan.md
-- `feature` → creates epic bead + child beads following plans/feature-bug-plan.md
-- `question` → should not reach this state (questions are resolved via docs workflow)
-
-Rodgers posts a comment linking to the epic bead and applies `in-progress` or a project-status label if configured.
+**Action:** Rodgers prompts the LLM to summarize the issue into a bead description ("What" and "How" from the issue body). Rodgers validates the bead description and files the epic bead + child beads following plans/feature-bug-plan.md. Rodgers posts a comment linking to the epic bead and applies `in-progress` or a project-status label if configured.
 
 ### IN_PROGRESS
 
@@ -220,10 +209,11 @@ Rodgers posts a comment linking to the epic bead and applies `in-progress` or a 
 
 ## Acceptance Criteria
 
-- [ ] CRIT-1: Every new issue is processed within one triage run and assigned an initial label (`bug`, `feature`, or `question`)
-- [ ] CRIT-2: An issue in `INCOMPLETE` state is never moved to `READY-FOR-REVIEW` until the required information for its type is present
+- [ ] CRIT-1: Every new unclassified issue label (`bug`, `feature`, or `question`) from the validated LLM response
+- [ ] CRIT-2: An issue in `INCOMPLETE` state is never moved to `READY-FOR-REVIEW` until the LLM confirms completeness based on issue type requirements
 - [ ] CRIT-3: Rodgers transitions `READY-FOR-REVIEW` → `WILL-NOT-DO` or `READY-FOR-WORK` only on human action (human applies the label)
-- [ ] CRIT-4: When transitioning to `WILL-NOT-DO`, Rodgers posts a closure comment and closes the GitHub issue within one triage run
-- [ ] CRIT-5: When transitioning to `READY-FOR-WORK`, Rodgers files the epic bead + child beads within one triage run and posts a comment linking to the epic
-- [ ] CRIT-6: An issue with `needs-information` that has had no response for more than 14 days gets a gentle ping. After 28 days total with no response, the issue is closed with a stale notice.
+- [ ] CRIT-4: When transitioning to `WILL-NOT-DO`, Rodgers drafts and posts an LLM-composed closure comment, then closes the issue within one triage run
+- [ ] CRIT-5: When transitioning to `READY-FOR-WORK`, Rodgers drafts a bead description with the LLM, files the epic+child beads within one triage run, and posts a comment linking to the epic
+- [ ] CRIT-6: An issue with `needs-information` that has had no response for more than 14 days receives an LLM-drafted ping. After 28 days total with no response, the issue is closed with an LLM-drafted stale notice.
 - [ ] CRIT-7: Rodgers never makes a human gate decision (`will-not-do`, `ready-for-work`) on its own — it only observes and acts on the human's label applied to the GitHub issue
+- [ ] CRIT-8: All public comments Rodgers posts are LLM-drafted, validated by the Structured Output Validator, and reviewed against Rodger's warmth principle before being sent to GitHub

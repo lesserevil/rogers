@@ -34,8 +34,7 @@ Validates `config.yaml` against the Rodgers configuration schema. Fails fast on 
 3. **`scheduler.interval_minutes` is a positive integer.** Rodgers should not accept an interval of 0 or negative.
 4. **`github.token` is non-empty and does not look like a placeholder.** Warn if the token value matches common placeholder strings (`YOUR_TOKEN`, `ghp_...` with obvious sample values).
 5. **`release.active_branches` is a non-empty list if releases are configured.** Warn if no release branches are configured — Rodgers' backport manager depends on this.
-6. **`triage.default_labels` is non-empty.** Rodgers needs at least one default label to apply to un triaged issues.
-7. **`triage.bot_labels` does not overlap with `triage.close_labels`.** Overlap between bot-managed labels and labels that trigger closing creates a race condition.
+7. **`rogation.labels_never_bot_managed` does not include Rodgers-required labels.** If `rogation.labels_never_bot_managed` contains any of `bug`, `feature`, `question`, `needs-information`, `needs-documentation`, `ready-for-review`, `will-not-do`, `ready-for-work`, `in-progress`, Rodgers warns — these labels are required for Rodgers' workflow. A project that marks `needs-documentation` as never-managed is asking Rodgers to operate with one hand tied behind its back.
 
 ### Output
 
@@ -169,6 +168,8 @@ Detects cases where GitHub state and beads state have diverged. This is the most
 3. **Open beads with no GitHub issue linkage.** Beads should always link to a GitHub issue or discussion. Orphan beads — beads with no `github_issue_url` — are flaggable. Some may be intentional (internal tracking beads), but Rogers should surface them for review.
 4. **Labeled issues with no corresponding bead.** If an issue has `ready-for-work` label but no `rodgers:type=feature` or `rodgers:type=bug` bead is linked to it, Rodgers may have lost track of the work. Flag this.
 5. **Release-proposed issues not in a release milestone.** Rodgers should track which issues are associated with each release. If a bead marks something as `release=X.Y` but the corresponding GitHub issue is not in the `X.Y` milestone, flag this.
+
+6. **Beads filed without following project's AGENTS.md conventions.** If the repository has an `AGENTS.md` or similar file, Rodgers compares recently filed beads against the conventions described there. If a bead is missing a field the AGENTS.md requires, has the wrong type, or uses a format the AGENTS.md forbids, Rodgers flags it as a convention drift event.
 
 ### Output
 

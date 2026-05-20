@@ -15,7 +15,7 @@ Run with: `rogers init --repo owner/repo [--fix]`
 
 ## What Rodgers Needs
 
-Before Rodgers can manage a project responsibly, certain prerequisites must be in place. Rodgers should not operate on a project that has open permissions for random contributors to modify labels, create branches freely, or bypass required reviewers. It also needs issue templates to route incoming reports, GitHub Actions for releases, and the correct label set.
+Before Rodgers can manage a project responsibly, certain prerequisites must be in place. Rodgers should not operate on a project that has open permissions for random contributors to modify labels, create branches freely, or bypass required reviewers. It also needs issue templates to route incoming reports, GitHub Actions for releases, the correct label set, and if the project has an `AGENTS.md` or similar file, Rodgers must read it and reconcile any contradictions with its own bead methodology before operating.
 
 `rogers init` verifies all of these. It does not modify GitHub repository settings that require admin privileges — it audits and reports, and with `--fix`, it attempts to apply only the changes that are available to the authenticated user.
 
@@ -133,6 +133,68 @@ With `--fix`, Rodgers creates the category via the GitHub API.
 **What `rogers init` reports:**
 - `warn` → A configured release branch has no branch protection rules
 - `info` → All configured release branches are protected
+
+---
+
+### 8. Per-Project Agent Instructions
+
+**Severity:** blocker (for contradictions only)
+**Fixability:** info
+**Check:** Rodgers looks for agent-instruction files in the repository root and `.github/` directory.
+
+**Files Rodgers looks for (checked in order; first found wins):**
+- `.claude/AGENTS.md` — Claude agent instructions
+- `.claude/CONTRIBUTING.md` — Claude-specific contributing guide
+- `AGENTS.md` — generic agent instructions
+- `CONTRIBUTING.md` — contributing guide that may include agent instructions
+- `.github/AGENTS.md` — project-level agent instructions
+
+**What `rogers init` does when a file is found:**
+1. Rodgers reads and parses the file
+2. Rodgers compares the bead/issue format instructions found against Rodgers' own bead methodology (built-in types, `rodgers:type` metadata, plan file references, acceptance criteria format)
+3. Rodgers surfaces any **contradictions** as `blocker` findings — contradictions mean Rodgers' default behavior would conflict with the project's stated conventions, and Rodgers cannot safely operate until this is resolved
+4. Rodgers surfaces any **gaps** (project describes a workflow Rodgers has no plan for) as `warn` findings
+
+**Contradiction examples:**
+- Project's AGENTS.md requires `--type=issue-tracker` but Rodgers uses only built-in bd types → blocker
+- Project requires a `priority` field in bead descriptions but Rodgers doesn't populate it by default → blocker
+- Project requires all beads to reference a `milestone` tag but Rodgers' `milestone` bead type is optional → warn
+- Project requires PR titles to follow a specific format but Rodgers doesn't control PR titles → warn
+
+**What `rogers init` reports:**
+- `blocker` → A contradiction exists between agent instructions and Rodgers' bead methodology that would cause incorrect behavior
+- `warn` → Agent instructions found with gaps Rodgers cannot cover (no plan for the described workflow)
+- `info` → Agent instructions found and fully compatible with Rodgers' methodology
+
+**What `rogers init` does NOT do:**
+- Rodgers does not attempt to resolve contradictions automatically
+- Rodgers does not modify the project's AGENTS.md file
+- Rodgers does not refuse to run if no agent instructions file is found (it falls back to its default methodology)
+
+Rodgers logs the found file path and version (first line / frontmatter) so it is clear which file is being used.
+
+---
+
+### 9. Repo-Level Rodgers Configuration
+
+**Severity:** info
+**Fixability:** info
+**Check:** Check whether the repository has a `rogers.yaml` file at its root. Rodgers uses this file to override host-level config for this repository's management.
+
+**What `rogers init` reports:**
+- `info` → `rogers.yaml` found at commit SHA {sha} — Rodgers will use these settings when operating on this repo
+- `info` → No `rogers.yaml` found — Rodgers will use host-level `config.yaml` for all settings
+
+**What `rogers init` does with the file:**
+1. Fetch and parse the repo's `rogers.yaml`
+2. Merge it with the host's `config.yaml` (repo-level wins for overlapping keys)
+3. Validate the merged config against Rodgers' schema (failures are blockers, partial/false schema keys are warnings)
+4. Report mismatches: if the repo's `rogers.yaml` specifies settings that contradict Rodgers' expected behavior, surface as blockers
+
+**Example blocker from a bad `rogers.yaml`:**
+- Repo config sets `rogation.labels_never_bot_managed` to include a label Rodgers needs to manage for its triage workflow → blocker ("Rodgers cannot operate if `needs-documentation` is marked as never-managed")
+
+**rodgers init should never refuse to run just because no rogers.yaml exists** — the absence of `rogers.yaml` means host config applies, which is a valid deployment mode.
 
 ---
 
