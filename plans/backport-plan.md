@@ -99,7 +99,7 @@ The bead links back to the original GitHub issue and the source commit via `disc
 
 ## Approval to Backport
 
-Like releases, backports require human approval before Rodgers creates the PR. Rodgers requests approval via a GitHub Discussion in the same category used for releases:
+Like releases, backports require human approval before Rodgers creates the PR. Rodgers requests approval via a GitHub Discussion in the same category used for releases (`release.approval_discussion_category`). The approval uses the same voting window and stale-threshold timing as release approvals (`release.voting_window_days`, `release.stale_threshold_days`).
 
 ```
 ## Backport Proposal
@@ -179,3 +179,7 @@ release:
 - [ ] CRIT-4: A human 👍 approval triggers the creation of a backport branch and PR targeting the correct release branch within one triage run
 - [ ] CRIT-5: If a backport has merge conflicts, Rodgers files a conflict-resolution bead and posts an alert comment, but does not attempt autonomous conflict resolution
 - [ ] CRIT-6: When a backport PR is merged, Rodgers closes the corresponding backport bead and checks for release completeness
+- [ ] CRIT-7: The backport approval Discussion body contains at minimum: the commit SHA, the commit message, the source GitHub issue number, and the target release branch — all extracted directly from the merged commit and linked issue at creation time
+- [ ] CRIT-8: A 👎 reaction (or a rejection comment) on the approval Discussion halts the backport and Rodgers posts a comment acknowledging the rejection and asking for guidance within one triage run of detecting the reaction
+- [ ] CRIT-9: If no 👍 or 👎 reaction is received within `release.voting_window_days`, Rodgers posts a reminder comment on the Discussion
+- [ ] CRIT-10: If no human response is received within `release.stale_threshold_days` (total, including the voting window and any pings), Rodgers closes the Discussion, files a revisit bead, and does not proceed with the backport
