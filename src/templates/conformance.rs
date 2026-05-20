@@ -62,7 +62,10 @@ pub struct ConformanceResult {
 /// using a template or submitted as freeform text.
 pub const TEMPLATE_MARKERS: &[(&str, TemplateType)] = &[
     ("<!-- template: bug_report -->", TemplateType::BugReport),
-    ("<!-- template: feature_request -->", TemplateType::FeatureRequest),
+    (
+        "<!-- template: feature_request -->",
+        TemplateType::FeatureRequest,
+    ),
     ("<!-- template: question -->", TemplateType::Question),
 ];
 
@@ -73,7 +76,7 @@ pub const TEMPLATE_MARKERS: &[(&str, TemplateType)] = &[
 pub const EMAIL_REPLY_PATTERNS: &[&str] = &[
     "GitHub Email Reply",
     "Sent from the GitHub API",
-    "On <day>",
+    "On ",
     "<https://github.com/",
 ];
 
@@ -286,15 +289,27 @@ Something broken
     #[test]
     fn test_template_type_display_name() {
         assert_eq!(TemplateType::BugReport.display_name(), "Bug Report");
-        assert_eq!(TemplateType::FeatureRequest.display_name(), "Feature Request");
+        assert_eq!(
+            TemplateType::FeatureRequest.display_name(),
+            "Feature Request"
+        );
         assert_eq!(TemplateType::Question.display_name(), "Question");
     }
 
     #[test]
     fn test_template_type_marker() {
-        assert_eq!(TemplateType::BugReport.marker(), "<!-- template: bug_report -->");
-        assert_eq!(TemplateType::FeatureRequest.marker(), "<!-- template: feature_request -->");
-        assert_eq!(TemplateType::Question.marker(), "<!-- template: question -->");
+        assert_eq!(
+            TemplateType::BugReport.marker(),
+            "<!-- template: bug_report -->"
+        );
+        assert_eq!(
+            TemplateType::FeatureRequest.marker(),
+            "<!-- template: feature_request -->"
+        );
+        assert_eq!(
+            TemplateType::Question.marker(),
+            "<!-- template: question -->"
+        );
     }
 
     #[test]

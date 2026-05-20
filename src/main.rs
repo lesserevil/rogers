@@ -3,7 +3,7 @@
 use clap::Parser;
 use tracing::info;
 
-use rogers::{init::check_and_suggest_templates, Result};
+use rogers::{Result, init::check_and_suggest_templates};
 
 pub mod cli;
 
@@ -31,11 +31,11 @@ fn run(cli: cli::Cli) -> Result<()> {
             github_token: _,
         } => {
             info!(repo = repo, "Running init check");
-            
+
             let auto_suggest = true;
-            
+
             let result = check_and_suggest_templates(&repo, vec![], auto_suggest);
-            
+
             if result.bead_filed {
                 println!("Init check complete for {}", repo);
                 println!("Templates missing - bead filed with suggested templates:");
@@ -52,6 +52,6 @@ fn run(cli: cli::Cli) -> Result<()> {
             println!("Doctor command not yet implemented");
         }
     }
-    
+
     Ok(())
 }

@@ -5,7 +5,7 @@
 //! - Template discovery and validation
 //! - Bead filing when templates are missing and auto_suggest=true
 
-use crate::templates::{TemplateDiscovery, TEMPLATE_BEAD_TITLE, TEMPLATE_BEAD_TYPE_LABEL};
+use crate::templates::{TEMPLATE_BEAD_TITLE, TEMPLATE_BEAD_TYPE_LABEL, TemplateDiscovery};
 
 /// Configuration for templates section.
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -21,24 +21,14 @@ fn default_auto_suggest() -> bool {
 
 impl Default for TemplatesConfig {
     fn default() -> Self {
-        Self {
-            auto_suggest: true,
-        }
+        Self { auto_suggest: true }
     }
 }
 
 /// Full Rodgers configuration.
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct RodgersConfig {
     pub templates: TemplatesConfig,
-}
-
-impl Default for RodgersConfig {
-    fn default() -> Self {
-        Self {
-            templates: TemplatesConfig::default(),
-        }
-    }
 }
 
 /// Result of running init checks.
@@ -69,14 +59,18 @@ impl InitCheckResult {
     ///
     /// In a real implementation, this would query the GitHub API to check
     /// for existing templates. For now, it uses the provided discovery result.
-    pub fn with_template_discovery(mut self, discovery: TemplateDiscovery, auto_suggest: bool) -> Self {
+    pub fn with_template_discovery(
+        mut self,
+        discovery: TemplateDiscovery,
+        auto_suggest: bool,
+    ) -> Self {
         self.template_discovery = discovery;
-        
+
         if self.template_discovery.should_file_bead(auto_suggest) {
             self.bead_filed = true;
             self.bead_body = Some(self.template_discovery.generate_bead_body());
         }
-        
+
         self
     }
 
@@ -104,10 +98,10 @@ pub fn check_and_suggest_templates(
     auto_suggest: bool,
 ) -> InitCheckResult {
     let discovery = TemplateDiscovery::new(repository.to_string()).with_templates(found_templates);
-    
+
     let result = InitCheckResult::new(repository.to_string())
         .with_template_discovery(discovery, auto_suggest);
-    
+
     if result.bead_filed {
         tracing::info!(
             repository = result.repository,
@@ -120,7 +114,7 @@ pub fn check_and_suggest_templates(
             "Templates complete or auto_suggest disabled, no bead filed"
         );
     }
-    
+
     result
 }
 
@@ -136,17 +130,15 @@ mod tests {
 
     #[test]
     fn test_init_result_no_bead_when_templates_complete() {
-        let result = InitCheckResult::new("owner/repo".to_string())
-            .with_template_discovery(
-                TemplateDiscovery::new("owner/repo".to_string())
-                    .with_templates(vec![
-                        "bug_report.md".to_string(),
-                        "feature_request.md".to_string(),
-                        "question.md".to_string(),
-                    ]),
-                true,
-            );
-        
+        let result = InitCheckResult::new("owner/repo".to_string()).with_template_discovery(
+            TemplateDiscovery::new("owner/repo".to_string()).with_templates(vec![
+                "bug_report.md".to_string(),
+                "feature_request.md".to_string(),
+                "question.md".to_string(),
+            ]),
+            true,
+        );
+
         assert!(!result.bead_filed);
         assert!(result.bead_body.is_none());
     }
@@ -154,11 +146,8 @@ mod tests {
     #[test]
     fn test_init_result_bead_when_no_templates_and_auto_suggest() {
         let result = InitCheckResult::new("owner/repo".to_string())
-            .with_template_discovery(
-                TemplateDiscovery::new("owner/repo".to_string()),
-                true,
-            );
-        
+            .with_template_discovery(TemplateDiscovery::new("owner/repo".to_string()), true);
+
         assert!(result.bead_filed);
         assert!(result.bead_body.is_some());
         let body = result.bead_body.unwrap();
@@ -170,11 +159,8 @@ mod tests {
     #[test]
     fn test_init_result_no_bead_when_no_templates_and_auto_suggest_false() {
         let result = InitCheckResult::new("owner/repo".to_string())
-            .with_template_discovery(
-                TemplateDiscovery::new("owner/repo".to_string()),
-                false,
-            );
-        
+            .with_template_discovery(TemplateDiscovery::new("owner/repo".to_string()), false);
+
         assert!(!result.bead_filed);
         assert!(result.bead_body.is_none());
     }
@@ -182,7 +168,10 @@ mod tests {
     #[test]
     fn test_bead_title_is_correct() {
         let result = InitCheckResult::new("owner/repo".to_string());
-        assert_eq!(result.bead_title(), "Project missing issue templates - suggested templates available");
+        assert_eq!(
+            result.bead_title(),
+            "Project missing issue templates - suggested templates available"
+        );
     }
 
     #[test]
@@ -193,12 +182,9 @@ mod tests {
 
     #[test]
     fn test_check_and_suggest_templates_creates_result() {
-        let result = check_and_suggest_templates(
-            "owner/repo",
-            vec!["bug_report.md".to_string()],
-            true,
-        );
-        
+        let result =
+            check_and_suggest_templates("owner/repo", vec!["bug_report.md".to_string()], true);
+
         assert_eq!(result.repository, "owner/repo");
         assert!(result.bead_filed);
         assert!(result.bead_body.is_some());

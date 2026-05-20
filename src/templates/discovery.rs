@@ -9,11 +9,7 @@ use super::defaults;
 use serde::{Deserialize, Serialize};
 
 /// Required template files for Rodgers to function.
-pub const REQUIRED_TEMPLATES: &[&str] = &[
-    "bug_report.md",
-    "feature_request.md",
-    "question.md",
-];
+pub const REQUIRED_TEMPLATES: &[&str] = &["bug_report.md", "feature_request.md", "question.md"];
 
 /// Result of template discovery for a repository.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,13 +70,13 @@ impl TemplateDiscovery {
     /// templates that can be used to populate `.github/ISSUE_TEMPLATE/`.
     pub fn generate_bead_body(&self) -> String {
         let mut body = String::new();
-        
+
         body.push_str("# Suggested Issue Templates\n\n");
         body.push_str("This project is missing issue templates. ");
         body.push_str("Rodgers provides the following suggested templates.\n\n");
         body.push_str("To use these, create the files in `.github/ISSUE_TEMPLATE/`:\n\n");
         body.push_str("---\n\n");
-        
+
         for (filename, title, content) in defaults::ALL_DEFAULT_TEMPLATES {
             body.push_str(&format!("## `{}` — {}\n\n", filename, title));
             body.push_str("```markdown\n");
@@ -88,12 +84,16 @@ impl TemplateDiscovery {
             body.push_str("\n```\n\n");
             body.push_str("---\n\n");
         }
-        
+
         body.push_str("## Usage Notes\n\n");
         body.push_str("- Copy each template into `.github/ISSUE_TEMPLATE/<filename>`\n");
-        body.push_str("- Templates are governed by project decision — review and modify before committing\n");
-        body.push_str("- Rodgers uses these templates to structure issue routing and completeness checking\n");
-        
+        body.push_str(
+            "- Templates are governed by project decision — review and modify before committing\n",
+        );
+        body.push_str(
+            "- Rodgers uses these templates to structure issue routing and completeness checking\n",
+        );
+
         body
     }
 
@@ -107,7 +107,8 @@ impl TemplateDiscovery {
 }
 
 /// The bead title when filing for missing templates.
-pub const TEMPLATE_BEAD_TITLE: &str = "Project missing issue templates - suggested templates available";
+pub const TEMPLATE_BEAD_TITLE: &str =
+    "Project missing issue templates - suggested templates available";
 
 /// The label to apply for template infrastructure beads.
 pub const TEMPLATE_BEAD_TYPE_LABEL: &str = "infra";
@@ -119,7 +120,7 @@ mod tests {
     #[test]
     fn test_discovery_with_no_templates() {
         let discovery = TemplateDiscovery::new("owner/repo".to_string());
-        
+
         assert!(!discovery.directory_exists);
         assert!(!discovery.has_any_templates());
         assert!(!discovery.all_required_present());
@@ -130,24 +131,31 @@ mod tests {
     fn test_discovery_with_some_templates() {
         let discovery = TemplateDiscovery::new("owner/repo".to_string())
             .with_templates(vec!["bug_report.md".to_string()]);
-        
+
         assert!(discovery.directory_exists);
         assert!(discovery.has_any_templates());
         assert!(!discovery.all_required_present());
         assert_eq!(2, discovery.missing_templates.len());
-        assert!(discovery.missing_templates.contains(&"feature_request.md".to_string()));
-        assert!(discovery.missing_templates.contains(&"question.md".to_string()));
+        assert!(
+            discovery
+                .missing_templates
+                .contains(&"feature_request.md".to_string())
+        );
+        assert!(
+            discovery
+                .missing_templates
+                .contains(&"question.md".to_string())
+        );
     }
 
     #[test]
     fn test_discovery_with_all_templates() {
-        let discovery = TemplateDiscovery::new("owner/repo".to_string())
-            .with_templates(vec![
-                "bug_report.md".to_string(),
-                "feature_request.md".to_string(),
-                "question.md".to_string(),
-            ]);
-        
+        let discovery = TemplateDiscovery::new("owner/repo".to_string()).with_templates(vec![
+            "bug_report.md".to_string(),
+            "feature_request.md".to_string(),
+            "question.md".to_string(),
+        ]);
+
         assert!(discovery.directory_exists);
         assert!(discovery.has_any_templates());
         assert!(discovery.all_required_present());
@@ -169,12 +177,11 @@ mod tests {
 
     #[test]
     fn test_should_not_file_bead_when_templates_complete() {
-        let discovery = TemplateDiscovery::new("owner/repo".to_string())
-            .with_templates(vec![
-                "bug_report.md".to_string(),
-                "feature_request.md".to_string(),
-                "question.md".to_string(),
-            ]);
+        let discovery = TemplateDiscovery::new("owner/repo".to_string()).with_templates(vec![
+            "bug_report.md".to_string(),
+            "feature_request.md".to_string(),
+            "question.md".to_string(),
+        ]);
         assert!(!discovery.should_file_bead(true));
     }
 
@@ -189,9 +196,9 @@ mod tests {
     fn test_bead_body_contains_all_templates() {
         let discovery = TemplateDiscovery::new("owner/repo".to_string())
             .with_templates(vec!["bug_report.md".to_string()]);
-        
+
         let body = discovery.generate_bead_body();
-        
+
         assert!(body.contains("bug_report.md"));
         assert!(body.contains("feature_request.md"));
         assert!(body.contains("question.md"));
@@ -204,7 +211,7 @@ mod tests {
     fn test_bead_body_contains_usage_notes() {
         let discovery = TemplateDiscovery::new("owner/repo".to_string());
         let body = discovery.generate_bead_body();
-        
+
         assert!(body.contains("Usage Notes"));
         assert!(body.contains(".github/ISSUE_TEMPLATE/"));
     }

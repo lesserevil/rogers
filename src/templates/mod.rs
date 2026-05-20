@@ -11,7 +11,7 @@ pub mod defaults;
 pub mod discovery;
 
 pub use conformance::{
-    check_conformance, is_email_reply, is_non_conforming, ConformanceResult, TemplateType,
+    ConformanceResult, TemplateType, check_conformance, is_email_reply, is_non_conforming,
 };
 pub use defaults::{BUG_REPORT_TEMPLATE, FEATURE_REQUEST_TEMPLATE, QUESTION_TEMPLATE};
 pub use discovery::{

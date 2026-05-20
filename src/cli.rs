@@ -60,8 +60,5 @@ pub enum Commands {
     },
 }
 
-impl Cli {
-    pub fn parse() -> Self {
-        Self::parse_from_env_or_exit()
-    }
-}
+// Cli derives Parser which provides parse() and try_parse() static methods
+// No additional implementation needed
