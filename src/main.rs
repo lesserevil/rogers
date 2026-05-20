@@ -9,6 +9,8 @@ mod config;
 mod error;
 mod github;
 mod labels;
+mod llm;
+mod triage;
 
 use cli::{Cli, Commands};
 use config::validation::load_and_validate_config;
