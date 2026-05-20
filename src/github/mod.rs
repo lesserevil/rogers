@@ -7,3 +7,6 @@
 pub mod client;
 
 pub use client::{GitHubClient, GitHubComment, GitHubIssue, GitHubLabel, GitHubUser};
+
+/// Backward compatibility alias
+pub type OldGitHubClient = GitHubClient;
