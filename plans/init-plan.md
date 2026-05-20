@@ -38,7 +38,7 @@ Each check has a **severity** ( blocker / warn / info ) and a **fixability** ( a
 - `warn` → Directory exists but no `.yml` or `.md` templates found (only blank or minimal templates)
 - `info` → Templates found and appear to cover bug reports, feature requests, and questions
 
-Rodgers ships with default templates in ` rogerrs-templates/issue-templates/` that projects can adopt. With `--fix`, Rodgers copies these into the repo and opens a PR if the repo is a git workspace.
+Rodgers ships with default issue templates embedded in the Rodgers binary. With `--fix`, Rodgers copies these defaults into the repo (or into the path specified by `rogation.template_dir` if set in `rogers.yaml`) and opens a PR if the repo is a git workspace.
 
 ### 2. Required Labels
 

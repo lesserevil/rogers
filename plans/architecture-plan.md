@@ -249,6 +249,7 @@ This schema defines every config key Rodgers reads at runtime. Keys not present 
 | `rogation.custom_type_names` | map[string]string | `{}` | Project-specific bead type aliases. Maps display name → canonical `rodgers:type` value. |
 | `rogation.format` | string | *(Rodgers default)* | Project-specific bead description format. Overrides Rodgers' default format convention. |
 | `rogation.agent_file` | string | *(none)* | Explicit path to the project's agent instruction file if non-standard location. Relative paths resolve from repo root. |
+| `rogation.template_dir` | string | *( Rodgers embedded defaults)* | Path to a directory of per-project issue templates. Relative paths resolve from repo root. When set, Rodgers uses these templates instead of its built-in defaults for `init --fix`. The directory must contain at minimum `bug.yml`, `feature.yml`, and `question.yml`. |
 
 #### `triage`
 
