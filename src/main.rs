@@ -4,6 +4,7 @@
 //! the full triage-to-release lifecycle entirely through the GitHub API and a
 //! local beads database.
 
+mod beads;
 mod cli;
 mod doctor;
 mod error;
@@ -281,7 +282,20 @@ async fn run_doctor_checks(
     // Run drift check (always runs last if included)
     // Collect drift events for inclusion in the result
     if categories_to_run.contains(&CATEGORY_DRIFT) {
-        match drift::check_drift(owner, repo, token, api_url, verbose).await {
+        let beads_remote = config.beads.remote.as_deref().unwrap_or("");
+        let beads_database = config.beads.database.as_deref();
+
+        match drift::check_drift(
+            owner,
+            repo,
+            token,
+            api_url,
+            verbose,
+            beads_remote,
+            beads_database,
+        )
+        .await
+        {
             Ok(drift_result) => {
                 // Add the category result (summary of drift check)
                 result.categories.push(drift_result.category_result);
@@ -373,7 +387,19 @@ async fn run_fix_session(config_path: &PathBuf) -> FixSessionResult {
     }
 
     // Get drift events first (run drift check)
-    let drift_result = match drift::check_drift(owner, repo, token, api_url, true).await {
+    let beads_remote = config.beads.remote.as_deref().unwrap_or("");
+    let beads_database = config.beads.database.as_deref();
+    let drift_result = match drift::check_drift(
+        owner,
+        repo,
+        token,
+        api_url,
+        true,
+        beads_remote,
+        beads_database,
+    )
+    .await
+    {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Error: Failed to run drift check: {}", e);
