@@ -4,9 +4,11 @@
 //! the full triage-to-release lifecycle entirely through the GitHub API and a
 //! local beads database.
 
+mod beads;
 mod cli;
 mod doctor;
 mod error;
+mod github;
 mod labels;
 
 use anyhow::Result;
