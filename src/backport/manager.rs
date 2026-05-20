@@ -28,6 +28,7 @@ use super::approval::{
 };
 use super::bead::BackportBead;
 use super::detector::{BackportCandidate, BackportReason};
+use super::execution::{BackportExecutionResult, execute_backport};
 use crate::RogersError;
 use crate::beads::BeadClient;
 use crate::beads::client::BeadResult;
@@ -58,6 +59,10 @@ pub struct PendingBackportDiscussion {
     pub bead_id: String,
     /// Source PR number.
     pub pr_number: u64,
+    /// Source PR title.
+    pub pr_title: String,
+    /// Merge commit SHA.
+    pub commit_sha: String,
     /// Target release branch.
     pub target_branch: String,
     /// GitHub Discussion number.
@@ -66,6 +71,15 @@ pub struct PendingBackportDiscussion {
     pub discussion_created_at: String,
     /// Current approval status.
     pub approval_result: Option<DiscussionVoteResult>,
+    /// Execution result (if approved and executed).
+    pub execution_result: Option<BackportExecutionResult>,
+}
+
+impl PendingBackportDiscussion {
+    /// Extract source issue number from PR body.
+    pub fn source_issue_from_body(&self, body: &str) -> Option<u64> {
+        super::execution::extract_source_issue(body)
+    }
 }
 
 /// Result of filing a backport and creating its discussion.
@@ -85,14 +99,17 @@ pub struct FiledBackport {
 
 impl FiledBackport {
     /// Convert to a PendingBackportDiscussion for tracking.
-    pub fn to_pending(self) -> PendingBackportDiscussion {
+    pub fn to_pending(self, pr_title: &str, commit_sha: &str) -> PendingBackportDiscussion {
         PendingBackportDiscussion {
             bead_id: self.bead_id,
             pr_number: self.pr_number,
+            pr_title: pr_title.to_string(),
+            commit_sha: commit_sha.to_string(),
             target_branch: self.target_branch,
             discussion_number: self.discussion_number,
             discussion_created_at: self.discussion_created_at,
             approval_result: None,
+            execution_result: None,
         }
     }
 }
@@ -282,22 +299,21 @@ fn target_branch_from_bead(title: &str) -> &str {
         .unwrap_or(title)
 }
 
-/// Check approval status for all pending backport discussions.
+/// Check approval status for all pending backport discussions and execute approved backports.
 ///
 /// This function is called during each triage run to:
 /// 1. Monitor voting on discussions via GraphQL
-/// 2. Post reminders when voting window expires
-/// 3. Close discussions that exceed stale threshold
-/// 4. Return discussions approved for backport execution
+/// 2. Execute backports for approved discussions (within one triage run)
+/// 3. Post reminders when voting window expires
+/// 4. Close discussions that exceed stale threshold
 ///
-/// Returns a list of discussions that received approval and are ready for
-/// backport PR creation.
+/// Returns discussions with their execution results populated.
 pub async fn check_pending_discussions(
     discussions: &[PendingBackportDiscussion],
     github: &GithubClient,
     release_config: &ReleaseConfig,
 ) -> Result<Vec<PendingBackportDiscussion>, RogersError> {
-    let mut approved = Vec::new();
+    let mut results: Vec<PendingBackportDiscussion> = Vec::new();
     let mut needs_reminder: Vec<u64> = Vec::new();
     let mut needs_close: Vec<u64> = Vec::new();
 
@@ -310,13 +326,67 @@ pub async fn check_pending_discussions(
         )
         .await?;
 
+        let mut updated_discussion = discussion.clone();
+        updated_discussion.approval_result = Some(result.clone());
+
         match &result.state {
             ApprovalState::Approved => {
                 info!(
                     "Backport approved: discussion #{} for PR #{} → {}",
                     discussion.discussion_number, discussion.pr_number, discussion.target_branch
                 );
-                approved.push(discussion.clone());
+
+                // Execute the backport within the SAME triage run
+                let sha_short = &discussion.commit_sha[..discussion.commit_sha.len().min(7)];
+                let source_issue = extract_source_issue(&discussion.pr_title, discussion.pr_number);
+
+                let execution = execute_backport(
+                    &discussion.commit_sha,
+                    sha_short,
+                    discussion.pr_number,
+                    &discussion.pr_title,
+                    source_issue,
+                    &discussion.target_branch,
+                    github,
+                    &discussion.bead_id,
+                )
+                .await;
+
+                match execution {
+                    Ok(exec_result) => {
+                        if exec_result.is_success() {
+                            info!(
+                                "Backport execution successful: branch={}, PR=#{}",
+                                exec_result.branch_name,
+                                exec_result.pr_number.unwrap_or(0)
+                            );
+                        } else {
+                            tracing::warn!(
+                                "Backport execution had errors: {:?}",
+                                exec_result.errors
+                            );
+                        }
+                        updated_discussion.execution_result = Some(exec_result);
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            "Failed to execute backport for discussion #{}: {}",
+                            discussion.discussion_number,
+                            e
+                        );
+                        updated_discussion.execution_result = Some(BackportExecutionResult {
+                            bead_id: discussion.bead_id.clone(),
+                            branch_name: format!(
+                                "backport/{}/{}",
+                                sha_short, discussion.target_branch
+                            ),
+                            pr_number: None,
+                            pr_url: None,
+                            source_comment_posted: false,
+                            errors: vec![e.to_string()],
+                        });
+                    }
+                }
             }
             ApprovalState::Rejected { reason } => {
                 tracing::warn!(
@@ -356,6 +426,8 @@ pub async fn check_pending_discussions(
                 // Still waiting - no action needed
             }
         }
+
+        results.push(updated_discussion);
     }
 
     // Post reminders (avoid duplicates by collecting unique numbers first)
@@ -385,7 +457,14 @@ pub async fn check_pending_discussions(
         }
     }
 
-    Ok(approved)
+    Ok(results)
+}
+
+/// Extract source issue number from PR title/body or fall back to PR number.
+fn extract_source_issue(pr_title: &str, pr_number: u64) -> Option<u64> {
+    // Try to extract from title (assuming it might contain issue reference)
+    // For now, fall back to PR number if no explicit issue reference found
+    super::execution::extract_source_issue(pr_title).or(Some(pr_number))
 }
 
 impl GithubClient {
@@ -572,13 +651,16 @@ mod tests {
             discussion_created_at: "2024-01-01T00:00:00Z".to_string(),
         };
 
-        let pending = filed.to_pending();
+        let pending = filed.to_pending("Fix login bug", "abc123def456abc123");
 
         assert_eq!(pending.bead_id, "test-beado-123");
         assert_eq!(pending.pr_number, 42);
+        assert_eq!(pending.pr_title, "Fix login bug");
+        assert_eq!(pending.commit_sha, "abc123def456abc123");
         assert_eq!(pending.target_branch, "release/1.x");
         assert_eq!(pending.discussion_number, 100);
         assert_eq!(pending.discussion_created_at, "2024-01-01T00:00:00Z");
         assert!(pending.approval_result.is_none());
+        assert!(pending.execution_result.is_none());
     }
 }

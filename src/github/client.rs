@@ -180,6 +180,175 @@ impl GithubClient {
         }
     }
 
+    /// Get the SHA of a branch tip (needed for creating new branches).
+    pub async fn branch_sha(&self, name: &str) -> Result<String, RogersError> {
+        let path = format!("/branches/{name}");
+        let branch: GithubBranch = self.get(&path).await?;
+        Ok(branch.sha)
+    }
+
+    /// Create a new branch (git ref) from a given SHA.
+    ///
+    /// Returns the commit SHA of the newly created branch ref.
+    pub async fn create_branch(&self, name: &str, sha: &str) -> Result<BranchRef, RogersError> {
+        #[derive(Serialize)]
+        struct CreateRefRequest {
+            #[serde(rename = "ref")]
+            git_ref: String,
+            sha: String,
+        }
+
+        #[derive(Deserialize)]
+        struct CreateRefResponse {
+            #[serde(rename = "ref")]
+            git_ref: String,
+            object: RefObject,
+        }
+
+        #[derive(Deserialize)]
+        struct RefObject {
+            sha: String,
+            #[serde(rename = "type")]
+            object_type: String,
+            url: String,
+        }
+
+        let request = CreateRefRequest {
+            git_ref: format!("refs/heads/{name}"),
+            sha: sha.to_string(),
+        };
+
+        let url = format!("{}{}", self.base_url(), "/git/refs");
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", &self.auth_header())
+            .header("Accept", "application/vnd.github+json")
+            .json(&request)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let code = resp.status().as_u16();
+            let message = resp.text().await.unwrap_or_default();
+            return Err(RogersError::GitHubStatus { code, message });
+        }
+
+        let result: CreateRefResponse = resp.json().await.map_err(RogersError::GitHub)?;
+        Ok(BranchRef {
+            git_ref: result.git_ref,
+            sha: result.object.sha,
+            object_type: result.object.object_type,
+            url: result.object.url,
+        })
+    }
+
+    // ---------------------------------------------------------------------------
+    // Pull Requests
+    // ---------------------------------------------------------------------------
+
+    /// Create a pull request.
+    ///
+    /// Parameters:
+    /// - `title`: PR title
+    /// - `body`: PR body text
+    /// - `head`: Branch containing the changes (source branch)
+    /// - `base`: Branch to merge into (target branch)
+    pub async fn create_pull_request(
+        &self,
+        title: &str,
+        body: &str,
+        head: &str,
+        base: &str,
+    ) -> Result<PullRequest, RogersError> {
+        #[derive(Serialize)]
+        struct CreatePrRequest<'a> {
+            title: &'a str,
+            body: &'a str,
+            head: &'a str,
+            base: &'a str,
+            draft: bool,
+        }
+
+        #[derive(Deserialize)]
+        struct PrWrapper {
+            #[serde(flatten)]
+            inner: PullRequest,
+        }
+
+        let request = CreatePrRequest {
+            title,
+            body,
+            head,
+            base,
+            draft: false,
+        };
+
+        let path = "/pulls";
+        let url = format!("{}{}", self.base_url(), path);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", &self.auth_header())
+            .header("Accept", "application/vnd.github+json")
+            .json(&request)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let code = resp.status().as_u16();
+            let message = resp.text().await.unwrap_or_default();
+            return Err(RogersError::GitHubStatus { code, message });
+        }
+
+        let wrapper: PrWrapper = resp.json().await.map_err(RogersError::GitHub)?;
+        Ok(wrapper.inner)
+    }
+
+    // ---------------------------------------------------------------------------
+    // Issue Comments
+    // ---------------------------------------------------------------------------
+
+    /// Post a comment on a GitHub issue.
+    pub async fn create_issue_comment(
+        &self,
+        issue_number: u64,
+        body: &str,
+    ) -> Result<IssueComment, RogersError> {
+        #[derive(Serialize)]
+        struct CreateCommentRequest<'a> {
+            body: &'a str,
+        }
+
+        #[derive(Deserialize)]
+        struct CommentWrapper {
+            #[serde(flatten)]
+            inner: IssueComment,
+        }
+
+        let request = CreateCommentRequest { body };
+
+        let path = format!("/issues/{issue_number}/comments");
+        let url = format!("{}{}", self.base_url(), path);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", &self.auth_header())
+            .header("Accept", "application/vnd.github+json")
+            .json(&request)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let code = resp.status().as_u16();
+            let message = resp.text().await.unwrap_or_default();
+            return Err(RogersError::GitHubStatus { code, message });
+        }
+
+        let wrapper: CommentWrapper = resp.json().await.map_err(RogersError::GitHub)?;
+        Ok(wrapper.inner)
+    }
+
     // ---------------------------------------------------------------------------
     // Discussions
     // ---------------------------------------------------------------------------
@@ -309,6 +478,47 @@ pub struct GithubBranch {
     pub name: String,
     pub sha: String,
     pub protected: bool,
+}
+
+/// A GitHub branch ref (created via Git Refs API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BranchRef {
+    pub git_ref: String,
+    pub sha: String,
+    pub object_type: String,
+    pub url: String,
+}
+
+/// A GitHub Pull Request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequest {
+    pub number: u64,
+    pub title: String,
+    pub body: Option<String>,
+    pub state: String,
+    pub html_url: String,
+    pub head: PrBranch,
+    pub base: PrBranch,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrBranch {
+    #[serde(rename = "ref")]
+    pub ref_: String,
+    pub sha: String,
+}
+
+/// A comment on a GitHub issue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IssueComment {
+    pub id: u64,
+    pub body: String,
+    pub user: GithubUser,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 /// A GitHub Discussion.
