@@ -219,6 +219,75 @@ Relevant config keys:
 - `rogation.{ignore_labels, labels_never_bot_managed, custom_type_names, format, agent_file}` — repo-level overrides
 - `llm.{provider, base_url, model, api_key}` — LLM inference endpoint
 
+### Configuration Schema
+
+This schema defines every config key Rodgers reads at runtime. Keys not present in `config.yaml` or `rogers.yaml` use their defaults. Repo-level `rogers.yaml` overrides host-level `config.yaml` for any overlapping keys.
+
+#### Top-level Keys
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `scheduler.interval_minutes` | integer | `5` | Minutes between Rodgers' poll cycles. Minimum: `1`. |
+| `scheduler.enabled` | boolean | `true` | Whether the scheduler runs. Disable to run Rodgers ad-hoc only. |
+| `github.owner` | string | **required** | GitHub organization or username of the managed repo. |
+| `github.repo` | string | **required** | GitHub repository name. |
+| `github.token` | string | **required** | GitHub personal access token. Supports `${ENV_VAR}` syntax for env-var injection. |
+| `github.api_url` | string | `https://api.github.com` | GitHub API base URL. Change for GitHub Enterprise deployments. |
+| `beads.remote` | string | **required** | Dolt remote URL for bead storage (`dolt remote add origin <url>`). |
+| `beads.database` | string | `message.hibernate` | Dolt database name for bead storage. |
+| `llm.provider` | string | `openai` | LLM provider name. Used as a label; actual routing via `llm.base_url`. |
+| `llm.base_url` | string | `https://api.openai.com/v1` | OpenAI-compatible API base URL. |
+| `llm.model` | string | **required** | Model name (e.g., `gpt-4o`, `gpt-4o-mini`). |
+| `llm.api_key` | string | **required** | API key for the LLM endpoint. Supports `${ENV_VAR}` syntax. |
+
+#### `rogation` (repo-level overrides)
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `rogation.ignore_labels` | list[string] | `[]` | Labels that suppress Rodgers' processing of an issue entirely. |
+| `rogation.labels_never_bot_managed` | list[string] | `[]` | Labels Rodgers will never add or manage — humans own these exclusively. Rodgers must not apply, remove, or close issues based on these labels. |
+| `rogation.custom_type_names` | map[string]string | `{}` | Project-specific bead type aliases. Maps display name → canonical `rodgers:type` value. |
+| `rogation.format` | string | *(Rodgers default)* | Project-specific bead description format. Overrides Rodgers' default format convention. |
+| `rogation.agent_file` | string | *(none)* | Explicit path to the project's agent instruction file if non-standard location. Relative paths resolve from repo root. |
+
+#### `triage`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `triage.default_labels` | list[string] | `["bug", "enhancement", "question"]` | Labels Rodgers applies to new issues when none are present. |
+| `triage.bot_labels` | list[string] | `[]` | Labels used to mark issues opened by bots. Rodgers skips bot-created issues in triage. |
+| `triage.close_labels` | list[string] | `["wontfix", "duplicate", "not planned"]` | Labels that indicate an issue should be closed. |
+| `triage.assignees` | list[string] | `[]` | Usernames to assign to new issues during triage. |
+
+#### `release`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `release.approval_discussion_category` | string | `"Announcements"` | GitHub Discussion category name for Rodgers' release and backport proposals. |
+| `release.active_branches` | list[string] | `[]` | Release branches Rodgers tracks for backport evaluation. E.g., `["release/1.x", "release/2.x"]`. Main is always implicit. |
+| `release.voting_window_days` | integer | `2` | Days Rodgers waits before nudging a stale release proposal. |
+| `release.stale_threshold_days` | integer | `7` | Days before Rodgers closes a stale release proposal and files a revisit bead. |
+
+#### `error` / `logging`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `error_channel` | string | *(none)* | Where to send error notifications (e.g., Slack channel ID). |
+| `log_level` | string | `"info"` | Log verbosity: `debug`, `info`, `warn`, `error`. |
+
+### Environment Variable Overrides
+
+All sensitive keys support `${ENV_VAR}` injection. Rodgers reads the named environment variable at startup and interpolates the value. Example:
+
+```yaml
+github:
+  token: ${RODGERS_GITHUB_TOKEN}
+llm:
+  api_key: ${OPENAI_API_KEY}
+```
+
+Environment variables must be set before Rodgers starts; reloading requires a restart.
+
 ---
 
 ## Direction for Later

@@ -30,7 +30,7 @@ Validates `config.yaml` against the Rodgers configuration schema. Fails fast on 
 ### Checks
 
 1. **`config.yaml` exists and is valid YAML.** Rodgers exits with a descriptive error if the file is missing or malformed.
-2. **All required keys are present.** Compare against `src/config.rs`'s default/required schema. Required keys: `github.owner`, `github.repo`, `github.token`, `scheduler.interval_minutes`, `beads.remote`, `beads.database`.
+2. **All required keys are present.** Compare against the Configuration Schema in plans/architecture-plan.md. Required keys: `github.owner`, `github.repo`, `github.token`, `scheduler.interval_minutes`, `beads.remote`, `beads.database`.
 3. **`scheduler.interval_minutes` is a positive integer.** Rodgers should not accept an interval of 0 or negative.
 4. **`github.token` is non-empty and does not look like a placeholder.** Warn if the token value matches common placeholder strings (`YOUR_TOKEN`, `ghp_...` with obvious sample values).
 5. **`release.active_branches` is a non-empty list if releases are configured.** Warn if no release branches are configured — Rodgers' backport manager depends on this.
