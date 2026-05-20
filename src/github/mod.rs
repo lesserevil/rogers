@@ -7,7 +7,7 @@
 pub mod client;
 
 pub use client::{
-    close_issue, GitHubClient, GitHubComment, GitHubIssue, GitHubLabel, GitHubUser, IssueState,
+    GitHubClient, GitHubComment, GitHubIssue, GitHubLabel, GitHubUser, IssueState, close_issue,
 };
 
 /// Backward compatibility alias
