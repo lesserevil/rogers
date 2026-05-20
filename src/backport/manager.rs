@@ -4,6 +4,12 @@
 //! one backport bead per active release branch, plus creates a GitHub Discussion
 //! for each bead to gate human approval.
 //!
+//! The approval flow is handled via `check_pending_discussions`, which:
+//! - Monitors voting on discussions (via GraphQL)
+//! - Posts reminders when voting window expires
+//! - Closes discussions that exceed stale threshold
+//! - Notifies when a backport is approved or rejected
+//!
 //! Bead shape follows plans/backport-plan.md:
 //!   title: "Backport #{sha_short} to {branch_name}"
 //!   type:  chore
@@ -14,13 +20,18 @@
 //! The bead is linked back to the source GitHub issue via `discovered-from`
 //! deps argument.
 
-use tracing::{info, warn};
+use tracing::info;
 
+use super::approval::{
+    ApprovalState, DiscussionVoteResult, check_approval_status, close_discussion,
+    post_reminder_comment,
+};
 use super::bead::BackportBead;
 use super::detector::{BackportCandidate, BackportReason};
 use crate::RogersError;
 use crate::beads::BeadClient;
 use crate::beads::client::BeadResult;
+use crate::config::schema::ReleaseConfig;
 use crate::github::client::GithubClient;
 
 /// Result of processing one backport candidate across all active branches.
@@ -38,6 +49,52 @@ pub struct BackportResult {
     pub discussions_created: usize,
     /// Any errors encountered.
     pub errors: Vec<String>,
+}
+
+/// Tracks a pending backport discussion and its approval status.
+#[derive(Debug, Clone)]
+pub struct PendingBackportDiscussion {
+    /// The backport bead ID (for traceability).
+    pub bead_id: String,
+    /// Source PR number.
+    pub pr_number: u64,
+    /// Target release branch.
+    pub target_branch: String,
+    /// GitHub Discussion number.
+    pub discussion_number: u64,
+    /// When the discussion was created (ISO 8601).
+    pub discussion_created_at: String,
+    /// Current approval status.
+    pub approval_result: Option<DiscussionVoteResult>,
+}
+
+/// Result of filing a backport and creating its discussion.
+#[derive(Debug, Clone)]
+pub struct FiledBackport {
+    /// The backport bead.
+    pub bead_id: String,
+    /// Source PR number.
+    pub pr_number: u64,
+    /// Target release branch.
+    pub target_branch: String,
+    /// GitHub Discussion number.
+    pub discussion_number: u64,
+    /// When the discussion was created.
+    pub discussion_created_at: String,
+}
+
+impl FiledBackport {
+    /// Convert to a PendingBackportDiscussion for tracking.
+    pub fn to_pending(self) -> PendingBackportDiscussion {
+        PendingBackportDiscussion {
+            bead_id: self.bead_id,
+            pr_number: self.pr_number,
+            target_branch: self.target_branch,
+            discussion_number: self.discussion_number,
+            discussion_created_at: self.discussion_created_at,
+            approval_result: None,
+        }
+    }
 }
 
 /// Process all backport candidates, creating one backport bead per active branch
@@ -78,10 +135,10 @@ async fn process_candidate(
     for branch in active_branches {
         match file_backport_and_discussion(candidate, branch, github, discussion_category_id).await
         {
-            Ok(()) => {
+            Ok(fb) => {
                 info!(
-                    "Backport bead filed and discussion created: PR #{} → branch '{}' (priority={})",
-                    pr.number, branch, candidate.priority
+                    "Backport bead filed and discussion created: PR #{} → branch '{}' (priority={}, bead={}, discussion=#{})",
+                    pr.number, branch, candidate.priority, fb.bead_id, fb.discussion_number
                 );
                 filed += 1;
                 discussions += 1;
@@ -91,7 +148,7 @@ async fn process_candidate(
                     "Failed to file backport bead/discussion for branch '{}': {}",
                     branch, e
                 );
-                warn!("{}", msg);
+                tracing::warn!("{}", msg);
                 errors.push(msg);
             }
         }
@@ -108,12 +165,13 @@ async fn process_candidate(
 }
 
 /// File a single backport bead and create an approval discussion for one target branch.
-async fn file_backport_and_discussion(
+/// Returns the filed backport details for tracking.
+pub async fn file_backport_and_discussion(
     candidate: &BackportCandidate,
     target_branch: &str,
     github: &GithubClient,
     discussion_category_id: &str,
-) -> Result<(), RogersError> {
+) -> Result<FiledBackport, RogersError> {
     // Build the bead struct
     let bead = BackportBead::build(candidate, target_branch);
 
@@ -140,7 +198,13 @@ async fn file_backport_and_discussion(
         discussion.number, discussion.title, discussion.html_url
     );
 
-    Ok(())
+    Ok(FiledBackport {
+        bead_id: bead_result.id,
+        pr_number: candidate.pr.number,
+        target_branch: target_branch.to_string(),
+        discussion_number: discussion.number,
+        discussion_created_at: discussion.created_at.clone(),
+    })
 }
 
 /// Submit a backport bead via `bd create`.
@@ -217,6 +281,177 @@ fn target_branch_from_bead(title: &str) -> &str {
         .and_then(|s| s.split_whitespace().last())
         .unwrap_or(title)
 }
+
+/// Check approval status for all pending backport discussions.
+///
+/// This function is called during each triage run to:
+/// 1. Monitor voting on discussions via GraphQL
+/// 2. Post reminders when voting window expires
+/// 3. Close discussions that exceed stale threshold
+/// 4. Return discussions approved for backport execution
+///
+/// Returns a list of discussions that received approval and are ready for
+/// backport PR creation.
+pub async fn check_pending_discussions(
+    discussions: &[PendingBackportDiscussion],
+    github: &GithubClient,
+    release_config: &ReleaseConfig,
+) -> Result<Vec<PendingBackportDiscussion>, RogersError> {
+    let mut approved = Vec::new();
+    let mut needs_reminder: Vec<u64> = Vec::new();
+    let mut needs_close: Vec<u64> = Vec::new();
+
+    for discussion in discussions {
+        let result = check_approval_status(
+            discussion.discussion_number,
+            &discussion.discussion_created_at,
+            release_config,
+            github,
+        )
+        .await?;
+
+        match &result.state {
+            ApprovalState::Approved => {
+                info!(
+                    "Backport approved: discussion #{} for PR #{} → {}",
+                    discussion.discussion_number, discussion.pr_number, discussion.target_branch
+                );
+                approved.push(discussion.clone());
+            }
+            ApprovalState::Rejected { reason } => {
+                tracing::warn!(
+                    "Backport rejected for discussion #{} ({}): {}",
+                    discussion.discussion_number,
+                    discussion.bead_id,
+                    reason
+                );
+                // Post acknowledgment comment
+                let author = result
+                    .most_recent
+                    .as_ref()
+                    .map(|v| v.voter.as_str())
+                    .unwrap_or("maintainer");
+                let comment = format!(
+                    "## ❌ Backport Rejected\n\n\
+                    @{author} has rejected this backport. Backport will not be filed.\n\n\
+                    {reason}\n\n\
+                    Please contact a maintainer for guidance."
+                );
+                let _ = github
+                    .create_discussion_comment(discussion.discussion_number, &comment)
+                    .await;
+            }
+            ApprovalState::Stale { reminder_sent: _ } => {
+                // Track but don't double-remind in same run
+                needs_reminder.push(discussion.discussion_number);
+            }
+            ApprovalState::Expired => {
+                info!(
+                    "Backport discussion #{} expired (no response within {} days)",
+                    discussion.discussion_number, release_config.stale_threshold_days
+                );
+                needs_close.push(discussion.discussion_number);
+            }
+            ApprovalState::Pending => {
+                // Still waiting - no action needed
+            }
+        }
+    }
+
+    // Post reminders (avoid duplicates by collecting unique numbers first)
+    let mut seen = std::collections::HashSet::new();
+    let unique_reminders: Vec<u64> = needs_reminder
+        .into_iter()
+        .filter(|n| seen.insert(*n))
+        .collect();
+    for discussion_number in unique_reminders {
+        if let Err(e) = post_reminder_comment(discussion_number, github).await {
+            tracing::warn!(
+                "Failed to post reminder for discussion #{}: {}",
+                discussion_number,
+                e
+            );
+        } else {
+            info!("Posted reminder for discussion #{}", discussion_number);
+        }
+    }
+
+    // Close expired discussions
+    for discussion_number in needs_close {
+        if let Err(e) = close_discussion(discussion_number, github).await {
+            tracing::warn!("Failed to close discussion #{}: {}", discussion_number, e);
+        } else {
+            info!("Closed expired discussion #{}", discussion_number);
+        }
+    }
+
+    Ok(approved)
+}
+
+impl GithubClient {
+    /// Create a reply comment on an existing discussion.
+    pub async fn create_discussion_comment(
+        &self,
+        discussion_number: u64,
+        body: &str,
+    ) -> Result<(), RogersError> {
+        let query = r#"
+            mutation($owner: String!, $repo: String!, $discussionNumber: Int!, $body: String!) {
+              addDiscussionComment(
+                input: {
+                  discussionId: $discussionNumber
+                  body: $body
+                }
+              ) {
+                comment { id }
+              }
+            }
+        "#;
+
+        #[derive(serde::Serialize)]
+        struct GraphQLRequest<'a> {
+            query: &'a str,
+            variables: serde_json::Value,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct GraphQLResponse {
+            data: Option<serde_json::Value>,
+            errors: Option<Vec<serde_json::Value>>,
+        }
+
+        let variables = serde_json::json!({
+            "owner": self.config().owner,
+            "repo": self.config().repo,
+            "discussionNumber": discussion_number,
+            "body": body
+        });
+
+        let request = GraphQLRequest { query, variables };
+
+        let url = format!("{}/graphql", self.config().api_url);
+        let resp = self
+            .client()
+            .post(&url)
+            .header("Authorization", &self.auth_header())
+            .header("Accept", "application/vnd.github.zzz机构的-preview+json")
+            .json(&request)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let code = resp.status().as_u16();
+            let message = resp.text().await.unwrap_or_default();
+            return Err(RogersError::GitHubStatus { code, message });
+        }
+
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -322,8 +557,28 @@ mod tests {
         assert!(body.contains("#99"));
         assert!(body.contains("**Target branch:** release/1.x"));
         assert!(body.contains("release/1.x"));
-        // Approval instruction — match the actual capital-A text in the body
+        // Approval instruction
         assert!(body.contains("Approve by reacting 👍"));
         assert!(body.to_lowercase().contains("approve"));
+    }
+
+    #[test]
+    fn test_filed_backport_to_pending() {
+        let filed = FiledBackport {
+            bead_id: "test-beado-123".to_string(),
+            pr_number: 42,
+            target_branch: "release/1.x".to_string(),
+            discussion_number: 100,
+            discussion_created_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+
+        let pending = filed.to_pending();
+
+        assert_eq!(pending.bead_id, "test-beado-123");
+        assert_eq!(pending.pr_number, 42);
+        assert_eq!(pending.target_branch, "release/1.x");
+        assert_eq!(pending.discussion_number, 100);
+        assert_eq!(pending.discussion_created_at, "2024-01-01T00:00:00Z");
+        assert!(pending.approval_result.is_none());
     }
 }

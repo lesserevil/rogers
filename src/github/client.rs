@@ -32,7 +32,21 @@ impl GithubClient {
         }
     }
 
-    fn auth_header(&self) -> String {
+    /// Return a reference to the GitHub configuration.
+    #[allow(dead_code)]
+    pub fn config(&self) -> &GithubConfig {
+        &self.config
+    }
+
+    /// Return a reference to the reqwest client (for GraphQL requests).
+    #[allow(dead_code)]
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
+    /// Return the Authorization header value.
+    #[allow(dead_code)]
+    pub fn auth_header(&self) -> String {
         format!(
             "Bearer {}",
             self.config.token.as_ref().unwrap_or(&String::new())
@@ -308,6 +322,8 @@ pub struct Discussion {
     pub url: String,
     pub html_url: String,
     pub category: DiscussionCategory,
+    /// When the discussion was created (ISO 8601).
+    pub created_at: String,
 }
 
 /// A GitHub Discussion category.
