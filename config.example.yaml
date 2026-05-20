@@ -42,11 +42,12 @@ release:
 
 rogation:
   ignore_labels: []               # labels that suppress Rodgers' processing entirely
-  labels_never_bot_managed: []    # labels Rodgers will never manage — humans own these
+  labels_never_bot_managed: []   # labels Rodgers will never manage — humans own these
   custom_type_names: {}           # project-specific type aliases: display_name → rodgers:type
   format:                         # override bead description format
   agent_file:                     # explicit path to per-project agent instructions
   template_dir:                    # per-project override for embedded issue templates (optional)
+  security_label: security         # label name Rodgers checks for security patch detection
 
 log_level: info                   # debug | info | warn | error
 error_channel:                    # Slack channel ID for error notifications

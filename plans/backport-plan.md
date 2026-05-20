@@ -167,7 +167,13 @@ release:
 
 **Human explicitly closes a backport.** Rodgers respects the closure. It does not recreate it.
 
-**Security patch.** Security patches are marked `priority=1` (high). Rodgers may, at its discretion, post a security advisory notification on the original issue directing users to the patched release. This is opt-in and not automatic.
+**Security patch.** Rodgers detects a security patch when any of the following signals are present:
+
+1. **GH Advisory match.** The merged commit or linked GitHub issue is connected to an open GitHub Security Advisory (GHSA) in the repository. Rodgers queries `repository.advisories()` to check.
+2. **`security` label.** The GitHub issue has the `security` label (or the project's configured security label from `rogation.security_label`).
+3. **CVE pattern.** The commit message or issue body contains a CVE identifier matching `CVE-\d{4}-\d{4,}` (e.g., `CVE-2024-12345`).
+
+If any signal is present, Rodgers sets the backport bead priority to `1` (highest) and may post a security advisory notification on the original issue directing users to the patched release — opt-in, not automatic.
 
 ---
 
@@ -184,3 +190,4 @@ release:
 - [ ] CRIT-9: If no 👍 or 👎 reaction is received within `release.voting_window_days`, Rodgers posts a reminder comment on the Discussion
 - [ ] CRIT-10: If no human response is received within `release.stale_threshold_days` (total, including the voting window and any pings), Rodgers closes the Discussion, files a revisit bead, and does not proceed with the backport
 - [ ] CRIT-11: For backport approvals: any 👎 before the backport PR is created halts the backport; once the PR is created the vote is locked and subsequent 👎 is acknowledged but does not stop the work; conflicting simultaneous votes resolve to 👎 (halt + ask for clarification); votes on a stale-closed Discussion are ignored
+- [ ] CRIT-12: Rodgers detects a security patch when any of: GH Advisory match (via `repository.advisories()`), `security` label on the issue (or `rogation.security_label`), or CVE pattern (`CVE-dddddddd`) in commit message or issue body; detected security patches are filed as `priority=1` beads
