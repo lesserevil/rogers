@@ -1,6 +1,6 @@
 # Architecture Plan
 
-**Status:** Draft
+**Status:** Reviewed
 **Plan:** plans/architecture-plan.md
 
 ---
@@ -55,7 +55,7 @@ graph LR
 
 **Scheduler**
 
-Runs `rogers [command]` on a configurable interval (default: 60 minutes). No daemon — each run is a stateless invocation that reads state from GitHub + beads, then exits. State changes are durable in beads or GitHub after each run.
+Runs `rogers [command]` on a configurable interval (default: 15 minutes). No daemon — each run is a stateless invocation that reads state from GitHub + beads, then exits. State changes are durable in beads or GitHub after each run.
 
 **LLM Runtime**
 
@@ -482,14 +482,16 @@ Located at the root of the managed repository's default branch. If present, this
 
 **What `rogers.yaml` can configure (any `config.yaml` key plus repo-specific keys):**
 - All `config.yaml` keys
-- `rogation.ignore_labels` — labels that suppress Rodger's processing (e.g., `pinned`, `ignore`)
-- `rogation.labels_never_bot_managed` — labels Rodgers will never add/manage (humans own these)
-- `rogation.custom_type_names` — any project-specific bead type aliases
-- `rogation.format` — project-specific bead description format (overrides Rodgers' default format)
-- `rogation.agent_file` — explicit path to the project's agent instruction file if non-standard
+- `project.ignore_labels` — labels that suppress Rodgers' processing (e.g., `pinned`, `ignore`)
+- `project.labels_never_bot_managed` — labels Rodgers will never add/manage (humans own these)
+- `project.custom_type_names` — any project-specific bead type aliases
+- `project.format` — project-specific bead description format (overrides Rodgers' default format)
+- `project.agent_file` — explicit path to the project's agent instruction file if non-standard
+- `project.template_dir` — path to per-project issue templates (overrides Rodgers' built-in templates)
+- `project.security_label` — label that flags a bug fix as a security patch candidate
 
 **Lookup order for agent instruction files:**
-1. `rogation.agent_file` in `rogers.yaml` (if set)
+1. `project.agent_file` in `rogers.yaml` (if set)
 2. `.claude/AGENTS.md`
 3. `.claude/CONTRIBUTING.md`
 4. `AGENTS.md`
@@ -509,7 +511,7 @@ Relevant config keys:
 - `triage.{default_labels, bot_labels, close_labels, assignees}` — triage behavior
 - `release.approval_discussion_category` — GitHub Discussion category for release approvals
 - `release.active_branches` — list of active release branches (for backport evaluation)
-- `rogation.{ignore_labels, labels_never_bot_managed, custom_type_names, format, agent_file}` — repo-level overrides
+- `project.{ignore_labels, labels_never_bot_managed, custom_type_names, format, agent_file, template_dir, security_label}` — repo-level overrides
 - `llm.{provider, base_url, model, api_key}` — LLM inference endpoint
 
 ### Configuration Schema
@@ -520,7 +522,7 @@ This schema defines every config key Rodgers reads at runtime. Keys not present 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `scheduler.interval_minutes` | integer | `5` | Minutes between Rodgers' poll cycles. Minimum: `1`. |
+| `scheduler.interval_minutes` | integer | `15` | Minutes between Rodgers' poll cycles. Minimum: `1`. |
 | `scheduler.enabled` | boolean | `true` | Whether the scheduler runs. Disable to run Rodgers ad-hoc only. |
 | `github.owner` | string | **required** | GitHub organization or username of the managed repo. |
 | `github.repo` | string | **required** | GitHub repository name. |
@@ -533,17 +535,17 @@ This schema defines every config key Rodgers reads at runtime. Keys not present 
 | `llm.model` | string | **required** | Model name (e.g., `gpt-4o`, `gpt-4o-mini`). |
 | `llm.api_key` | string | **required** | API key for the LLM endpoint. Supports `${ENV_VAR}` syntax. |
 
-#### `rogation` (repo-level overrides)
+#### `project` (repo-level overrides)
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `rogation.ignore_labels` | list[string] | `[]` | Labels that suppress Rodgers' processing of an issue entirely. |
-| `rogation.labels_never_bot_managed` | list[string] | `[]` | Labels Rodgers will never add or manage — humans own these exclusively. Rodgers must not apply, remove, or close issues based on these labels. |
-| `rogation.custom_type_names` | map[string]string | `{}` | Project-specific bead type aliases. Maps display name → canonical `rodgers:type` value. |
-| `rogation.format` | string | *(Rodgers default)* | Project-specific bead description format. Overrides Rodgers' default format convention. |
-| `rogation.agent_file` | string | *(none)* | Explicit path to the project's agent instruction file if non-standard location. Relative paths resolve from repo root. |
-| `rogation.template_dir` | string | *(Rodgers embedded defaults)* | Path to a directory of per-project issue templates. Relative paths resolve from repo root. When set, Rodgers uses these templates instead of its built-in defaults for `init --fix`. The directory must contain at minimum `bug.yml`, `feature.yml`, and `question.yml`. |
-| `rogation.security_label` | string | `"security"` | Label name Rodgers checks when detecting security patches. If an issue has this label and is a bug fix merged to main, Rodgers treats it as a security patch candidate. |
+| `project.ignore_labels` | list[string] | `[]` | Labels that suppress Rodgers' processing of an issue entirely. |
+| `project.labels_never_bot_managed` | list[string] | `[]` | Labels Rodgers will never add or manage — humans own these exclusively. Rodgers must not apply, remove, or close issues based on these labels. |
+| `project.custom_type_names` | map[string]string | `{}` | Project-specific bead type aliases. Maps display name → canonical `rodgers:type` value. |
+| `project.format` | string | *(Rodgers default)* | Project-specific bead description format. Overrides Rodgers' default format convention. |
+| `project.agent_file` | string | *(none)* | Explicit path to the project's agent instruction file if non-standard location. Relative paths resolve from repo root. |
+| `project.template_dir` | string | *(Rodgers embedded defaults)* | Path to a directory of per-project issue templates. Relative paths resolve from repo root. When set, Rodgers uses these templates instead of its built-in defaults for `init --fix`. The directory must contain at minimum `bug.yml`, `feature.yml`, and `question.yml`. |
+| `project.security_label` | string | `"security"` | Label name Rodgers checks when detecting security patches. If an issue has this label and is a bug fix merged to main, Rodgers treats it as a security patch candidate. |
 
 #### `triage`
 

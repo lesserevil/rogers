@@ -20,7 +20,11 @@ Rodgers evaluates every merged commit for backport candidacy.
 
 Any commit that is:
 1. A bug fix (commit message or linked issue labeled `bug`)
-2. A security fix (any vulnerability patch)
+2. A security fix, identified by:
+   - The linked issue has a GH Security Advisory (GHSA) cross-referenced in its description
+   - OR the commit message or linked issue contains a CVE reference (pattern: `CVE-YYYY-NNNNN`)
+   - OR the linked issue is labeled `security`
+   If any of these conditions are met, Rodgers treats the fix as security-relevant and assigns `priority=1` to the backport bead.
 3. A documentation fix that corrects harmful or dangerously outdated information
 
 ...must be evaluated for backport to all **active release branches**.
@@ -99,7 +103,9 @@ The bead links back to the original GitHub issue and the source commit via `disc
 
 ## Approval to Backport
 
-Like releases, backports require human approval before Rodgers creates the PR. Rodgers requests approval via a GitHub Discussion in the same category used for releases (`release.approval_discussion_category`). The approval uses the same voting window and stale-threshold timing as release approvals (`release.voting_window_days`, `release.stale_threshold_days`). Vote tiebreaking rules (👎 halts before execution, execution locks in the vote, conflicting votes resolve to 👎, votes after stale close are ignored) are defined in plans/release-management-plan.md.
+Like releases, backports require human approval before Rodgers creates the PR. Rodgers requests approval via a GitHub Discussion in the same category used for releases (`release.approval_discussion_category`). The approval uses the same voting window and stale-threshold timing as release approvals (`release.voting_window_days`, `release.stale_threshold_days`).
+
+**Vote tiebreaking: Most recent vote wins always.** A 👎 always halts execution regardless of when it arrives — even mid-flight. The most recent reaction is the absolute final answer.
 
 ```
 ## Backport Proposal
@@ -161,7 +167,11 @@ release:
 
 ## Edge Cases
 
-**Fix is already in the release branch.** Rodgers checks the git history before filing a backport bead. If the commit or an equivalent fix is already present, it marks the backport as not-needed and closes the bead with a note.
+**Fix is already in the release branch.** Rodgers uses semantic equivalence to determine if the fix is already present — not just a textual SHA match. Before filing a backport bead, Rodgers:
+1. Compares the source commit's diff to the target branch's git history (textual match first)
+2. If no exact textual match is found, Rodgers uses its LLM to judge whether the source commit and the target branch have functionally equivalent code — same behavior, even if implementation details differ
+3. If semantically equivalent (LLM confirms behavior match), Rodgers marks the backport as not-needed, closes the bead with a note explaining the finding, and posts a comment on the original GitHub issue noting that equivalent fix is already present
+4. If ambiguous, Rodgers files the backport bead anyway and notes the ambiguity in the bead description, asking the human to confirm
 
 **Backport PR would be empty (file not present in target branch).** Rodgers identifies this case before creating the PR and instead creates a `note` bead: "Cannot backport #{sha} to {branch}: target file does not exist. Needs alternative approach."
 

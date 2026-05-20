@@ -28,9 +28,7 @@ Rodgers searches `docs/` for content relevant to the question. Search is keyword
 - `docs/**/*.md` — all user-facing documentation
 
 **Search scope for code (when applicable):**
-- `src/**/*` — source files
-- `lib/**/*` — library files
-- Globally: any `*.rs`, `*.py`, `*.js`, `*.ts`, `*.go` file in the project
+- Rodgers searches all code files in the repository, regardless of language or file extension. No language is excluded from code search.
 
 **How Rodgers knows to search the code:**
 - Keywords in the issue title or body: "how does", "what function", "which module", "internals", "implementation", "source code", "can you walk me through", "flow of", "under the hood"
@@ -101,9 +99,23 @@ Hi @[requestor], thanks for the question! We do not currently have documentation
 
 3. **Label the issue** with `needs-documentation`. Remove `question` label.
 
-### Step 4: Update Docs (Sideband)
+### Step 4: Doc Gap Remediation (External Actor Writes the Doc)
 
-The human or agent working the `chore` bead (metadata: `rodgers:type=docs`) updates the relevant documentation file with a section that answers the question. When the doc section is written and checked in, the implementer posts the link as a comment on the GitHub issue and closes the issue.
+Rodgers files a `chore` bead (`rodgers:type=docs`) and the work is done by an **external actor** — not Rodgers. Rodgers tracks the bead but does not write the doc content.
+
+**Who writes the doc:** An external contributor or project member working from the bead description. Rodgers does not draft doc content itself.
+
+**Completion detection:** When the bead is closed and a comment is posted on the GitHub issue containing a link to the new or updated doc section, Rodgers considers the doc gap closed. Rodgers also syncs proactively on the next triage run post-bead-close (see Step 5).
+
+**If the doc doesn't fully answer the question:** The requestor replies on the GitHub issue noting what's still missing. Rodgers reopens or creates a new `chore` bead (`rodgers:type=docs`) for the remaining gap and leaves the issue open until the full answer is available.
+
+The process for the external actor working the bead:
+1. Read the bead description for the full question text and context
+2. Identify the appropriate doc file and section to add or update
+3. Write the section content that answers the question
+4. Check in the doc change (via PR merged to main)
+5. Post the doc link as a comment on the GitHub issue
+6. Close the bead with the doc link in the acceptance evidence
 
 ### Step 5: Sync Bead to GitHub Issue
 

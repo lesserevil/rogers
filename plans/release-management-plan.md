@@ -37,9 +37,9 @@ Rodgers monitors `main` (and each release branch) on every triage run for the fo
 
 All must be true:
 1. The last commit to `main` has passed all CI checks
-2. There are no open blocker issues labeled with the release milestone (or no milestone is set)
+2. Rodgers surfaces all issues that could block the release — any issue labeled `blocker`, any issue linked to the milestone with a priority label, any issue a human has flagged as a blocker, or any issue Rodgers judges could be a blocker — and asks project leaders to confirm which (if any) are true blockers before proceeding.
 3. A human has marked issues for this release with a milestone
-4. The milestone has no open `blocker` labeled issues
+4. Project leaders have confirmed which (if any) of the surfaced potential blockers are true blockers — Rodgers records this decision in the Release Proposal Discussion before proceeding
 
 ### Criteria to Propose a Release (from a release branch)
 
@@ -108,19 +108,7 @@ flowchart TD
 
 ### Vote Tiebreaking
 
-These rules apply to both release and backport voting:
-
-**Rule 1 — 👎 halts before execution.**
-As long as no release branch has been created, any 👎 from a write-access human immediately halts the proposal. Rodgers posts a comment acknowledging the rejection and asking for guidance.
-
-**Rule 2 — Execution locks in the vote.**
-Once Rodgers has created the release branch, the vote is locked. Subsequent 👎 reactions do not roll back the branch. Rodgers acknowledges the new 👎 reaction in a comment, notes that the release branch is already in flight, and asks the human if they want to proceed, revert, or modify the plan. The branch proceeds unless a human explicitly reverts it.
-
-**Rule 3 — Conflicting votes resolve to 👎.**
-If both 👍 and 👎 appear within the same triage run before any execution begins, 👎 takes precedence. Rodgers halts, posts a comment noting the split vote, and asks for clarification from the humans involved before proceeding.
-
-**Rule 4 — Votes after stale close are ignored.**
-Once Rodgers has closed a proposal as stale (after `release.stale_threshold_days` with no response), any subsequent reactions on that closed Discussion are ignored. A human must reopen or create a new proposal to restart the flow.
+**Most recent vote wins always.** A 👎 always halts execution regardless of when it arrives — even mid-flight. The most recent reaction is the absolute final answer. When a 👎 arrives, Rodgers immediately halts any in-progress execution (closes the branch, closes the bead, posts a comment explaining the halt), acknowledges the human's vote, and asks for guidance before proceeding.
 
 ---
 
@@ -141,12 +129,13 @@ Rodgers does not run the CI build that produces release artifacts. It creates th
 ## Cut a New Release from Main (Summary)
 
 1. CI green on main
-2. Milestone has no open blocker issues
-3. Rodgers creates a Release Proposal Discussion
-4. Human approves with 👍
-5. Rodgers creates release branch + files release bead
-6. Rodgers notifies via Discussion
-7. Actors outside Rodgers do: build release artifacts (CI), run final verification, create the git tag, create the GitHub Release (Rodgers can do the git tag and GitHub Release APIs, but the artifact build is CI)
+2. Rodgers surfaces all potential blockers (blocker-label, priority labels, human-flagged, LLM-judged) in the Release Proposal Discussion and asks project leaders to confirm which are true blockers
+3. Project leaders confirm which (if any) are real blockers
+4. Rodgers creates a Release Proposal Discussion
+5. Human approves with 👍
+6. Rodgers creates release branch + files release bead
+7. Rodgers notifies via Discussion
+8. Actors outside Rodgers do: build release artifacts (CI), run final verification, create the git tag, create the GitHub Release (Rodgers can do the git tag and GitHub Release APIs, but the artifact build is CI)
 
 ---
 

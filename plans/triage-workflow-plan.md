@@ -223,7 +223,9 @@ When Rodgers transitions an issue to `READY-FOR-WORK`, it prompts the LLM to ana
 
 ## Edge Cases
 
-**Issue modified after passing READY-FOR-REVIEW.** If the requestor substantially updates an issue after Rodgers has marked it `ready-for-review` (new information, revised scope, changed acceptance criteria), Rodgers removes the `ready-for-review` label, re-evaluates completeness, and restarts from `INCOMPLETE` if needed.
+**Issue modified after passing READY-FOR-REVIEW.** If the requestor substantially updates an issue after Rodgers has marked it `ready-for-review`, Rodgers removes the `ready-for-review` label, re-evaluates completeness, and restarts from `INCOMPLETE` if needed.
+
+"Substantial" is a judgment call by Rodgers' LLM. Factors that indicate a substantial update include but are not limited to: new information that changes what the issue is asking for, revised scope that adds or removes significant functionality, or changed acceptance criteria that would require re-evaluating whether the issue is ready for work. A minor typo fix, reformatting, or a comment from the requestor that adds no new actionable information does not constitute a substantial update.
 
 **Human marks ready-for-work but Rodgers hasn't filed the epic yet.** This cannot happen in normal flow — Rodgers files the epic in the same run that it detects `ready-for-work`. However, if the run fails mid-execution, the next run detects the orphan state and files the epic.
 

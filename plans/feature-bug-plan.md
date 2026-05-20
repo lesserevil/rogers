@@ -106,7 +106,11 @@ The epic description links to the GitHub issue and includes the full acceptance 
 ### Child Beads
 Rodgers analyzes the issue and breaks it into **one bead per logical unit of work** (see AGENTS.md §Beads must stand alone — required completeness).
 
-Guidelines for child bead scope:
+Guidelines for child bead scope (two rules of thumb):
+1. **Single codebase part.** Each bead should touch at most one distinct part of the codebase — CLI, UI, API, DB, config, etc. If a bead would require changing both the CLI argument parser and the database schema schema, that's two beads.
+2. **No "...and then..." descriptions.** Each bead's scope should be describable in a single, non-compound sentence. If the description would naturally continue with "and then..." to cover additional work, the bead is too broad and should be split.
+
+Additional guidelines:
 - One section of the acceptance criteria per child bead, or one cohesive implementation concern
 - Each child bead must be self-contained: a naive but competent junior developer could implement it without consulting other beads or the epic description
 - Edge cases and constraints from the issue description belong in the relevant child bead, not the epic

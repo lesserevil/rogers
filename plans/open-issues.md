@@ -15,17 +15,11 @@
 
 8. ✅ **`bot_labels` is referenced but never defined** — FIXED: triage-workflow-plan.md NEW/UNCLASSIFIED state updated with explicit `get_issue` → `author.type == "Bot"` check; schema description clarified; CRIT-12 added
 
-9. **Approver tiebreaking is missing**
-   - release-plan and backport-plan both use 👍/👎 voting
-   - No rule for when two humans vote differently or when vote flips after execution starts
+9. ✅ **Approver tiebreaking is missing** — FIXED: Most recent vote wins always. A 👎 always halts execution regardless of when it arrives — even mid-flight. Updated in release-management-plan.md and backport-plan.md.
 
-10. **Security patch detection is undefined**
-    - backport-plan.md uses "priority=1" for security patches
-    - No procedure: consult GH Security Advisories? CVEs? Keyword patterns? `[SECURITY]` tag?
+10. ✅ **Security patch detection is undefined** — FIXED: backport-plan.md §Automatic Backport Candidates updated with concrete detection via GHSA cross-reference, CVE pattern match (CVE-YYYY-NNNNN), or `security` label; priority=1 assigned when triggered.
 
-11. **`substantial update` is LLM-judgment-only**
-    - triage-workflow-plan.md rolls back `ready-for-review` on substantial updates
-    - No objective criteria for what "substantial" means
+11. ✅ **`substantial update` is LLM-judgment-only** — FIXED: triage-workflow-plan.md §Edge Cases updated with concrete guidance: factors indicating substantial update (scope change, new information changing what's asked, changed acceptance criteria); counters (minor typos, reformatting, non-actionable comments).
 
 12. **Code search scope is arbitrarily incomplete**
     - question-routing-plan.md §Step 2 lists *.rs, *.py, *.js, *.ts, *.go
