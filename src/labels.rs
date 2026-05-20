@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// A Rodgers-required GitHub label.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct LabelDefinition {
     pub name: &'static str,
     pub color: &'static str,
@@ -12,6 +13,7 @@ pub struct LabelDefinition {
 }
 
 /// All labels Rodgers expects in a managed repository.
+#[allow(dead_code)]
 pub const RODGERS_REQUIRED_LABELS: &[LabelDefinition] = &[
     LabelDefinition {
         name: "bug",
@@ -61,15 +63,25 @@ pub const RODGERS_REQUIRED_LABELS: &[LabelDefinition] = &[
 ];
 
 /// Labels Rodgers creates programmatically.
+#[allow(dead_code)]
 pub const RODGERS_AUTO_LABELS: &[LabelDefinition] = RODGERS_REQUIRED_LABELS;
 
 /// All labels Rodgers should NOT conflict with (optional warning list).
+#[allow(dead_code)]
 pub const RODGERS_RESERVED_LABELS: &[&str] = &[
-    "bug", "feature", "question", "needs-information", "needs-documentation",
-    "ready-for-review", "will-not-do", "ready-for-work", "in-progress",
+    "bug",
+    "feature",
+    "question",
+    "needs-information",
+    "needs-documentation",
+    "ready-for-review",
+    "will-not-do",
+    "ready-for-work",
+    "in-progress",
 ];
 
 /// Returns true if the given label name is a Rodgers-reserved label.
+#[allow(dead_code)]
 pub fn is_rodgers_reserved(name: &str) -> bool {
     RODGERS_RESERVED_LABELS.contains(&name)
 }

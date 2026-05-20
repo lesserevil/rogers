@@ -60,8 +60,11 @@ pub enum Commands {
     },
 }
 
+#[allow(dead_code)]
 impl Cli {
+    /// Parse CLI arguments.
+    /// Currently unused but will be called from main() when CLI is wired up.
     pub fn parse() -> Self {
-        Self::parse_from_env_or_exit()
+        clap::Parser::parse()
     }
 }
