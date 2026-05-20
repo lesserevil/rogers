@@ -83,4 +83,16 @@ impl From<crate::github::auth::AuthError> for RogersError {
     }
 }
 
+impl From<crate::backport::execution::BackportExecutionError> for RogersError {
+    fn from(err: crate::backport::execution::BackportExecutionError) -> Self {
+        RogersError::Config(err.to_string())
+    }
+}
+
+impl From<crate::backport::execution::BackportConflictError> for RogersError {
+    fn from(err: crate::backport::execution::BackportConflictError) -> Self {
+        RogersError::Config(err.to_string())
+    }
+}
+
 pub type Result<T> = std::result::Result<T, RogersError>;

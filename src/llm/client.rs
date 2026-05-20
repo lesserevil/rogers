@@ -41,6 +41,11 @@ impl LlmClient {
         }
     }
 
+    /// Get the model name.
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+
     /// Build the chat completions URL.
     fn chat_url(&self) -> String {
         format!("{}/chat/completions", self.base_url.trim_end_matches('/'))

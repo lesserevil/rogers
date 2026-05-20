@@ -66,6 +66,17 @@ impl GitHubClient {
         &self.repo
     }
 
+    /// Get the underlying HTTP client for making raw requests.
+    #[allow(dead_code)]
+    pub fn client(&self) -> &Client {
+        &self.client
+    }
+
+    /// Get the authentication configuration.
+    pub fn auth(&self) -> &GitHubAuth {
+        &self.auth
+    }
+
     /// Build the base API URL for REST endpoints.
     fn api_url(&self, path: &str) -> String {
         format!("{}{}", self.auth.api_url(), path)
@@ -693,6 +704,302 @@ impl GitHubClient {
             .ok_or_else(|| RogersError::GitHubStatus {
                 code: 200,
                 message: "Could not retrieve repository ID".to_string(),
+            })
+    }
+
+    // ─── Commits ────────────────────────────────────────────────────────────
+
+    /// Get a commit by SHA.
+    pub async fn get_commit(&mut self, sha: &str) -> GhResult<Commit> {
+        let url = self.repo_url(&format!("/commits/{}", sha));
+        let request = self.client.get(&url).headers(self.auth.auth_headers());
+        self.execute(request).await
+    }
+
+    /// List commits with optional branch/since filters.
+    pub async fn list_commits(
+        &mut self,
+        sha: Option<&str>,
+        since: Option<&str>,
+        until: Option<&str>,
+        per_page: Option<u32>,
+    ) -> GhResult<Vec<Commit>> {
+        let mut params = Vec::new();
+        if let Some(s) = sha {
+            params.push(format!("sha={}", s));
+        }
+        if let Some(s) = since {
+            params.push(format!("since={}", s));
+        }
+        if let Some(u) = until {
+            params.push(format!("until={}", u));
+        }
+        if let Some(pp) = per_page {
+            params.push(format!("per_page={}", pp));
+        }
+
+        let url = if params.is_empty() {
+            self.repo_url("/commits")
+        } else {
+            format!("{}?{}", self.repo_url("/commits"), params.join("&"))
+        };
+
+        let request = self.client.get(&url).headers(self.auth.auth_headers());
+        self.execute(request).await
+    }
+
+    // ─── Branches ───────────────────────────────────────────────────────────
+
+    /// List all branches in the repository.
+    pub async fn list_branches(&mut self, protected: Option<bool>) -> GhResult<Vec<Branch>> {
+        let mut url = self.repo_url("/branches");
+        if let Some(p) = protected {
+            url = format!("{}?protected={}", url, p);
+        }
+        let request = self.client.get(&url).headers(self.auth.auth_headers());
+        self.execute(request).await
+    }
+
+    /// Get a specific branch.
+    pub async fn get_branch(&mut self, name: &str) -> GhResult<Branch> {
+        let url = self.repo_url(&format!("/branches/{}", name));
+        let request = self.client.get(&url).headers(self.auth.auth_headers());
+        self.execute(request).await
+    }
+
+    /// Compare two commits and return a diff.
+    ///
+    /// `base` and `head` can be branch names, commit SHAs, or tags.
+    /// Returns a diff as text.
+    pub async fn compare_commits(&mut self, base: &str, head: &str) -> GhResult<CompareResult> {
+        let url = self.repo_url(&format!("/compare/{}...{}", base, head));
+        let request = self.client.get(&url).headers(self.auth.auth_headers());
+        self.execute(request).await
+    }
+
+    /// Get raw diff text for a specific file in a commit.
+    pub async fn get_commit_file_diff(&mut self, sha: &str, path: &str) -> GhResult<String> {
+        let url = self.repo_url(&format!("/commits/{}/{}", sha, path));
+        let request = self.client.get(&url).headers(self.auth.auth_headers());
+
+        #[derive(Deserialize)]
+        struct FileContent {
+            #[serde(rename = "contents")]
+            contents: Option<FileContents>,
+            pub sha: Option<String>,
+        }
+
+        #[derive(Deserialize)]
+        struct FileContents {
+            pub content: Option<String>,
+        }
+
+        let file_content: FileContent = self.execute(request).await?;
+        Ok(file_content
+            .contents
+            .and_then(|c| c.content)
+            .unwrap_or_default())
+    }
+
+    /// Get the names of files changed in a commit via compare API.
+    pub async fn get_commit_files(&mut self, sha: &str) -> GhResult<Vec<String>> {
+        // Use the commits list + a two-dot compare to get changed files
+        let url = self.repo_url(&format!("/compare/HEAD...{}", sha));
+        let request = self.client.get(&url).headers(self.auth.auth_headers());
+
+        #[derive(Deserialize)]
+        struct CompareFiles {
+            files: Option<Vec<String>>,
+        }
+
+        let compare: CompareFiles = self.execute(request).await?;
+        Ok(compare.files.unwrap_or_default())
+    }
+
+    // ─── Discussions (extended) ─────────────────────────────────────────────
+
+    /// Get discussion categories for the repository.
+    pub async fn get_discussion_categories(&mut self) -> GhResult<Vec<DiscussionCategory>> {
+        let query = r#"
+            query($owner: String!, $repo: String!) {
+                repository(owner: $owner, name: $repo) {
+                    discussionCategories(first: 20) {
+                        nodes {
+                            id
+                            name
+                            slug
+                            description
+                            isAnswerable
+                        }
+                    }
+                }
+            }
+        "#;
+
+        #[derive(Serialize)]
+        struct Variables {
+            owner: String,
+            repo: String,
+        }
+
+        #[derive(Deserialize)]
+        struct RepoCats {
+            repository: CatsData,
+        }
+
+        #[derive(Deserialize)]
+        struct CatsData {
+            #[serde(rename = "discussionCategories")]
+            discussion_categories: CatConn,
+        }
+
+        #[derive(Deserialize)]
+        struct CatConn {
+            nodes: Vec<DiscussionCategory>,
+        }
+
+        let variables = Variables {
+            owner: self.owner.clone(),
+            repo: self.repo.clone(),
+        };
+
+        let response: GraphQLResponse<RepoCats> = self.graphql(query, Some(variables)).await?;
+
+        response
+            .data
+            .map(|d| d.repository.discussion_categories.nodes)
+            .ok_or_else(|| RogersError::GitHubStatus {
+                code: 200,
+                message: "Could not retrieve discussion categories".to_string(),
+            })
+    }
+
+    /// Add a reaction to a discussion or comment.
+    pub async fn add_discussion_reaction(
+        &mut self,
+        subject_id: &str,
+        content: &str,
+    ) -> GhResult<Reaction> {
+        let mutation = r#"
+            mutation($subjectId: ID!, $content: String!) {
+                addReaction(input: {subjectId: $subjectId, content: $content}) {
+                    reaction {
+                        id
+                        content
+                        createdAt
+                        user {
+                            login
+                            id
+                        }
+                    }
+                }
+            }
+        "#;
+
+        #[derive(Serialize)]
+        struct Variables {
+            subject_id: String,
+            content: String,
+        }
+
+        #[derive(Deserialize)]
+        struct ReactionAdded {
+            #[serde(rename = "addReaction")]
+            add_reaction: ReactionData,
+        }
+
+        #[derive(Deserialize)]
+        struct ReactionData {
+            reaction: Reaction,
+        }
+
+        let variables = Variables {
+            subject_id: subject_id.to_string(),
+            content: content.to_string(),
+        };
+
+        let response: GraphQLResponse<ReactionAdded> =
+            self.graphql(mutation, Some(variables)).await?;
+
+        response
+            .data
+            .map(|d| d.add_reaction.reaction)
+            .ok_or_else(|| RogersError::GitHubStatus {
+                code: 200,
+                message: "Could not add reaction".to_string(),
+            })
+    }
+
+    /// Get reactions on a discussion by fetching it and reading reactions via GraphQL.
+    pub async fn get_discussion_reactions(
+        &mut self,
+        discussion_number: i32,
+    ) -> GhResult<Vec<Reaction>> {
+        // Use GraphQL to get discussion with reactions
+        let query = r#"
+            query($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                    discussion(number: $number) {
+                        id
+                        reactions(first: 50) {
+                            nodes {
+                                id
+                                content
+                                createdAt
+                                user {
+                                    login
+                                    id
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        "#;
+
+        #[derive(Serialize)]
+        struct Variables {
+            owner: String,
+            repo: String,
+            number: i32,
+        }
+
+        #[derive(Deserialize)]
+        struct RepoDisc {
+            repository: DiscRepo,
+        }
+
+        #[derive(Deserialize)]
+        struct DiscRepo {
+            discussion: Option<DiscWithReactions>,
+        }
+
+        #[derive(Deserialize)]
+        struct DiscWithReactions {
+            id: String,
+            reactions: ReactionNodes,
+        }
+
+        #[derive(Deserialize)]
+        struct ReactionNodes {
+            nodes: Vec<Reaction>,
+        }
+
+        let variables = Variables {
+            owner: self.owner.clone(),
+            repo: self.repo.clone(),
+            number: discussion_number,
+        };
+
+        let response: GraphQLResponse<RepoDisc> = self.graphql(query, Some(variables)).await?;
+
+        response
+            .data
+            .and_then(|d| d.repository.discussion)
+            .map(|d| d.reactions.nodes)
+            .ok_or_else(|| RogersError::GitHubStatus {
+                code: 200,
+                message: "Could not retrieve discussion reactions".to_string(),
             })
     }
 

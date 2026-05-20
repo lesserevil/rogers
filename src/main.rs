@@ -4,6 +4,7 @@ use clap::Parser;
 use std::path::{Path, PathBuf};
 
 mod beads;
+mod backport;
 mod cli;
 mod config;
 mod error;

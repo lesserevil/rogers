@@ -462,6 +462,117 @@ pub struct RateLimitWebhook {
     pub rate: RateLimitResource,
 }
 
+// ---------------------------------------------------------------------------
+// Branches & Commits
+// ---------------------------------------------------------------------------
+
+/// GitHub repository branch.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Branch {
+    pub name: String,
+    #[serde(rename = "commit")]
+    pub commit: CommitRef,
+    #[serde(rename = "protected")]
+    pub r#protected: bool,
+}
+
+/// Minimal commit reference (used in branches, parents, etc.).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitRef {
+    pub sha: String,
+    pub url: Option<String>,
+}
+
+/// Full GitHub commit object.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Commit {
+    pub sha: String,
+    #[serde(rename = "commit")]
+    pub commit_inner: CommitDetail,
+    pub html_url: String,
+    pub parents: Vec<CommitRef>,
+}
+
+/// Commit author/committer detail.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitDetail {
+    pub message: String,
+    pub author: CommitAuthor,
+    #[serde(rename = "committer")]
+    pub committer: CommitAuthor,
+}
+
+impl CommitDetail {
+    /// First line of the commit message.
+    pub fn message_short(&self) -> String {
+        self.message
+            .lines()
+            .next()
+            .unwrap_or(&self.message)
+            .trim()
+            .to_string()
+    }
+}
+
+/// Commit author record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitAuthor {
+    pub name: String,
+    pub email: Option<String>,
+    pub date: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
+// Compare
+// ---------------------------------------------------------------------------
+
+/// GitHub compare API response (two-dot diff between commits/refs).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompareResult {
+    pub status: String,
+    #[serde(rename = "ahead_by")]
+    pub ahead_by: u32,
+    #[serde(rename = "behind_by")]
+    pub behind_by: u32,
+    #[serde(rename = "total_commits")]
+    pub total_commits: u32,
+    pub commits: Vec<CompareCommit>,
+    pub files: Option<Vec<String>>,
+    pub diff: Option<String>,
+}
+
+/// Commit in a compare result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompareCommit {
+    pub sha: String,
+    pub commit: CommitDetail,
+    pub html_url: String,
+}
+
+// ---------------------------------------------------------------------------
+// Reactions
+// ---------------------------------------------------------------------------
+
+/// A reaction on a discussion or comment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Reaction {
+    pub id: i64,
+    pub content: String,
+    #[serde(rename = "created_at")]
+    pub created_at: DateTime<Utc>,
+    #[serde(rename = "viewer_has_reacted")]
+    pub viewer_has_reacted: bool,
+    pub user: Option<User>,
+}
+
+/// Well-known reaction content strings.
+pub mod reaction_content {
+    /// Thumbs up emoji.
+    pub const THUMBS_UP: &str = "+1";
+    /// Thumbs down emoji.
+    pub const THUMBS_DOWN: &str = "-1";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
