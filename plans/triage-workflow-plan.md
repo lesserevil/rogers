@@ -167,7 +167,7 @@ When Rodgers sees `needs-information` applied, it checks:
 
 **Entry:** Human has applied `ready-for-work`.
 
-**Action:** Rodgers prompts the LLM to summarize the issue into a bead description ("What" and "How" from the issue body). Rodgers validates the bead description and files the epic bead + child beads following plans/feature-bug-plan.md. Rodgers posts a comment linking to the epic bead and applies `in-progress` or a project-status label if configured.
+**Action:** Rodgers prompts the LLM to assess whether the issue is epic-scale (see Epic Bead Breakdown Procedure above). If yes, Rodgers follows the breakdown procedure: files the epic bead + child beads (all `deferred`), posts a breakdown comment linking to each bead, and awaits a human signal before setting children to `open`. If no (standard bug/feature), Rodgers files the epic bead and proceeds to `IN_PROGRESS` with the epic as a single- bead work item following plans/feature-bug-plan.md.
 
 ### IN_PROGRESS
 
@@ -181,7 +181,39 @@ When Rodgers sees `needs-information` applied, it checks:
 
 **Mixed issue (bug + question + feature in one):** Rodgers splits the issue. If possible, it files a separate issue for each distinct concern and closes the original with a comment explaining the split. Each new issue is triaged independently. This prevents a single `will-not-do` on a feature request from accidentally closing a legitimate bug report.
 
-**Epic-scale issue:** If the issue describes work that clearly spans multiple epics (e.g., "redesign the entire authentication system"), Rodgers files an assessment bead rather than a standard epic. The assessment bead is for a human + agent to evaluate scope before any implementation begins.
+**Epic-scale issue:** Rodgers uses LLM judgment to detect epic-scale work when `ready-for-work` is applied. Two primary indicators:
+- The work spans multiple areas of the project (e.g., "UI and API," "backend and docs," "redesign auth system")
+- The description contains sequential or continuation logic ("Do this, and then do this, and then...") that naturally maps to multiple sub-tasks
+
+**Epic Bead Breakdown Procedure:**
+
+When Rodgers transitions an issue to `READY-FOR-WORK`, it prompts the LLM to analyze whether the work is epic-scale. If yes, Rodgers applies a structured breakdown:
+
+1. **Detect.** LLM reads the issue title, body, all comments, and relevant codebase context (search_code against the affected components) to identify distinct work areas.
+
+2. **File epic bead.** Rodgers files one `epic`-type bead. The title is the GitHub issue title. The description is a LLM-summarized "What and Why" from the issue. Status: `deferred`. Linked to the GitHub issue.
+
+3. **File child beads.** Rodgers prompts the LLM to enumerate the distinct sub-work items. Each child bead:
+   - Type: whatever makes sense (`feature`, `chore`, `bug` — Rodgers has discretion)
+   - Title: self-contained description of the sub-work item
+   - Description: LLM-summarized scope, referencing the relevant parts of the epic issue
+   - Status: `deferred` (all children start deferred)
+   - Parent: the epic bead ID
+   - All child beads are filed before any are marked `open`
+
+4. **Post breakdown comment.** Rodgers posts a comment on the GitHub issue:
+   - Links to the epic bead and each child bead
+   - States that all child beads are in `deferred` status pending human review
+   - Invites the human to adjust types or set children to `open`
+
+5. **Human review gate.** Upon human action — any human modification to a child bead (changing its title, type, description, status, or assignee), or any human comment on the issue or any bead — Rodgers treats that as the human accepting the breakdown. Rodgers sets the reviewed children to `open` as a batch on that signal.
+
+6. **Orphan detection.** On each triage run, Rodgers checks for issues labeled `ready-for-work` that have no linked epic bead. If found (run fail state), Rodgers files the epic and child beads following the procedure above and posts the breakdown comment.
+
+**What Rodgers does NOT do:**
+- Rodgers does not set any child bead to `open` without a human signal
+- Rodgers does not attempt to estimate implementation complexity or assign priority during the breakdown
+- Rodgers does not file an epic bead if the issue is not epic-scale
 
 ---
 
@@ -217,3 +249,5 @@ When Rodgers sees `needs-information` applied, it checks:
 - [ ] CRIT-6: An issue with `needs-information` that has had no response for more than 14 days receives an LLM-drafted ping. After 28 days total with no response, the issue is closed with an LLM-drafted stale notice.
 - [ ] CRIT-7: Rodgers never makes a human gate decision (`will-not-do`, `ready-for-work`) on its own — it only observes and acts on the human's label applied to the GitHub issue
 - [ ] CRIT-8: All public comments Rodgers posts are LLM-drafted, validated by the Structured Output Validator, and reviewed against Rodger's warmth principle before being sent to GitHub
+- [ ] CRIT-9: On detecting epic-scale work at `READY-FOR-WORK`, Rodgers files the epic bead and all child beads before any bead is set to `open`; all child beads start `deferred`
+- [ ] CRIT-10: Rodgers does not set any child bead to `open` until it detects a human signal (human comment or any human-initiated bead modification); on that signal, Rodgers sets all non-closed child beads to `open` as a batch
