@@ -27,6 +27,7 @@ use super::approval::{
     post_reminder_comment,
 };
 use super::bead::BackportBead;
+use super::conflicts::{handle_conflict as handle_backport_conflict, has_merge_conflicts, wait_for_mergeable};
 use super::detector::{BackportCandidate, BackportReason};
 use super::execution::{BackportExecutionResult, execute_backport};
 use crate::RogersError;
@@ -360,6 +361,68 @@ pub async fn check_pending_discussions(
                                 exec_result.branch_name,
                                 exec_result.pr_number.unwrap_or(0)
                             );
+
+                            // CRIT-5: Detect merge conflicts and file conflict-resolution bead.
+                            // Per plan/backport-plan.md §Conflict Handling, we detect conflicts
+                            // after PR creation and file a bead without autonomous resolution.
+                            if let Some(pr_num) = exec_result.pr_number {
+                                match wait_for_mergeable(pr_num, github, 10, 2000).await {
+                                    Ok(pr) => {
+                                        if has_merge_conflicts(&pr) {
+                                            info!(
+                                                "Merge conflicts detected on backport PR #{} to {}",
+                                                pr_num, discussion.target_branch
+                                            );
+                                            // Handle conflict: file bead, post comment, close discussion.
+                                            // No autonomous resolution attempted.
+                                            let conflict_result = handle_backport_conflict(
+                                                &exec_result,
+                                                source_issue,
+                                                discussion.pr_number,
+                                                &discussion.commit_sha,
+                                                sha_short,
+                                                &discussion.pr_title,
+                                                &discussion.target_branch,
+                                                discussion.discussion_number,
+                                                github,
+                                                release_config,
+                                            )
+                                            .await;
+                                            match conflict_result {
+                                                Ok(cr) => {
+                                                    if cr.is_success() {
+                                                        info!(
+                                                            "Conflict handling complete: bead={}, comment_posted={}, discussion_closed={}",
+                                                            cr.conflict_bead_id,
+                                                            cr.source_comment_posted,
+                                                            cr.discussion_closed
+                                                        );
+                                                    } else {
+                                                        tracing::warn!(
+                                                            "Conflict handling completed with errors: {:?}",
+                                                            cr.errors
+                                                        );
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    tracing::error!(
+                                                        "Failed to handle conflict on PR #{}: {}",
+                                                        pr_num,
+                                                        e
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            "Could not determine merge status for PR #{}: {}",
+                                            pr_num,
+                                            e
+                                        );
+                                    }
+                                }
+                            }
                         } else {
                             tracing::warn!(
                                 "Backport execution had errors: {:?}",

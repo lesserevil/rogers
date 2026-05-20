@@ -133,6 +133,23 @@ impl GithubClient {
         self.get(&path).await
     }
 
+    /// Fetch a single pull request with full merge-status data.
+    ///
+    /// The returned `PullRequest` includes the `mergeable` field, which is used
+    /// to detect merge conflicts after a backport PR is created. GitHub
+    /// computes `mergeable` asynchronously — it may be `None` immediately after
+    /// PR creation.
+    pub async fn get_pull_request(&self, number: u64) -> Result<PullRequest, RogersError> {
+        let path = format!("/pulls/{number}");
+        self.get(&path).await
+    }
+
+    /// Build the repository-scoped URL for a path.
+    #[allow(dead_code)]
+    fn repo_url(&self, path: &str) -> String {
+        format!("{}{}", self.base_url(), path)
+    }
+
     // ---------------------------------------------------------------------------
     // Issues
     // ---------------------------------------------------------------------------
@@ -500,6 +517,11 @@ pub struct PullRequest {
     pub html_url: String,
     pub head: PrBranch,
     pub base: PrBranch,
+    /// Whether the PR can be automatically merged.
+    /// `None` means GitHub has not yet finished computing mergeability.
+    /// `Some(false)` with `mergeable_status = "conflicting"` indicates merge conflicts.
+    #[serde(default)]
+    pub mergeable: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
