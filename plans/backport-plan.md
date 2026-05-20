@@ -99,7 +99,7 @@ The bead links back to the original GitHub issue and the source commit via `disc
 
 ## Approval to Backport
 
-Like releases, backports require human approval before Rodgers creates the PR. Rodgers requests approval via a GitHub Discussion in the same category used for releases (`release.approval_discussion_category`). The approval uses the same voting window and stale-threshold timing as release approvals (`release.voting_window_days`, `release.stale_threshold_days`).
+Like releases, backports require human approval before Rodgers creates the PR. Rodgers requests approval via a GitHub Discussion in the same category used for releases (`release.approval_discussion_category`). The approval uses the same voting window and stale-threshold timing as release approvals (`release.voting_window_days`, `release.stale_threshold_days`). Vote tiebreaking rules (👎 halts before execution, execution locks in the vote, conflicting votes resolve to 👎, votes after stale close are ignored) are defined in plans/release-management-plan.md.
 
 ```
 ## Backport Proposal
@@ -183,3 +183,4 @@ release:
 - [ ] CRIT-8: A 👎 reaction (or a rejection comment) on the approval Discussion halts the backport and Rodgers posts a comment acknowledging the rejection and asking for guidance within one triage run of detecting the reaction
 - [ ] CRIT-9: If no 👍 or 👎 reaction is received within `release.voting_window_days`, Rodgers posts a reminder comment on the Discussion
 - [ ] CRIT-10: If no human response is received within `release.stale_threshold_days` (total, including the voting window and any pings), Rodgers closes the Discussion, files a revisit bead, and does not proceed with the backport
+- [ ] CRIT-11: For backport approvals: any 👎 before the backport PR is created halts the backport; once the PR is created the vote is locked and subsequent 👎 is acknowledged but does not stop the work; conflicting simultaneous votes resolve to 👎 (halt + ask for clarification); votes on a stale-closed Discussion are ignored

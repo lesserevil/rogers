@@ -13,9 +13,7 @@
 
 ## HIGH
 
-8. **`bot_labels` is referenced but never defined**
-   - Referenced triage-workflow-plan.md line 99 as "any `bot_labels` detection"
-   - Not defined anywhere in plan, not in schema, not enumerated
+8. ✅ **`bot_labels` is referenced but never defined** — FIXED: triage-workflow-plan.md NEW/UNCLASSIFIED state updated with explicit `get_issue` → `author.type == "Bot"` check; schema description clarified; CRIT-12 added
 
 9. **Approver tiebreaking is missing**
    - release-plan and backport-plan both use 👍/👎 voting

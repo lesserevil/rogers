@@ -106,6 +106,22 @@ flowchart TD
 - **No response within 48 hours** → ping the discussion once
 - **No response within 7 days** → close the proposal as stale, file a bead to revisit
 
+### Vote Tiebreaking
+
+These rules apply to both release and backport voting:
+
+**Rule 1 — 👎 halts before execution.**
+As long as no release branch has been created, any 👎 from a write-access human immediately halts the proposal. Rodgers posts a comment acknowledging the rejection and asking for guidance.
+
+**Rule 2 — Execution locks in the vote.**
+Once Rodgers has created the release branch, the vote is locked. Subsequent 👎 reactions do not roll back the branch. Rodgers acknowledges the new 👎 reaction in a comment, notes that the release branch is already in flight, and asks the human if they want to proceed, revert, or modify the plan. The branch proceeds unless a human explicitly reverts it.
+
+**Rule 3 — Conflicting votes resolve to 👎.**
+If both 👍 and 👎 appear within the same triage run before any execution begins, 👎 takes precedence. Rodgers halts, posts a comment noting the split vote, and asks for clarification from the humans involved before proceeding.
+
+**Rule 4 — Votes after stale close are ignored.**
+Once Rodgers has closed a proposal as stale (after `release.stale_threshold_days` with no response), any subsequent reactions on that closed Discussion are ignored. A human must reopen or create a new proposal to restart the flow.
+
 ---
 
 ## Release Execution
