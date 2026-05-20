@@ -1,0 +1,436 @@
+//! LLM prompts for Rodgers issue analysis.
+//!
+//! This module contains prompts used with the LLM to analyze freeform issues
+//! and extract specific field information. It complements the heuristic
+//! pattern matching in feature_bug/completeness.rs:
+//!
+//! - Template-based issues: Pattern matching (existing code)
+//! - Freeform issues: LLM-based extraction (this module)
+//!
+//! ## Design
+//!
+//! The LLM is used to identify which required fields are present or missing
+//! from the issue content. For each missing field, a specific request is
+//! generated rather than a generic "please provide more information".
+//!
+//! ## Prompt Architecture
+//!
+//! 1. **Extract prompt**: Given issue content, identify present fields
+//! 2. **Missing fields prompt**: Given result, determine what's missing
+//! 3. **Request generation prompt**: Given missing fields, format specific request
+
+use serde::{Deserialize, Serialize};
+
+/// Prompt for extracting fields from a bug report freeform description.
+///
+/// Returns structured information about which required fields are present.
+pub const BUG_FIELD_EXTRACTION_PROMPT: &str = r#"You are analyzing a bug report. Identify which of the following required fields are present in the issue content.
+
+Required fields for a complete bug report:
+1. **Behavior observed** - A description of what happened that is wrong
+2. **Behavior expected** - A description of what the reporter expected
+3. **Reproduction steps** - Steps to reproduce the issue (or N/A with justification)
+4. **Environment** - OS, version, hardware, browser, etc.
+
+Analyze the issue content and respond with a JSON object indicating which fields are present.
+Return ONLY the JSON object, no additional text.
+
+Example response:
+{"behavior_observed": true, "behavior_expected": true, "reproduction_steps": false, "environment": false}
+
+Issue content:
+{issue_content}
+"#;
+
+/// Prompt for extracting fields from a feature request freeform description.
+///
+/// Returns structured information about which required fields are present.
+pub const FEATURE_FIELD_EXTRACTION_PROMPT: &str = r#"You are analyzing a feature request. Identify which of the following required fields are present in the issue content.
+
+Required fields for a complete feature request:
+1. **Use case** - Why the requester needs this feature (the problem they are solving)
+2. **Proposed behavior** - How the feature should work once implemented
+3. **Acceptance criteria** - How the feature would be verified (testable, enumerated list)
+
+Analyze the issue content and respond with a JSON object indicating which fields are present.
+Return ONLY the JSON object, no additional text.
+
+Example response:
+{"use_case": true, "proposed_behavior": true, "acceptance_criteria": false}
+
+Issue content:
+{issue_content}
+"#;
+
+/// Prompt for generating specific requests for missing bug report fields.
+pub const BUG_MISSING_FIELDS_REQUEST_PROMPT: &str = r#"The following required fields are missing from this bug report:
+{missing_fields}
+
+Generate a friendly, specific request comment asking the user to provide ONLY the missing fields.
+Do NOT request fields that are already present. Do NOT use generic phrases like "please provide more details".
+Ask specifically for each missing field with a brief explanation of why it's needed.
+
+Bug missing fields:
+{bug_missing}
+
+Example for missing environment and reproduction_steps:
+"Thanks for the report! To help us reproduce this issue, could you provide:
+- **Reproduction steps**: How can we reproduce what you're seeing?
+- **Environment**: What OS, version, and relevant context are you using?"
+
+Respond with ONLY the comment text.
+"#;
+
+/// Prompt for generating specific requests for missing feature request fields.
+pub const FEATURE_MISSING_FIELDS_REQUEST_PROMPT: &str = r#"The following required fields are missing from this feature request:
+{missing_fields}
+
+Generate a friendly, specific request comment asking the user to provide ONLY the missing fields.
+Do NOT request fields that are already present. Do NOT use generic phrases like "please provide more details".
+Ask specifically for each missing field with a brief explanation of why it's needed.
+
+Feature missing fields:
+{feature_missing}
+
+Example for missing use_case and acceptance_criteria:
+"Thanks for the feature suggestion! To help us evaluate this, could you provide:
+- **Use case**: Why do you need this feature? What problem are you solving?
+- **Acceptance criteria**: How would you verify this feature works correctly? (Please provide a testable list)"
+
+Respond with ONLY the comment text.
+"#;
+
+/// Result from LLM field extraction for bug reports.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BugFieldExtraction {
+    /// Whether behavior observed is present
+    pub behavior_observed: bool,
+    /// Whether behavior expected is present
+    pub behavior_expected: bool,
+    /// Whether reproduction steps are present
+    pub reproduction_steps: bool,
+    /// Whether environment is present
+    pub environment: bool,
+}
+
+/// Result from LLM field extraction for feature requests.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeatureFieldExtraction {
+    /// Whether use case is present
+    pub use_case: bool,
+    /// Whether proposed behavior is present
+    pub proposed_behavior: bool,
+    /// Whether acceptance criteria is present
+    pub acceptance_criteria: bool,
+}
+
+/// Field name constants for bug fields.
+pub mod bug_fields {
+    /// Behavior observed field identifier
+    pub const BEHAVIOR_OBSERVED: &str = "behavior_observed";
+    /// Behavior expected field identifier
+    pub const BEHAVIOR_EXPECTED: &str = "behavior_expected";
+    /// Reproduction steps field identifier
+    pub const REPRODUCTION_STEPS: &str = "reproduction_steps";
+    /// Environment field identifier
+    pub const ENVIRONMENT: &str = "environment";
+
+    /// All bug field identifiers
+    pub const ALL: &[&str] = &[
+        BEHAVIOR_OBSERVED,
+        BEHAVIOR_EXPECTED,
+        REPRODUCTION_STEPS,
+        ENVIRONMENT,
+    ];
+}
+
+/// Field name constants for feature fields.
+pub mod feature_fields {
+    /// Use case field identifier
+    pub const USE_CASE: &str = "use_case";
+    /// Proposed behavior field identifier
+    pub const PROPOSED_BEHAVIOR: &str = "proposed_behavior";
+    /// Acceptance criteria field identifier
+    pub const ACCEPTANCE_CRITERIA: &str = "acceptance_criteria";
+
+    /// All feature field identifiers
+    pub const ALL: &[&str] = &[USE_CASE, PROPOSED_BEHAVIOR, ACCEPTANCE_CRITERIA];
+}
+
+impl BugFieldExtraction {
+    /// Get list of missing fields (fields that are false).
+    pub fn missing_fields(&self) -> Vec<&'static str> {
+        let mut missing = Vec::new();
+        if !self.behavior_observed {
+            missing.push(bug_fields::BEHAVIOR_OBSERVED);
+        }
+        if !self.behavior_expected {
+            missing.push(bug_fields::BEHAVIOR_EXPECTED);
+        }
+        if !self.reproduction_steps {
+            missing.push(bug_fields::REPRODUCTION_STEPS);
+        }
+        if !self.environment {
+            missing.push(bug_fields::ENVIRONMENT);
+        }
+        missing
+    }
+
+    /// Check if all required fields are present.
+    pub fn is_complete(&self) -> bool {
+        self.behavior_observed
+            && self.behavior_expected
+            && self.reproduction_steps
+            && self.environment
+    }
+}
+
+impl FeatureFieldExtraction {
+    /// Get list of missing fields (fields that are false).
+    pub fn missing_fields(&self) -> Vec<&'static str> {
+        let mut missing = Vec::new();
+        if !self.use_case {
+            missing.push(feature_fields::USE_CASE);
+        }
+        if !self.proposed_behavior {
+            missing.push(feature_fields::PROPOSED_BEHAVIOR);
+        }
+        if !self.acceptance_criteria {
+            missing.push(feature_fields::ACCEPTANCE_CRITERIA);
+        }
+        missing
+    }
+
+    /// Check if all required fields are present.
+    pub fn is_complete(&self) -> bool {
+        self.use_case && self.proposed_behavior && self.acceptance_criteria
+    }
+}
+
+/// Format specific request message for missing bug fields.
+///
+/// This generates a user-friendly comment that requests ONLY the missing fields,
+/// with specific explanations for each.
+pub fn format_bug_field_request(missing: &[&str]) -> String {
+    use std::fmt::Write;
+
+    if missing.is_empty() {
+        return String::new();
+    }
+
+    let mut msg = String::from(
+        "To help us understand and reproduce this issue, could you provide the following?\n\n",
+    );
+
+    for field in missing {
+        match *field {
+            bug_fields::BEHAVIOR_OBSERVED => {
+                msg.push_str("**Behavior observed**: What happened that seems wrong to you?\n");
+            }
+            bug_fields::BEHAVIOR_EXPECTED => {
+                msg.push_str("**Behavior expected**: What did you expect to happen instead?\n");
+            }
+            bug_fields::REPRODUCTION_STEPS => {
+                msg.push_str("- **Reproduction steps**: How can we reproduce this issue? (Or N/A if the bug cannot be reliably reproduced, with an explanation)\n");
+            }
+            bug_fields::ENVIRONMENT => {
+                msg.push_str(
+                    "- **Environment**: What OS, version, and relevant context are you using?\n",
+                );
+            }
+            _ => {
+                let _ = writeln!(
+                    &mut msg,
+                    "- **{field}**: Please provide this information.",
+                    field = field
+                );
+            }
+        }
+    }
+
+    msg
+}
+
+/// Format specific request message for missing feature fields.
+///
+/// This generates a user-friendly comment that requests ONLY the missing fields,
+/// with specific explanations for each.
+pub fn format_feature_field_request(missing: &[&str]) -> String {
+    use std::fmt::Write;
+
+    if missing.is_empty() {
+        return String::new();
+    }
+
+    let mut msg = String::from(
+        "To help us evaluate and implement this feature, could you provide the following?\n\n",
+    );
+
+    for field in missing {
+        match *field {
+            feature_fields::USE_CASE => {
+                msg.push_str(
+                    "**Use case**: Why do you need this feature? What problem are you solving?\n",
+                );
+            }
+            feature_fields::PROPOSED_BEHAVIOR => {
+                msg.push_str(
+                    "**Proposed behavior**: How should this feature work once implemented?\n",
+                );
+            }
+            feature_fields::ACCEPTANCE_CRITERIA => {
+                msg.push_str("**Acceptance criteria**: How would you verify this feature works correctly? (Please provide a testable, enumerated list)\n");
+            }
+            _ => {
+                let _ = writeln!(
+                    &mut msg,
+                    "- **{field}**: Please provide this information.",
+                    field = field
+                );
+            }
+        }
+    }
+
+    msg
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bug_field_extraction_missing_fields() {
+        let extraction = BugFieldExtraction {
+            behavior_observed: true,
+            behavior_expected: true,
+            reproduction_steps: false,
+            environment: false,
+        };
+
+        let missing = extraction.missing_fields();
+        assert_eq!(missing.len(), 2);
+        assert!(missing.contains(&bug_fields::REPRODUCTION_STEPS));
+        assert!(missing.contains(&bug_fields::ENVIRONMENT));
+    }
+
+    #[test]
+    fn test_bug_field_extraction_is_complete() {
+        let complete = BugFieldExtraction {
+            behavior_observed: true,
+            behavior_expected: true,
+            reproduction_steps: true,
+            environment: true,
+        };
+        assert!(complete.is_complete());
+
+        let incomplete = BugFieldExtraction {
+            behavior_observed: true,
+            behavior_expected: false,
+            reproduction_steps: true,
+            environment: true,
+        };
+        assert!(!incomplete.is_complete());
+    }
+
+    #[test]
+    fn test_feature_field_extraction_missing_fields() {
+        let extraction = FeatureFieldExtraction {
+            use_case: true,
+            proposed_behavior: true,
+            acceptance_criteria: false,
+        };
+
+        let missing = extraction.missing_fields();
+        assert_eq!(missing.len(), 1);
+        assert!(missing.contains(&feature_fields::ACCEPTANCE_CRITERIA));
+    }
+
+    #[test]
+    fn test_feature_field_extraction_is_complete() {
+        let complete = FeatureFieldExtraction {
+            use_case: true,
+            proposed_behavior: true,
+            acceptance_criteria: true,
+        };
+        assert!(complete.is_complete());
+    }
+
+    #[test]
+    fn test_format_bug_field_request_environment_only() {
+        let missing = vec![bug_fields::ENVIRONMENT];
+        let request = format_bug_field_request(&missing);
+
+        assert!(request.contains("Environment"));
+        assert!(!request.contains("Reproduction steps"));
+        assert!(!request.contains("Behavior observed"));
+    }
+
+    #[test]
+    fn test_format_bug_field_request_steps_and_expected() {
+        let missing = vec![
+            bug_fields::REPRODUCTION_STEPS,
+            bug_fields::BEHAVIOR_EXPECTED,
+        ];
+        let request = format_bug_field_request(&missing);
+
+        assert!(request.contains("Reproduction steps"));
+        assert!(request.contains("Behavior expected"));
+        assert!(!request.contains("Environment"));
+    }
+
+    #[test]
+    fn test_format_feature_field_request_acceptance_only() {
+        let missing = vec![feature_fields::ACCEPTANCE_CRITERIA];
+        let request = format_feature_field_request(&missing);
+
+        assert!(request.contains("Acceptance criteria"));
+        assert!(!request.contains("Use case"));
+        assert!(!request.contains("Proposed behavior"));
+    }
+
+    #[test]
+    fn test_format_bug_request_empty_missing() {
+        let missing: Vec<&str> = vec![];
+        let request = format_bug_field_request(&missing);
+        assert!(request.is_empty());
+    }
+
+    #[test]
+    fn test_no_generic_phrases() {
+        // Verify that the format functions don't include generic phrases
+        let bug_missing = vec![bug_fields::ENVIRONMENT];
+        let bug_request = format_bug_field_request(&bug_missing);
+
+        assert!(!bug_request.contains("more details"));
+        assert!(!bug_request.contains("need more info"));
+        assert!(!bug_request.contains("additional information"));
+
+        let feature_missing = vec![feature_fields::USE_CASE];
+        let feature_request = format_feature_field_request(&feature_missing);
+
+        assert!(!feature_request.contains("more details"));
+        assert!(!feature_request.contains("need more info"));
+    }
+
+    #[test]
+    fn test_bug_prompt_includes_issue_content_placeholder() {
+        assert!(BUG_FIELD_EXTRACTION_PROMPT.contains("{issue_content}"));
+    }
+
+    #[test]
+    fn test_feature_prompt_includes_issue_content_placeholder() {
+        assert!(FEATURE_FIELD_EXTRACTION_PROMPT.contains("{issue_content}"));
+    }
+
+    #[test]
+    fn test_bug_missing_prompt_includes_missing_fields_placeholder() {
+        assert!(BUG_MISSING_FIELDS_REQUEST_PROMPT.contains("{missing_fields}"));
+        assert!(BUG_MISSING_FIELDS_REQUEST_PROMPT.contains("{bug_missing}"));
+    }
+
+    #[test]
+    fn test_feature_missing_prompt_includes_missing_fields_placeholder() {
+        assert!(FEATURE_MISSING_FIELDS_REQUEST_PROMPT.contains("{missing_fields}"));
+        assert!(FEATURE_MISSING_FIELDS_REQUEST_PROMPT.contains("{feature_missing}"));
+    }
+}

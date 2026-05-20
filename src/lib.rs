@@ -13,4 +13,5 @@
 pub mod error;
 pub mod feature_bug;
 pub mod labels;
+pub mod llm;
 pub mod triage;

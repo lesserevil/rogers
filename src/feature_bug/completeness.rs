@@ -652,4 +652,202 @@ A kanban board view with drag-and-drop cards.
         assert!(result.request_message.contains("Reproduction steps"));
         assert!(result.request_message.contains("Environment"));
     }
+
+    // Issue verification tests - specific missing field requests
+
+    #[test]
+    fn test_bug_missing_environment_only_requests_environment() {
+        // Bug with all fields except environment
+        let body = r#"
+## What Happened
+Something wrong happened
+
+## Behavior Expected
+Something right should happen
+
+## Steps to Reproduce
+1. Do X
+2. Observe result
+
+No environment details provided.
+"#;
+        let result = check_bug_completeness(body);
+        assert!(!result.is_complete);
+        assert!(
+            result
+                .missing_bug_fields
+                .contains(&"environment".to_string())
+        );
+        assert!(result.missing_bug_fields.len() == 1);
+        // Request message should mention environment only
+        assert!(result.request_message.contains("Environment"));
+        assert!(!result.request_message.contains("Reproduction"));
+        assert!(!result.request_message.contains("Behavior observed"));
+    }
+
+    #[test]
+    fn test_bug_missing_steps_and_expected_requests_both() {
+        // Bug missing reproduction_steps and behavior_expected
+        let body = r#"
+## What Happened
+The form submitted twice instead of once
+"#;
+        let result = check_bug_completeness(body);
+        assert!(!result.is_complete);
+        assert!(
+            result
+                .missing_bug_fields
+                .contains(&"behavior_expected".to_string())
+        );
+        assert!(
+            result
+                .missing_bug_fields
+                .contains(&"reproduction_steps".to_string())
+        );
+        assert!(result.missing_bug_fields.len() >= 2);
+        // Request message should mention both
+        assert!(result.request_message.contains("Behavior expected"));
+        assert!(result.request_message.contains("Reproduction steps"));
+    }
+
+    #[test]
+    fn test_feature_missing_acceptance_criteria_only_requests_that() {
+        // Feature with use_case and proposed_behavior but missing acceptance_criteria
+        let body = r#"
+## Use Case
+I need to track tasks better
+
+## Proposed Behavior
+A kanban board with drag and drop
+
+No acceptance criteria provided.
+"#;
+        let result = check_feature_completeness(body);
+        assert!(!result.is_complete);
+        assert!(
+            result
+                .missing_feature_fields
+                .contains(&"acceptance_criteria".to_string())
+        );
+        assert!(result.missing_feature_fields.len() == 1);
+        // Request message should mention acceptance criteria only
+        assert!(result.request_message.contains("Acceptance criteria"));
+        assert!(!result.request_message.contains("Use case"));
+        assert!(!result.request_message.contains("Proposed behavior"));
+    }
+
+    #[test]
+    fn test_no_generic_please_provide_more_details() {
+        let body = "Just a title";
+        let result = check_bug_completeness(body);
+        assert!(!result.is_complete);
+        // Should NOT contain generic phrases
+        assert!(
+            !result
+                .request_message
+                .to_lowercase()
+                .contains("more detail")
+        );
+        assert!(
+            !result
+                .request_message
+                .to_lowercase()
+                .contains("need more info")
+        );
+        assert!(
+            !result
+                .request_message
+                .to_lowercase()
+                .contains("additional info")
+        );
+        // Should contain specific field requests
+        assert!(result.request_message.contains("Behavior observed"));
+        assert!(result.request_message.contains("Behavior expected"));
+        assert!(result.request_message.contains("Reproduction steps"));
+        assert!(result.request_message.contains("Environment"));
+    }
+
+    #[test]
+    fn test_needs_information_label_would_be_applied() {
+        // This test verifies the completeness check returns the correct data
+        // for needs-information label application
+        let body = r#"
+## Behavior Observed
+Something wrong
+"#;
+        let result = check_bug_completeness(body);
+        assert!(!result.is_complete);
+        // The missing fields list can be used to apply needs-information label
+        assert!(!result.missing_bug_fields.is_empty());
+        // The request message specifically identifies what's needed
+        assert!(!result.request_message.is_empty());
+    }
+
+    #[test]
+    fn test_bug_completeness_result_usable_for_transition() {
+        // Verify the CompletenessCheckResult can be used with TransitionSummary
+        use crate::feature_bug::FeatureBugIssue;
+        use crate::feature_bug::TransitionSummary;
+
+        let incomplete_body = r#"
+## What Happened
+The button clicked but nothing happened
+
+## Environment
+Windows 10, Chrome 120
+"#;
+        let result = check_bug_completeness(incomplete_body);
+        assert!(!result.is_complete);
+
+        let issue = FeatureBugIssue {
+            number: 42,
+            title: "Test bug".to_string(),
+            body: incomplete_body.to_string(),
+            author: "testuser".to_string(),
+            is_bug: true,
+            is_feature: false,
+        };
+
+        // Using the result with bug_needs_information transition
+        let transition = TransitionSummary::bug_needs_information(&issue, &result.request_message);
+        assert!(transition.applied_needs_information);
+        assert!(
+            transition
+                .labels_to_add
+                .contains(&"needs-information".to_string())
+        );
+    }
+
+    #[test]
+    fn test_feature_completeness_result_usable_for_transition() {
+        // Verify the CompletenessCheckResult can be used with TransitionSummary
+        use crate::feature_bug::FeatureBugIssue;
+        use crate::feature_bug::TransitionSummary;
+
+        let incomplete_body = r#"
+## Use Case
+I want to export my data to CSV
+"#;
+        let result = check_feature_completeness(incomplete_body);
+        assert!(!result.is_complete);
+
+        let issue = FeatureBugIssue {
+            number: 43,
+            title: "Test feature".to_string(),
+            body: incomplete_body.to_string(),
+            author: "testuser".to_string(),
+            is_bug: false,
+            is_feature: true,
+        };
+
+        // Using the result with feature_needs_information transition
+        let transition =
+            TransitionSummary::feature_needs_information(&issue, &result.request_message);
+        assert!(transition.applied_needs_information);
+        assert!(
+            transition
+                .labels_to_add
+                .contains(&"needs-information".to_string())
+        );
+    }
 }
