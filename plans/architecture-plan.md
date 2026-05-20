@@ -549,7 +549,7 @@ This schema defines every config key Rodgers reads at runtime. Keys not present 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `triage.default_labels` | list[string] | `["bug", "enhancement", "question"]` | Labels Rodgers applies to new issues when none are present. |
-| `triage.bot_labels` | list[string] | `[]` | Labels used to mark issues opened by bots. Rodgers skips bot-created issues in triage. |
+| `triage.bot_labels` | list[string] | `[]` | Labels Rodgers applies to issues whose author has `type == "Bot"`. After applying these labels, Rodgers skips triaging the issue for the current run. |
 | `triage.close_labels` | list[string] | `["wontfix", "duplicate", "not planned"]` | Labels that indicate an issue should be closed. |
 | `triage.assignees` | list[string] | `[]` | Usernames to assign to new issues during triage. |
 

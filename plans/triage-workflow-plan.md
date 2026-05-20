@@ -96,7 +96,7 @@ stateDiagram-v2
 
 **Entry:** Issue exists with no Rodgers-applied label from a prior triage run.
 
-**Action:** Rodgers reads the issue body and author context, applies the appropriate initial label (`bug`, `feature`, or `question`), and applies any `bot_labels` detection (see triage configuration). Moves to `INCOMPLETE` or proceeds directly to the appropriate workflow.
+**Action:** Rodgers reads the issue body and author context. During this read, Rodgers calls `get_issue` (tool) and checks `author.type`. If `author.type == "Bot"`, Rodgers applies all labels from `triage.bot_labels` to the issue, then skips triage for this issue entirely for this run. Otherwise, Rodgers applies the appropriate initial label (`bug`, `feature`, or `question`), applies any `bot_labels` detection (see triage configuration). Moves to `INCOMPLETE` or proceeds directly to the appropriate workflow.
 
 ### INCOMPLETE (bug / feature)
 
@@ -256,3 +256,4 @@ When Rodgers transitions an issue to `READY-FOR-WORK`, it prompts the LLM to ana
 - [ ] CRIT-9: On detecting epic-scale work at `READY-FOR-WORK`, Rodgers files the epic bead and all child beads before any bead is set to `open`; all child beads start `deferred`
 - [ ] CRIT-10: Rodgers does not set any child bead to `open` until it detects a human signal (human comment or any human-initiated bead modification); on that signal, Rodgers sets all non-closed child beads to `open` as a batch
 - [ ] CRIT-11: When all child beads of an epic are closed and the GitHub issue is in a closed state, Rodgers closes the epic bead within one triage run of detecting that condition; stalled issues (all children closed, issue still open) receive a one-time alert comment asking the human to close the issue
+- [ ] CRIT-12: When Rodgers encounters an issue where `author.type == "Bot"` (detected via `get_issue`), it applies all `triage.bot_labels` labels to the issue and skips triage for that issue for the current run
