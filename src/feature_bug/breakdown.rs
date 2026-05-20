@@ -23,6 +23,18 @@
 //!
 //! Child beads inherit their type from the parent: if the issue is `bug`,
 //! children are type=bug; if `feature`, children are type=feature.
+//!
+//! ## Standalone Bead Specification
+//!
+//! A standalone bead (AGENTS.md §Beads must stand alone) is one that a naive
+//! but competent junior developer can implement without consulting other beads
+//! or the epic description. Every standalone bead includes:
+//!
+//! - **WHAT TO DO**: Concrete files, packages, functions, or commands
+//! - **WHY**: User-visible behavior, constraint, or design rule
+//! - **HOW TO VERIFY**: Test, command, or observable result
+//! - **EDGE CASES**: Non-obvious constraints a careful reader could miss
+//! - **TERMINOLOGY**: Project-specific terms explained inline
 
 use crate::beads::client::{BeadClient, BeadType, ChildBeadSpec, EpicScaleResult};
 
@@ -192,18 +204,30 @@ fn detect_sequential_work(body: &str) -> usize {
     if body.contains("first") && body.contains("second") {
         score += 1;
     }
-    // "step N" patterns (step 1, step 2, etc.)
-    let has_step_1 = body.contains("step 1") || body.contains("step one");
-    let has_step_2 = body.contains("step 2")
-        || body.contains("step two")
+    // "step N" patterns (step 1, step 2, etc.) - more explicit than just "1. 2."
+    let has_explicit_step_1 =
+        body.contains("step 1") || body.contains("step one:") || body.contains("step one -");
+    let has_explicit_step_2 = body.contains("step 2")
+        || body.contains("step two:")
+        || body.contains("step two -")
         || body.contains("step 3")
-        || body.contains("step three");
-    if has_step_1 && has_step_2 {
+        || body.contains("step three:");
+    if has_explicit_step_1 && has_explicit_step_2 {
         score += 1;
     }
-    // Numbered patterns like "1." followed by "2."
+    // Numbered patterns like "1." followed by "2." but WITH context (not just list items)
+    // This is more strict - requires the numbers to be part of a description, not bullet points
     if body.contains("1.") && body.contains("2.") {
-        score += 1;
+        // Check if this looks like a step description rather than bullet points
+        let lines: Vec<&str> = body.lines().collect();
+        let has_step_context = lines.iter().any(|l| {
+            let lower = l.to_lowercase();
+            (lower.contains("step") || lower.contains("first"))
+                && (lower.contains("1.") || lower.contains("step 1"))
+        });
+        if has_step_context {
+            score += 1;
+        }
     }
     // "then" keyword (sequential signal without explicit numbering)
     if body.contains("then") {
@@ -555,6 +579,450 @@ pub struct BreakdownResult {
     pub reasons: Vec<String>,
 }
 
+// =============================================================================
+// Standalone Bead Specification
+// =============================================================================
+
+/// A standalone bead description following AGENTS.md §Beads must stand alone.
+///
+/// A standalone bead provides all context needed for a naive but competent
+/// junior developer to implement it without consulting other beads or the
+/// parent epic.
+#[derive(Debug, Clone, Default)]
+pub struct StandaloneBead {
+    /// WHAT TO DO: Concrete files, packages, functions, or commands to create/modify
+    pub what_to_do: String,
+    /// WHY: User-visible behavior, constraint, or design rule this serves
+    pub why: String,
+    /// HOW TO VERIFY: Test, command, or observable result that proves the work is done
+    pub how_to_verify: String,
+    /// EDGE CASES AND PITFALLS: Non-obvious constraints a careful reader could miss
+    pub edge_cases: String,
+    /// PROJECT-SPECIFIC TERMINOLOGY: Terms that only make sense in context
+    pub terminology: String,
+}
+
+impl StandaloneBead {
+    /// Create a new standalone bead with all sections empty.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a standalone bead with all required sections.
+    pub fn with_sections(
+        what_to_do: &str,
+        why: &str,
+        how_to_verify: &str,
+        edge_cases: &str,
+        terminology: &str,
+    ) -> Self {
+        Self {
+            what_to_do: what_to_do.to_string(),
+            why: why.to_string(),
+            how_to_verify: how_to_verify.to_string(),
+            edge_cases: edge_cases.to_string(),
+            terminology: terminology.to_string(),
+        }
+    }
+
+    /// Check if all 5 required sections are present and non-empty.
+    pub fn has_all_sections(&self) -> bool {
+        !self.what_to_do.trim().is_empty()
+            && !self.why.trim().is_empty()
+            && !self.how_to_verify.trim().is_empty()
+            && !self.edge_cases.trim().is_empty()
+            && !self.terminology.trim().is_empty()
+    }
+
+    /// Check if the bead describes work in a single codebase part.
+    ///
+    /// A compound bead would touch multiple areas (CLI + API + DB) which
+    /// should be separate beads. API with integrated database access is considered single.
+    /// Uses word boundary detection to avoid false positives (e.g., "clients" contains "cli").
+    pub fn is_single_codebase_part(&self) -> bool {
+        let content_lower = format!(
+            "{} {} {} {} {}",
+            self.what_to_do, self.why, self.how_to_verify, self.edge_cases, self.terminology
+        )
+        .to_lowercase();
+
+        // Count the distinct areas mentioned using word boundaries
+        let mut areas = 0usize;
+
+        // CLI area - require action word boundary (not "clients", "click", "cache")
+        let has_cli = content_lower.contains(" cli ")
+            || content_lower.contains(" cli,")
+            || content_lower.contains(" cli.")
+            || content_lower.contains(" cli\n")
+            || content_lower.contains(" cli/")
+            || content_lower.contains(" cli-")
+            || content_lower.contains("-cli ")
+            || content_lower.contains("\ncli ");
+        if has_cli {
+            areas += 1;
+        }
+
+        // API area - matches "api", "rest", or "endpoint"
+        let has_api = content_lower.contains("api")
+            || content_lower.contains(" rest ")
+            || content_lower.contains("rest,")
+            || content_lower.contains("rest ")
+            || content_lower.contains(" endpoint")
+            || content_lower.contains("endpoint:")
+            || content_lower.contains("endpoint ");
+        if has_api {
+            areas += 1;
+        }
+
+        // Database - only count if NO API is present (API includes DB access normally)
+        let has_db = content_lower.contains("database")
+            || content_lower.contains(" db ")
+            || content_lower.contains("db,")
+            || content_lower.contains("storage")
+            || content_lower.contains("persist");
+        if has_db && !has_api {
+            areas += 1;
+        }
+
+        // UI area
+        let has_ui = content_lower.contains("ui ")
+            || content_lower.contains("ui,")
+            || content_lower.contains(" dashboard")
+            || content_lower.contains("dashboard ")
+            || content_lower.contains("frontend")
+            || content_lower.contains("interface ");
+        if has_ui {
+            areas += 1;
+        }
+
+        // Config area
+        let has_config = content_lower.contains("config") || content_lower.contains("settings");
+        if has_config {
+            areas += 1;
+        }
+
+        // Auth area
+        let has_auth = content_lower.contains("auth")
+            || content_lower.contains("permission")
+            || content_lower.contains("login");
+        if has_auth {
+            areas += 1;
+        }
+
+        // Allow at most 1 area (API with integrated DB counts as 1)
+        areas <= 1
+    }
+
+    /// Check if there's a compound "...and then..." pattern.
+    ///
+    /// Compound beads should be split into separate beads.
+    pub fn has_compound_pattern(&self) -> bool {
+        let content_lower = format!(
+            "{} {} {} {} {}",
+            self.what_to_do, self.why, self.how_to_verify, self.edge_cases, self.terminology
+        )
+        .to_lowercase();
+
+        // Direct "and then" pattern
+        if content_lower.contains("and then") {
+            return true;
+        }
+
+        // Sequential indicators without explicit "and then"
+        let has_first = content_lower.contains("first ");
+        let has_second = content_lower.contains("second ");
+        let has_step_1 = content_lower.contains("step 1:")
+            || content_lower.contains("step one:")
+            || content_lower.contains("step one -")
+            || content_lower.contains("\nstep 1 ");
+        let has_step_2 = content_lower.contains("step 2:")
+            || content_lower.contains("step two:")
+            || content_lower.contains("step two -")
+            || content_lower.contains("\nstep 2 ");
+
+        if (has_first && has_second) || (has_step_1 && has_step_2) {
+            return true;
+        }
+
+        // Multiple "and then" patterns like "also" then "then" pattern
+        if content_lower.contains("also")
+            && content_lower.contains("then")
+            && (content_lower.contains("and") || content_lower.contains("after"))
+        {
+            return true;
+        }
+
+        // "after that" pattern
+        if content_lower.contains("after that") || content_lower.contains("afterwards") {
+            return true;
+        }
+
+        false
+    }
+
+    /// Check if the bead is standalone-ready.
+    ///
+    /// A bead is standalone-ready if:
+    /// - All 5 sections are present
+    /// - It deals with a single codebase part
+    /// - It has no compound patterns
+    pub fn is_standalone_ready(&self) -> StandaloneValidation {
+        let sections_present = self.has_all_sections();
+        let single_part = self.is_single_codebase_part();
+        let no_compound = !self.has_compound_pattern();
+
+        let issues = {
+            let mut v = Vec::new();
+            if !sections_present {
+                v.push(StandaloneIssue::MissingSections);
+            }
+            if !single_part {
+                v.push(StandaloneIssue::MultipleCodebaseParts);
+            }
+            if !no_compound {
+                v.push(StandaloneIssue::CompoundPattern);
+            }
+            v
+        };
+
+        StandaloneValidation {
+            is_valid: issues.is_empty(),
+            issues,
+        }
+    }
+
+    /// Format the bead as a markdown string for use in bead descriptions.
+    pub fn to_markdown(&self) -> String {
+        format!(
+            r#"WHAT TO DO
+{}
+
+WHY
+{}
+
+HOW TO VERIFY
+{}
+
+EDGE CASES AND PITFALLS
+{}
+
+PROJECT-SPECIFIC TERMINOLOGY
+{}"#,
+            self.what_to_do.trim(),
+            self.why.trim(),
+            self.how_to_verify.trim(),
+            self.edge_cases.trim(),
+            self.terminology.trim()
+        )
+    }
+}
+
+/// Validation result for standalone bead checks.
+#[derive(Debug, Clone, Default)]
+pub struct StandaloneValidation {
+    /// Whether the bead meets all standalone criteria
+    pub is_valid: bool,
+    /// Issues found during validation
+    pub issues: Vec<StandaloneIssue>,
+}
+
+impl StandaloneValidation {
+    /// Create a validation result from issues.
+    pub fn from_issues(issues: Vec<StandaloneIssue>) -> Self {
+        Self {
+            is_valid: issues.is_empty(),
+            issues,
+        }
+    }
+
+    /// Check if validation passed.
+    pub fn passed(&self) -> bool {
+        self.is_valid
+    }
+
+    /// Get human-readable descriptions of all issues.
+    pub fn descriptions(&self) -> Vec<String> {
+        self.issues.iter().map(|i| i.description()).collect()
+    }
+}
+
+/// Issues that prevent a bead from being standalone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StandaloneIssue {
+    /// One or more of the 5 required sections is missing or empty
+    MissingSections,
+    /// Bead touches multiple distinct codebase areas
+    MultipleCodebaseParts,
+    /// Bead has compound "...and then..." pattern
+    CompoundPattern,
+}
+
+impl StandaloneIssue {
+    /// Get a human-readable description of the issue.
+    pub fn description(&self) -> String {
+        match self {
+            Self::MissingSections => {
+                "Missing one or more required sections (WHAT TO DO, WHY, HOW TO VERIFY, EDGE CASES, TERMINOLOGY)".to_string()
+            }
+            Self::MultipleCodebaseParts => {
+                "Bead touches multiple distinct codebase parts (CLI, API, DB, etc.). Split into separate beads.".to_string()
+            }
+            Self::CompoundPattern => {
+                "Bead has compound 'and then...' pattern. Split into separate sequential beads.".to_string()
+            }
+        }
+    }
+}
+
+/// Generate a standalone bead from work scope information.
+///
+/// This function creates a standalone bead description with all required
+/// sections based on the codebase area and the acceptance criteria context.
+pub fn generate_standalone_bead(
+    codebase_area: &str,
+    scope_description: &str,
+    ac_context: &[&str],
+) -> StandaloneBead {
+    let area_lower = codebase_area.to_lowercase();
+    let is_api = area_lower.contains("api") || area_lower.contains("endpoint");
+    let is_db = area_lower.contains("database")
+        || area_lower.contains("storage")
+        || area_lower.contains("db");
+    let is_ui = area_lower.contains("ui")
+        || area_lower.contains("frontend")
+        || area_lower.contains("dashboard");
+    let is_cli = area_lower.contains("cli") || area_lower.contains("command");
+    let is_auth = area_lower.contains("auth")
+        || area_lower.contains("permission")
+        || area_lower.contains("login");
+    let is_config = area_lower.contains("config") || area_lower.contains("settings");
+
+    // Generate WHAT TO DO based on area
+    let what_to_do = match () {
+        _ if is_api => format!(
+            "Implement API endpoints for: {}\n\nFiles to modify:\n- src/api/ (new handlers)\n- src/models/ (request/response types)\n- src/routes.rs (add routes)\n\nFunctions to create/modify: handler functions, request validators",
+            scope_description
+        ),
+        _ if is_db => format!(
+            "Implement database layer for: {}\n\nFiles to modify:\n- src/db/ (schema, migrations)\n- src/models/ (entity definitions)\n- src/queries.rs (composite queries)\n\nCreate schema, migrations, and repository functions",
+            scope_description
+        ),
+        _ if is_ui => format!(
+            "Implement UI components for: {}\n\nFiles to modify:\n- src/ui/ (new components)\n- src/components/ (shared components)\n- src/styles/ (CSS/styling)\n\nBuild React/HTML components, wire to state management",
+            scope_description
+        ),
+        _ if is_cli => format!(
+            "Implement CLI commands for: {}\n\nFiles to modify:\n- src/cli/ (command modules)\n- src/commands.rs (command registration)\n\nCreate CLI argument parser, command handlers",
+            scope_description
+        ),
+        _ if is_auth => format!(
+            "Implement authentication/authorization for: {}\n\nFiles to modify:\n- src/auth/ (auth logic)\n- src/middleware/ (auth middleware)\n- src/models/ (user/role types)\n\nImplement auth checks, middleware, user management",
+            scope_description
+        ),
+        _ if is_config => format!(
+            "Implement configuration management for: {}\n\nFiles to modify:\n- src/config/ (config types)\n- config.example.yaml (schema)\n- src/validation.rs (config validation)\n\nDefine config schema, env var handling",
+            scope_description
+        ),
+        _ => format!(
+            "Implement: {}\n\nScope: {}",
+            codebase_area, scope_description
+        ),
+    };
+
+    // Generate WHY from acceptance criteria context
+    let why = if !ac_context.is_empty() {
+        format!("Required by acceptance criteria: {}", ac_context.join("; "))
+    } else {
+        format!(
+            "Required for complete implementation of: {}",
+            scope_description
+        )
+    };
+
+    // Generate HOW TO VERIFY
+    let how_to_verify = match () {
+        _ if is_api => String::from(
+            "1. Run existing tests: `cargo test`\n2. Manual test: curl the endpoint with valid/invalid inputs\n3. Verify response matches schema: `cargo test -- --test-threads=1 api_*`\n4. Check logs for errors",
+        ),
+        _ if is_db => String::from(
+            "1. Run migrations: `cargo run migrate`\n2. Run tests: `cargo test`\n3. Verify data persists across restarts\n4. Check migration logs",
+        ),
+        _ if is_ui => String::from(
+            "1. Start dev server: `cargo run`\n2. Navigate to affected UI area\n3. Verify component renders correctly\n4. Test user interactions",
+        ),
+        _ if is_cli => String::from(
+            "1. Build: `cargo build --release`\n2. Run help: `./target/release/rogers --help`\n3. Test command: `./target/release/rogers <command> --help`\n4. Verify output format",
+        ),
+        _ if is_auth => String::from(
+            "1. Test unauthenticated access is rejected\n2. Test authenticated access succeeds\n3. Test unauthorized actions fail\n4. Verify session/token handling",
+        ),
+        _ if is_config => String::from(
+            "1. Run with new config: `./rogers --config config.yaml`\n2. Verify config loads without errors\n3. Test invalid config is rejected with clear error\n4. Verify env var overrides work",
+        ),
+        _ => String::from("Run tests and verify behavior matches acceptance criteria"),
+    };
+
+    // Generate EDGE CASES based on area
+    let edge_cases = match () {
+        _ if is_api || is_db => String::from(
+            "- Handle concurrent requests properly (mutex/locking where needed)\n- Return appropriate HTTP codes for error cases\n- Validate all inputs before processing\n- Handle None/empty values gracefully\n- Connection pooling for database",
+        ),
+        _ if is_ui => String::from(
+            "- Handle loading states briefly (avoid flash)\n- Handle error states with clear messages\n- Responsive layout on different screen sizes\n- Keyboard navigation accessibility\n- Focus management for modals/dialogs",
+        ),
+        _ if is_cli => String::from(
+            "- Handle invalid argument combinations\n- Show helpful error messages\n- Handle piped input and large inputs\n- Progress indicators for long operations\n- Proper exit codes (0 success, non-zero failure)",
+        ),
+        _ if is_auth => String::from(
+            "- Session timeout handling\n- Cross-site request forgery (CSRF) prevention\n- Rate limiting on auth endpoints\n- Token refresh logic\n- Secure credential storage (no plaintext)",
+        ),
+        _ if is_config => String::from(
+            "- Unknown config keys should warn, not fail\n- Validate types before parsing\n- Handle missing optional fields\n- Config file path resolution\n- Environment variable precedence",
+        ),
+        _ => String::from(
+            "- Handle error cases gracefully\n- Include appropriate logging\n- Clean up resources on failure",
+        ),
+    };
+
+    // Generate TERMINOLOGY
+    let terminology = String::from(
+        "**Bead**: A unit of work tracked as an issue. Child beads are sub-tasks of an epic.\n\
+        **Standalone bead**: A bead with complete context so a junior dev can implement it alone.\n\
+        **Acceptance criteria**: Testable conditions that verify the work is complete.",
+    );
+
+    StandaloneBead::with_sections(&what_to_do, &why, &how_to_verify, &edge_cases, &terminology)
+}
+
+/// Validate that a list of child beads would be standalone.
+///
+/// Returns validation results for each bead plus a summary indicating
+/// whether all beads meet standalone criteria.
+pub fn validate_beads_standalone(beads: &[StandaloneBead]) -> BeadValidationResult {
+    let mut individual_results = Vec::new();
+
+    for (idx, bead) in beads.iter().enumerate() {
+        let validation = bead.is_standalone_ready();
+        individual_results.push((idx, validation));
+    }
+
+    let all_valid = individual_results.iter().all(|(_, v)| v.passed());
+
+    BeadValidationResult {
+        all_standalone: all_valid,
+        individual_results,
+    }
+}
+
+/// Result of validating multiple beads for standalone criteria.
+#[derive(Debug, Clone, Default)]
+pub struct BeadValidationResult {
+    /// Whether all beads are standalone-ready
+    pub all_standalone: bool,
+    /// Individual validation results per bead
+    pub individual_results: Vec<(usize, StandaloneValidation)>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -862,5 +1330,288 @@ Bug.
         let body = "api endpoint, database storage, user interface";
         let result = analyze_epic_scale(body, 1, false);
         assert!(!result.reasons.is_empty());
+    }
+
+    // =============================================================================
+    // Standalone Bead Tests (CRIT-5)
+    // =============================================================================
+
+    #[test]
+    fn test_standalone_bead_has_all_sections() {
+        let bead = StandaloneBead::with_sections(
+            "Create file.txt",
+            "User needs this file",
+            "cat file.txt shows content",
+            "Handle empty file",
+            "None",
+        );
+
+        assert!(bead.has_all_sections());
+    }
+
+    #[test]
+    fn test_standalone_bead_missing_sections() {
+        let bead = StandaloneBead::with_sections(
+            "Create file.txt",
+            "",
+            "cat file.txt shows content",
+            "Handle empty file",
+            "None",
+        );
+
+        assert!(!bead.has_all_sections());
+    }
+
+    #[test]
+    fn test_standalone_bead_single_codebase_part() {
+        // API only - should pass
+        let api_bead = StandaloneBead::with_sections(
+            "Implement API handler in src/api/",
+            "User-visible API endpoint",
+            "curl test passes",
+            "Handle None gracefully",
+            "Handler: API processing function",
+        );
+
+        assert!(api_bead.is_single_codebase_part());
+
+        // Multiple areas - should fail
+        let multi_bead = StandaloneBead::with_sections(
+            "Implement in CLI and API",
+            "Both areas need this",
+            "Test both",
+            "Handle both",
+            "None",
+        );
+
+        assert!(!multi_bead.is_single_codebase_part());
+    }
+
+    #[test]
+    fn test_standalone_bead_compound_pattern_detection() {
+        // Compound bead with "and then"
+        let compound_bead = StandaloneBead::with_sections(
+            "First do X to the database, and then do Y to the API",
+            "Sequential work",
+            "Test both steps",
+            "Handle ordering",
+            "None",
+        );
+
+        assert!(compound_bead.has_compound_pattern());
+        assert!(!compound_bead.is_standalone_ready().passed());
+
+        // Sequential steps pattern
+        let steps_bead = StandaloneBead::with_sections(
+            "Step 1: Create schema. Step 2: Add data.",
+            "Migration work",
+            "Run migration",
+            "Handle rollback",
+            "None",
+        );
+
+        assert!(steps_bead.has_compound_pattern());
+
+        // Non-compound - clean single unit
+        let clean_bead = StandaloneBead::with_sections(
+            "Implement database schema for user table",
+            "Store user data persistently",
+            "Query user by ID succeeds",
+            "Handle missing fields",
+            "Entity: database model object",
+        );
+
+        assert!(!clean_bead.has_compound_pattern());
+        assert!(clean_bead.is_standalone_ready().passed());
+    }
+
+    #[test]
+    fn test_standalone_bead_is_standalone_ready_full() {
+        let bead = StandaloneBead::with_sections(
+            "Implement the weather API endpoint",
+            "Expose weather data to clients via REST",
+            "curl /api/weather returns JSON with data",
+            "- Rate limit requests\n- Handle API key rotation\n- Cache responses for 5 minutes",
+            "**Weather API**: single GET endpoint returning JSON forecast data",
+        );
+
+        let validation = bead.is_standalone_ready();
+        assert!(validation.passed());
+        assert!(validation.issues.is_empty());
+    }
+
+    #[test]
+    fn test_standalone_bead_validation_multiple_issues() {
+        let bead = StandaloneBead::with_sections(
+            "", // Missing WHAT
+            "", // Missing WHY
+            "", // Missing HOW
+            "", // Missing EDGE
+            "", // Missing TERMS
+        );
+
+        let validation = bead.is_standalone_ready();
+        assert!(!validation.passed());
+        assert!(
+            validation
+                .issues
+                .contains(&StandaloneIssue::MissingSections)
+        );
+    }
+
+    #[test]
+    fn test_standalone_validation_descriptions() {
+        let validation = StandaloneValidation::from_issues(vec![
+            StandaloneIssue::MissingSections,
+            StandaloneIssue::MultipleCodebaseParts,
+        ]);
+
+        let descriptions = validation.descriptions();
+        assert!(descriptions.len() == 2);
+        assert!(descriptions[0].contains("Missing"));
+        assert!(descriptions[1].contains("multiple"));
+    }
+
+    #[test]
+    fn test_standalone_bead_to_markdown() {
+        let bead = StandaloneBead::with_sections(
+            "Create feature X",
+            "Users need this",
+            "Run tests",
+            "Handle errors",
+            "Feature X: new capability",
+        );
+
+        let md = bead.to_markdown();
+        assert!(md.contains("WHAT TO DO"));
+        assert!(md.contains("Create feature X"));
+        assert!(md.contains("WHY"));
+        assert!(md.contains("HOW TO VERIFY"));
+        assert!(md.contains("EDGE CASES"));
+        assert!(md.contains("TERMINOLOGY"));
+    }
+
+    #[test]
+    fn test_generate_standalone_bead_api() {
+        let bead = generate_standalone_bead(
+            "API",
+            "user profile endpoints",
+            &[
+                "AC-1: Profile displays correctly",
+                "AC-2: Profile updates persist",
+            ],
+        );
+
+        assert!(bead.has_all_sections());
+        assert!(bead.is_standalone_ready().passed());
+        assert!(bead.what_to_do.contains("API"));
+        assert!(bead.why.contains("AC-1"));
+    }
+
+    #[test]
+    fn test_generate_standalone_bead_database() {
+        let bead = generate_standalone_bead(
+            "Database",
+            "user table schema",
+            &["AC-1: Data persists", "AC-2: Queries are fast"],
+        );
+
+        assert!(bead.has_all_sections());
+        assert!(bead.what_to_do.contains("database"));
+        assert!(bead.what_to_do.contains("schema"));
+    }
+
+    #[test]
+    fn test_generate_standalone_bead_ui() {
+        let bead = generate_standalone_bead(
+            "UI",
+            "dashboard components",
+            &["AC-1: Dashboard loads", "AC-2: Charts render"],
+        );
+
+        assert!(bead.has_all_sections());
+        assert!(bead.what_to_do.contains("UI"));
+        assert!(bead.how_to_verify.contains("dev server"));
+    }
+
+    #[test]
+    fn test_generate_standalone_bead_cli() {
+        let bead = generate_standalone_bead("CLI", "export command", &["AC-1: CSV export works"]);
+
+        assert!(bead.has_all_sections());
+        assert!(bead.what_to_do.contains("CLI"));
+        assert!(bead.how_to_verify.contains("--help"));
+    }
+
+    #[test]
+    fn test_validate_beads_standalone_all_pass() {
+        let beads = vec![
+            generate_standalone_bead("API", "endpoint 1", &[]),
+            generate_standalone_bead("UI", "component 1", &[]),
+            generate_standalone_bead("DB", "schema 1", &[]),
+        ];
+
+        let result = validate_beads_standalone(&beads);
+        assert!(result.all_standalone);
+        assert_eq!(result.individual_results.len(), 3);
+        for (_, validation) in result.individual_results {
+            assert!(validation.passed());
+        }
+    }
+
+    #[test]
+    fn test_validate_beads_standalone_one_fails() {
+        let mut beads = vec![
+            generate_standalone_bead("API", "endpoint 1", &[]),
+            generate_standalone_bead("UI", "component 1", &[]),
+        ];
+
+        // Corrupt one bead to have multiple issues
+        if let Some(bad) = beads.get_mut(0) {
+            bad.what_to_do = "CLI and API combined".to_string();
+            bad.why = "Sequential work: first do API, and then do CLI".to_string();
+        }
+
+        let result = validate_beads_standalone(&beads);
+        assert!(!result.all_standalone);
+        // First bead should fail (compound + multiple areas)
+        assert!(!result.individual_results[0].1.passed());
+        // Second should pass
+        assert!(result.individual_results[1].1.passed());
+    }
+
+    #[test]
+    fn test_standalone_issue_description() {
+        assert!(
+            StandaloneIssue::MissingSections
+                .description()
+                .contains("Missing")
+        );
+        assert!(
+            StandaloneIssue::MultipleCodebaseParts
+                .description()
+                .to_lowercase()
+                .contains("multiple")
+        );
+        assert!(
+            StandaloneIssue::CompoundPattern
+                .description()
+                .contains("compound")
+        );
+    }
+
+    #[test]
+    fn test_closely_related_areas_allows_api_db() {
+        // API + Database alone should be allowed as closely related
+        let bead = StandaloneBead::with_sections(
+            "API handler with database access",
+            "Fetch user data",
+            "Test endpoint",
+            "Handle DB errors",
+            "None",
+        );
+
+        // This bead mentions API and DB, which are closely related
+        assert!(bead.is_single_codebase_part());
     }
 }

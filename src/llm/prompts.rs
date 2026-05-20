@@ -194,6 +194,120 @@ Issue body: {issue_body}
 Respond with ONLY the JSON array, no preamble.
 "#;
 
+/// Prompt for generating a standalone child bead description with all required sections.
+///
+/// A standalone bead is one that a naive but competent junior developer can implement
+/// without consulting other beads or the epic description. Each bead MUST include:
+/// 1. **WHAT TO DO** - Concrete files, packages, functions, or commands to create/modify
+/// 2. **WHY** - User-visible behavior, constraint, or design rule this serves
+/// 3. **HOW TO VERIFY** - Test, command, or observable result that proves work is done
+/// 4. **EDGE CASES AND PITFALLS** - Non-obvious constraints a careful reader could miss
+/// 5. **PROJECT-SPECIFIC TERMINOLOGY** - Project terms explained inline
+pub const STANDALONE_BEAD_PROMPT: &str = r#"Generate a standalone child bead description for implementation.
+
+A standalone bead provides ALL context needed for a naive but competent junior developer
+to implement it WITHOUT consulting other beads or the parent epic.
+
+REQUIRED SECTIONS (write all 5):
+1. **WHAT TO DO**: Name concrete files, packages, functions, and commands to create or modify.
+2. **WHY**: Explain the user-visible behavior, constraint, or design rule this serves.
+3. **HOW TO VERIFY**: Specify the test, command, or observable result that proves work is done.
+4. **EDGE CASES AND PITFALLS**: Non-obvious constraints a careful reader could miss.
+5. **PROJECT-SPECIFIC TERMINOLOGY**: Define project-specific terms inline.
+
+RULES:
+- Single codebase part only (CLI OR API OR DB OR UI OR Config OR Auth)
+- No "and then..." patterns - each bead scope should fit in one non-compound sentence
+- Write for a naive junior dev who can write code and run tools but hasn't read the plan
+
+FORMAT your response as a JSON object:
+{
+  "title": "Area: Brief description (e.g., 'API: User profile endpoint')",
+  "description": "Full standalone description with all 5 sections formatted as markdown"
+}
+
+Bead scope: {bead_scope}
+Codebase area: {codebase_area}
+Acceptance criteria context: {ac_context}
+
+Respond with ONLY the JSON object, no preamble or explanation.
+"#;
+
+/// Prompt for validating that a child bead description is standalone-ready.
+///
+/// This prompt helps an LLM validate that generated beads meet standalone criteria:
+/// - All 5 required sections present
+/// - Single codebase part (no CLI+API+DB+UI in one bead)
+/// - No compound "and then..." patterns
+pub const STANDALONE_VALIDATION_PROMPT: &str = r#"Validate whether a child bead description is standalone-ready.
+
+A standalone-ready bead can be implemented by a naive but competent junior developer
+WITHOUT consulting other beads, the parent epic, or out-of-band knowledge.
+
+Check for these issues:
+
+1. **MISSING SECTIONS**: Verify all 5 sections exist:
+   - WHAT TO DO
+   - WHY
+   - HOW TO VERIFY
+   - EDGE CASES AND PITFALLS (or EDGE CASES)
+   - PROJECT-SPECIFIC TERMINOLOGY (or TERMINOLOGY)
+
+2. **MULTIPLE CODEBASE AREAS**: Flag if bead touches multiple distinct areas:
+   - CLI alone
+   - API alone
+   - Database alone
+   - UI alone
+   - Config alone
+   - Auth alone
+   (Exception: API + Database may be combined as they're closely related)
+
+3. **COMPOUND PATTERNS**: Flag if bead has sequential work patterns:
+   - "and then" patterns
+   - "first... second..." patterns
+   - "Step 1... Step 2..." numbered patterns
+   - "after that" or "afterwards"
+   - Sequential work that should be separate beads
+
+Bead description to validate:
+{bead_description}
+
+Respond with a JSON object:
+{
+  "is_standalone_ready": true/false,
+  "issues": ["list of issues found"],
+  "suggestions": ["list of suggestions to fix issues"]
+}
+"#;
+
+/// Prompt for splitting a compound bead into separate standalone beads.
+pub const BEAD_SPLIT_PROMPT: &str = r#"Split a compound bead into separate standalone beads.
+
+The following bead has compound scope (touches multiple areas or has sequential patterns).
+Split it into 2-5 separate beads, each touching ONE distinct codebase area.
+
+Original bead:
+{original_bead}
+
+RULES FOR SPLIT BEADS:
+1. Each bead touches only ONE codebase area: CLI, API, DB, UI, Config, or Auth
+2. No "and then..." patterns in any single bead
+3. Each bead is standalone: includes all 5 sections
+4. Maximum 5 beads - group closely related work
+5. Preserve ordering if beads have dependencies
+
+FORMAT as JSON array:
+[
+  {
+    "title": "Area: Brief description",
+    "description": "Standalone description (5 sections) for this unit",
+    "has_dependency_on": null or "Area: Previous bead title"
+  }
+]
+
+Respond with ONLY the JSON array.
+"#;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BugFieldExtraction {
     /// Whether behavior observed is present
@@ -550,5 +664,110 @@ mod tests {
         // The prompt should include an example of a good response
         assert!(WARM_CLOSURE_PROMPT.contains("Example good response"));
         assert!(WARM_CLOSURE_PROMPT.contains("@username"));
+    }
+
+    // =============================================================================
+    // Standalone Bead Prompt Tests (CRIT-5)
+    // =============================================================================
+
+    #[test]
+    fn test_standalone_bead_prompt_has_required_sections() {
+        assert!(STANDALONE_BEAD_PROMPT.contains("WHAT TO DO"));
+        assert!(STANDALONE_BEAD_PROMPT.contains("WHY"));
+        assert!(STANDALONE_BEAD_PROMPT.contains("HOW TO VERIFY"));
+        assert!(STANDALONE_BEAD_PROMPT.contains("EDGE CASES"));
+        assert!(STANDALONE_BEAD_PROMPT.contains("TERMINOLOGY"));
+    }
+
+    #[test]
+    fn test_standalone_bead_prompt_includes_rules() {
+        assert!(STANDALONE_BEAD_PROMPT.contains("Single codebase part"));
+        assert!(STANDALONE_BEAD_PROMPT.contains("and then"));
+    }
+
+    #[test]
+    fn test_standalone_bead_prompt_includes_format() {
+        assert!(STANDALONE_BEAD_PROMPT.contains("JSON"));
+        assert!(STANDALONE_BEAD_PROMPT.contains("title"));
+        assert!(STANDALONE_BEAD_PROMPT.contains("description"));
+    }
+
+    #[test]
+    fn test_standalone_bead_prompt_includes_placeholders() {
+        assert!(STANDALONE_BEAD_PROMPT.contains("{bead_scope}"));
+        assert!(STANDALONE_BEAD_PROMPT.contains("{codebase_area}"));
+        assert!(STANDALONE_BEAD_PROMPT.contains("{ac_context}"));
+    }
+
+    #[test]
+    fn test_standalone_validation_prompt_checks_sections() {
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("MISSING SECTIONS"));
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("WHAT TO DO"));
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("WHY"));
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("HOW TO VERIFY"));
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("EDGE CASES"));
+    }
+
+    #[test]
+    fn test_standalone_validation_prompt_checks_multiple_areas() {
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("MULTIPLE CODEBASE AREAS"));
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("CLI"));
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("API"));
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("Database"));
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("UI"));
+    }
+
+    #[test]
+    fn test_standalone_validation_prompt_checks_compound_patterns() {
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("COMPOUND PATTERNS"));
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("and then"));
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("Step"));
+    }
+
+    #[test]
+    fn test_standalone_validation_prompt_includes_bead_desc_placeholder() {
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("{bead_description}"));
+    }
+
+    #[test]
+    fn test_standalone_validation_prompt_returns_json() {
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("is_standalone_ready"));
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("issues"));
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("suggestions"));
+    }
+
+    #[test]
+    fn test_bead_split_prompt_includes_rules() {
+        assert!(BEAD_SPLIT_PROMPT.contains("compound scope"));
+        assert!(BEAD_SPLIT_PROMPT.contains("ONE codebase area"));
+        assert!(BEAD_SPLIT_PROMPT.contains("and then"));
+        assert!(BEAD_SPLIT_PROMPT.contains("all 5 sections"));
+    }
+
+    #[test]
+    fn test_bead_split_prompt_includes_original_bead_placeholder() {
+        assert!(BEAD_SPLIT_PROMPT.contains("{original_bead}"));
+    }
+
+    #[test]
+    fn test_bead_split_prompt_format() {
+        assert!(BEAD_SPLIT_PROMPT.contains("JSON"));
+        assert!(BEAD_SPLIT_PROMPT.contains("title"));
+        assert!(BEAD_SPLIT_PROMPT.contains("description"));
+        assert!(BEAD_SPLIT_PROMPT.contains("has_dependency_on"));
+    }
+
+    #[test]
+    fn test_epic_breakdown_prompt_for_standalone_beads() {
+        // The epic breakdown prompt should mention standalone rules
+        assert!(EPIC_BREAKDOWN_PROMPT.contains("Single codebase part"));
+        assert!(EPIC_BREAKDOWN_PROMPT.contains("and then"));
+    }
+
+    #[test]
+    fn test_standalone_bead_prompt_checks_compound_patterns() {
+        // The standalone validation prompt explicitly checks for sequential patterns
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("and then"));
+        assert!(STANDALONE_VALIDATION_PROMPT.contains("Step"));
     }
 }
