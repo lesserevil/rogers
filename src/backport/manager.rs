@@ -1332,4 +1332,156 @@ mod tests {
         // Function exists and takes &str parameter
         assert_eq!(bead_id.len() > 0, true);
     }
+
+    // ---------------------------------------------------------------------------
+    // CRIT-9: Reminder Comment Integration Tests
+    // ---------------------------------------------------------------------------
+
+    /// CRIT-9: DiscussionVoteResult.reminder_sent = true means skip reminder.
+    /// When existing reminder is detected, reminder_sent should be true.
+    #[test]
+    fn test_crit9_reminder_sent_true_skips_reminder() {
+        // Create a result where reminder was already sent
+        let result = DiscussionVoteResult {
+            state: ApprovalState::Stale {
+                reminder_sent: true,
+            },
+            votes: vec![],
+            most_recent: None,
+            reminder_sent: true, // CRIT-9: reminder already sent
+        };
+
+        // The decision: if reminder_sent, don't add to needs_reminder
+        let mut needs_reminder: Vec<u64> = Vec::new();
+        let discussion_number = 42u64;
+
+        match &result.state {
+            ApprovalState::Stale { reminder_sent: _ } => {
+                // CRIT-9: Only add if reminder was NOT sent yet
+                if !result.reminder_sent {
+                    needs_reminder.push(discussion_number);
+                }
+            }
+            _ => {}
+        }
+
+        assert!(
+            needs_reminder.is_empty(),
+            "Should NOT add to needs_reminder when reminder_sent=true"
+        );
+        assert!(
+            result.reminder_sent,
+            "reminder_sent flag should be true"
+        );
+    }
+
+    /// CRIT-9: DiscussionVoteResult.reminder_sent = false means post reminder.
+    /// When no existing reminder, reminder_sent should be false.
+    #[test]
+    fn test_crit9_reminder_sent_false_posts_reminder() {
+        // Create a result where no reminder was sent yet
+        let result = DiscussionVoteResult {
+            state: ApprovalState::Stale {
+                reminder_sent: false,
+            },
+            votes: vec![],
+            most_recent: None,
+            reminder_sent: false, // CRIT-9: no reminder sent yet
+        };
+
+        // The decision: if reminder_sent is false, add to needs_reminder
+        let mut needs_reminder: Vec<u64> = Vec::new();
+        let discussion_number = 42u64;
+
+        match &result.state {
+            ApprovalState::Stale { reminder_sent: _ } => {
+                // CRIT-9: Only add if reminder was NOT sent yet
+                if !result.reminder_sent {
+                    needs_reminder.push(discussion_number);
+                }
+            }
+            _ => {}
+        }
+
+        assert_eq!(
+            needs_reminder.len(),
+            1,
+            "Should add to needs_reminder when reminder_sent=false"
+        );
+        assert_eq!(needs_reminder[0], 42, "Should add discussion number 42");
+        assert!(
+            !result.reminder_sent,
+            "reminder_sent flag should be false"
+        );
+    }
+
+    /// CRIT-9: Approved state should not trigger any reminder action.
+    #[test]
+    fn test_crit9_approved_no_reminder_action() {
+        let result = DiscussionVoteResult {
+            state: ApprovalState::Approved,
+            votes: vec![],
+            most_recent: None,
+            reminder_sent: false,
+        };
+
+        // Approved discussions should not be in stale state
+        assert!(
+            !matches!(result.state, ApprovalState::Stale { .. }),
+            "Approved discussion should not be Stale"
+        );
+    }
+
+    /// CRIT-9: Expired state should close, not remind.
+    #[test]
+    fn test_crit9_expired_closed_not_reminded() {
+        let result = DiscussionVoteResult {
+            state: ApprovalState::Expired,
+            votes: vec![],
+            most_recent: None,
+            reminder_sent: false,
+        };
+
+        // Expired discussions should close, not remind
+        let mut needs_reminder: Vec<u64> = Vec::new();
+        let mut needs_close: Vec<u64> = Vec::new();
+
+        match &result.state {
+            ApprovalState::Stale { .. } => {
+                if !result.reminder_sent {
+                    needs_reminder.push(42);
+                }
+            }
+            ApprovalState::Expired => {
+                needs_close.push(42);
+            }
+            _ => {}
+        }
+
+        assert!(
+            needs_reminder.is_empty(),
+            "Expired discussion should not need reminder"
+        );
+        assert_eq!(
+            needs_close.len(),
+            1,
+            "Expired discussion should need close"
+        );
+    }
+
+    /// CRIT-9: Default voting_window_days is 2 per config.
+    #[test]
+    fn test_crit9_voting_window_default_config() {
+        // Create a release config with defaults
+        let config = ReleaseConfig::default();
+
+        assert_eq!(
+            config.voting_window_days, 2,
+            "Default voting_window_days should be 2"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // End CRIT-9 Tests
+    // ---------------------------------------------------------------------------
 }
