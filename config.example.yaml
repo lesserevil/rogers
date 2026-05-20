@@ -49,5 +49,8 @@ rogation:
   template_dir:                    # per-project override for embedded issue templates (optional)
   security_label: security         # label name Rodgers checks for security patch detection
 
+templates:
+  auto_suggest: true              # file a bead with suggested templates if none found (default: true)
+
 log_level: info                   # debug | info | warn | error
 error_channel:                    # Slack channel ID for error notifications

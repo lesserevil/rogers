@@ -19,4 +19,5 @@ pub mod github;
 pub mod init;
 pub mod labels;
 pub mod llm;
+pub mod templates;
 pub mod triage;
