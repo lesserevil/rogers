@@ -173,7 +173,11 @@ When Rodgers sees `needs-information` applied, it checks:
 
 **Entry:** Epic bead created, work is underway.
 
-**Exit:** When all child beads are closed and the GitHub issue is resolved, Rodgers closes the issue and marks the epic closed.
+**Exit (passive, next poll):** On every triage run, Rodgers evaluates all issues in `IN_PROGRESS` — issues labeled `in-progress` or that have an open epic bead with child beads. If Rodgers detects that all child beads are closed **and** the GitHub issue is in a closed state, Rodgers closes the epic bead and the loop terminates for that issue.
+
+Rodgers does not force-close the GitHub issue proactively. It relies on the human to close the issue or on a configured automation (e.g., GitHub Actions workflow that closes issues when all linked PRs merge). Rodgers detects the closed state on the next triage run.
+
+**Stalled IN_PROGRESS recovery:** If Rodgers detects an `IN_PROGRESS` issue whose child beads are all closed but the GitHub issue is still open, it posts a comment on the issue asking the human to close it or confirm the work is done. Rodgers does not close the issue on the human's behalf. This is a one-time alert per stalled state — Rodgers does not repeat the ping unless new activity restarts the loop.
 
 ---
 
@@ -251,3 +255,4 @@ When Rodgers transitions an issue to `READY-FOR-WORK`, it prompts the LLM to ana
 - [ ] CRIT-8: All public comments Rodgers posts are LLM-drafted, validated by the Structured Output Validator, and reviewed against Rodger's warmth principle before being sent to GitHub
 - [ ] CRIT-9: On detecting epic-scale work at `READY-FOR-WORK`, Rodgers files the epic bead and all child beads before any bead is set to `open`; all child beads start `deferred`
 - [ ] CRIT-10: Rodgers does not set any child bead to `open` until it detects a human signal (human comment or any human-initiated bead modification); on that signal, Rodgers sets all non-closed child beads to `open` as a batch
+- [ ] CRIT-11: When all child beads of an epic are closed and the GitHub issue is in a closed state, Rodgers closes the epic bead within one triage run of detecting that condition; stalled issues (all children closed, issue still open) receive a one-time alert comment asking the human to close the issue
