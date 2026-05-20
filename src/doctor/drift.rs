@@ -8,8 +8,8 @@
 
 use super::{CATEGORY_DRIFT, CategoryResult, CategoryStatus, DriftEvent, DriftSeverity};
 use crate::beads::{Bead, BeadsClient};
-use crate::error::{Result, RogersError};
-use crate::github::GitHubClient;
+use crate::error::Result;
+use crate::github::{GitHubClient, OldGitHubClient};
 
 /// Result of drift check including any detected drift events
 pub struct DriftCheckResult {
@@ -34,7 +34,7 @@ pub async fn check_drift(
     let mut messages = Vec::new();
 
     // Create clients for GitHub and beads
-    let github_client = GitHubClient::new(token.to_string(), api_url);
+    let github_client = OldGitHubClient::compat_new(token.to_string(), api_url);
     let beads_client = BeadsClient::new(beads_remote, beads_database);
 
     // Fetch closed beads from the database

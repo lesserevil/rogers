@@ -16,6 +16,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::feature_bug::AllAcceptanceCriteria;
+
 /// A bead creation request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileBeadRequest {
@@ -218,7 +220,7 @@ impl BeadClient {
         github_issue_title: &str,
         description: &str,
         _github_issue_url: &str,
-        _acceptance_criteria: &crate::feature_bug::AllAcceptanceCriteria,
+        _acceptance_criteria: &AllAcceptanceCriteria,
         is_epic_scale: bool,
         bead_type: BeadType,
         priority: u8,

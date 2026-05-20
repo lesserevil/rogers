@@ -14,8 +14,8 @@
 //! 5. Next event...
 
 use crate::doctor::{DriftEvent, DriftSeverity};
-use crate::error::{Result, RogersError};
-use crate::github::{GitHubClient, close_issue};
+use crate::error::Result;
+use crate::github::{close_issue, GitHubClient, OldGitHubClient};
 use std::io::{self, Write};
 use std::sync::Arc;
 
@@ -33,7 +33,7 @@ pub struct FixResult {
 /// Interactive fix session for drift remediation
 pub struct FixSession {
     /// GitHub client for API calls
-    client: Arc<GitHubClient>,
+    client: Arc<OldGitHubClient>,
     /// Owner of the repository
     owner: String,
     /// Name of the repository
@@ -49,7 +49,7 @@ pub struct FixSession {
 impl FixSession {
     /// Create a new fix session
     pub fn new(owner: String, repo: String, token: String, api_url: Option<String>) -> Self {
-        let client = Arc::new(GitHubClient::new(token.clone(), api_url.as_deref()));
+        let client = Arc::new(OldGitHubClient::compat_new(token.clone(), api_url.as_deref()));
         Self {
             client,
             owner,
@@ -68,7 +68,7 @@ impl FixSession {
         api_url: Option<String>,
         output: Box<dyn Write>,
     ) -> Self {
-        let client = Arc::new(GitHubClient::new(token.clone(), api_url.as_deref()));
+        let client = Arc::new(OldGitHubClient::compat_new(token.clone(), api_url.as_deref()));
         Self {
             client,
             owner,

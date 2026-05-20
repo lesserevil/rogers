@@ -8,6 +8,7 @@ mod beads;
 mod cli;
 mod doctor;
 mod error;
+mod feature_bug;
 mod github;
 mod labels;
 
