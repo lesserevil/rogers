@@ -10,6 +10,14 @@ use super::{CATEGORY_DRIFT, DriftEvent, DriftSeverity};
 use crate::doctor::CategoryResult;
 use crate::error::RogersError;
 
+/// Result of drift check including any detected drift events
+pub struct DriftCheckResult {
+    /// The category result (Pass/Warn with count)
+    pub category_result: CategoryResult,
+    /// All detected drift events
+    pub drift_events: Vec<DriftEvent>,
+}
+
 /// Check the drift category
 ///
 /// Detects GitHub ↔ beads state divergence.
@@ -19,9 +27,9 @@ pub async fn check_drift(
     token: &str,
     api_url: Option<&str>,
     verbose: bool,
-) -> Result<CategoryResult, RogersError> {
+) -> Result<DriftCheckResult, RogersError> {
     let mut messages = Vec::new();
-    let mut drift_events: Vec<super::DriftEvent> = Vec::new();
+    let drift_events: Vec<DriftEvent> = Vec::new();
 
     // In a real implementation, this would:
     // 1. Fetch all beads from the dolt database
@@ -83,10 +91,13 @@ pub async fn check_drift(
         super::CategoryStatus::Pass
     };
 
-    Ok(CategoryResult {
-        name: CATEGORY_DRIFT.to_string(),
-        status,
-        messages,
+    Ok(DriftCheckResult {
+        category_result: CategoryResult {
+            name: CATEGORY_DRIFT.to_string(),
+            status,
+            messages,
+        },
+        drift_events,
     })
 }
 
