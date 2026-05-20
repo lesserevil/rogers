@@ -23,7 +23,7 @@
 use tracing::{info, warn};
 
 use super::approval::{
-    ApprovalState, DiscussionVoteResult, check_approval_status, close_discussion,
+    ApprovalState, DiscussionVoteResult, check_approval_status, close_discussion, halt_backport,
     post_reminder_comment,
 };
 use super::bead::BackportBead;
@@ -456,31 +456,49 @@ pub async fn check_pending_discussions(
                 }
             }
             ApprovalState::Rejected { reason } => {
-                tracing::warn!(
+                // CRIT-8: 👎 always halts - halt backport within one triage run
+                info!(
                     "Backport rejected for discussion #{} ({}): {}",
-                    discussion.discussion_number,
-                    discussion.bead_id,
-                    reason
+                    discussion.discussion_number, discussion.bead_id, reason
                 );
-                // Post acknowledgment comment
-                let author = result
+
+                let voter = result
                     .most_recent
                     .as_ref()
                     .map(|v| v.voter.as_str())
                     .unwrap_or("maintainer");
-                let comment = format!(
-                    "## ❌ Backport Rejected\n\n\
-                    @{author} has rejected this backport. Backport will not be filed.\n\n\
-                    {reason}\n\n\
-                    Please contact a maintainer for guidance."
-                );
-                let _ = github
-                    .create_discussion_comment(discussion.discussion_number, &comment)
-                    .await;
+
+                // Halt backport: post acknowledgment, close discussion, close bead
+                // All within ONE triage run
+                let halt_result = halt_backport(
+                    discussion.discussion_number,
+                    voter,
+                    &discussion.bead_id,
+                    github,
+                )
+                .await;
+
+                if halt_result.is_success() {
+                    info!(
+                        "Backport halted successfully: bead={}, acknowledgment={}, discussion_closed={}",
+                        halt_result.bead_id,
+                        halt_result.acknowledgment_posted,
+                        halt_result.discussion_closed
+                    );
+                } else {
+                    warn!(
+                        "Backport halt completed with errors: {:?}",
+                        halt_result.errors
+                    );
+                }
             }
             ApprovalState::Stale { reminder_sent: _ } => {
-                // Track but don't double-remind in same run
-                needs_reminder.push(discussion.discussion_number);
+                // CRIT-9: Only add to reminder queue if no reminder was sent yet.
+                // result.reminder_sent is false when no reminder comment exists.
+                // When false, we can post a reminder; when true, we skip it.
+                if !result.reminder_sent {
+                    needs_reminder.push(discussion.discussion_number);
+                }
             }
             ApprovalState::Expired => {
                 info!(

@@ -79,6 +79,9 @@ impl Config {
             if let Some(cat) = release_cfg.approval_discussion_category {
                 self.release.approval_discussion_category = cat;
             }
+            if let Some(window) = release_cfg.voting_window_days {
+                self.release.voting_window_days = window;
+            }
         }
 
         if let Some(project) = repo.project {
@@ -398,6 +401,9 @@ pub struct RepoTriageConfig {
 pub struct RepoReleaseConfig {
     pub active_branches: Option<Vec<String>>,
     pub approval_discussion_category: Option<String>,
+    /// Override release.voting_window_days from the managed repo's rogerg.yaml.
+    /// Days Rodgers waits before nudging a stale release proposal.
+    pub voting_window_days: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
