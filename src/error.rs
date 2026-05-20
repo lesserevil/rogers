@@ -10,7 +10,7 @@ pub enum RogersError {
     #[error("GitHub API error: {0}")]
     GitHub(#[from] reqwest::Error),
 
-    #[error("GitHub API returned non-success: {0}")]
+    #[error("GitHub API returned non-success: {code} {message}")]
     GitHubStatus { code: u16, message: String },
 
     #[error("authentication failed: {0}")]
@@ -29,7 +29,10 @@ pub enum RogersError {
     Io(#[from] std::io::Error),
 
     #[error("YAML parsing error: {0}")]
-   Yaml(#[from] serde_yaml::Error),
+    Yaml(#[from] serde_yaml::Error),
+
+    #[error("JSON serialization error: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
 impl RogersError {
@@ -42,6 +45,7 @@ impl RogersError {
             RogersError::Plan(_) => 1,
             RogersError::Io(_) => 2,
             RogersError::Yaml(_) => 2,
+            RogersError::Json(_) => 2,
         }
     }
 }
