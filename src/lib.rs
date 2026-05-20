@@ -12,6 +12,7 @@ pub mod beads;
 pub use beads::client::BeadClient;
 pub mod config;
 pub mod github;
+pub mod release;
 pub mod triage;
 
 // Re-exports — submodules use `crate::Config`, `crate::RogersError`, etc.

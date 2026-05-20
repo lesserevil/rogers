@@ -24,10 +24,10 @@
 
 use tracing::info;
 
+use crate::RogersError;
 use crate::beads::client::{BeadClient, BeadResult};
 use crate::config::schema::ReleaseConfig;
 use crate::github::client::{GithubClient, PullRequest};
-use crate::RogersError;
 
 /// Invariant: a successfully-executing backport (no conflicts).
 pub use super::execution::BackportExecutionResult as BackportNormalResult;
@@ -180,12 +180,11 @@ pub async fn handle_conflict(
 
     // Step 2: Post comment on source issue
     if let Some(issue_num) = source_issue {
-        let conflict_bead_id_str: Option<&str> =
-            if result.conflict_bead_id.is_empty() {
-                None
-            } else {
-                Some(result.conflict_bead_id.as_str())
-            };
+        let conflict_bead_id_str: Option<&str> = if result.conflict_bead_id.is_empty() {
+            None
+        } else {
+            Some(result.conflict_bead_id.as_str())
+        };
         let comment_body = format_conflict_comment(
             sha_short,
             target_branch,
@@ -195,10 +194,7 @@ pub async fn handle_conflict(
 
         match github.create_issue_comment(issue_num, &comment_body).await {
             Ok(_) => {
-                info!(
-                    "Posted conflict comment on source issue #{}",
-                    issue_num
-                );
+                info!("Posted conflict comment on source issue #{}", issue_num);
                 result.source_comment_posted = true;
             }
             Err(e) => {
@@ -484,7 +480,9 @@ mod tests {
         use crate::beads::client::BeadClient;
 
         // Verify the title format by checking the BeadClient use path
-        assert!("Resolve merge conflicts: backport #abc123d to release/1.x"
-            .contains("Resolve merge conflicts"));
+        assert!(
+            "Resolve merge conflicts: backport #abc123d to release/1.x"
+                .contains("Resolve merge conflicts")
+        );
     }
 }
