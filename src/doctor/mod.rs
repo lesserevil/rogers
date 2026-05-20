@@ -12,7 +12,6 @@ pub mod drift;
 pub mod report;
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Category name identifiers
 pub const CATEGORY_CONFIG: &str = "config";

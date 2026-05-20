@@ -341,9 +341,8 @@ pub async fn check_beads(
     database: Option<&str>,
 ) -> Result<CategoryResult, RogersError> {
     let mut messages = Vec::new();
-    let db_name = database.unwrap_or("message.hibernate");
+    let _db_name = database.unwrap_or("message.hibernate");
 
-    // For now, beads connectivity check is a placeholder
     // In a real implementation, this would connect to dolt and verify schema
     // Since we don't have actual dolt connectivity in the test environment,
     // we'll do a basic sanity check based on configuration
