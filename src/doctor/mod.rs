@@ -325,4 +325,186 @@ mod tests {
         assert_eq!(result.exit_code(), 0);
         assert!(result.all_categories_passed());
     }
+
+    // ===== AC-2: Unit tests for exit 1 on failure/drift with all failures listed =====
+
+    /// Unit test: Config fail → exit 1, listed
+    #[test]
+    fn test_config_fail_exits_1_listed() {
+        let result = DoctorResult {
+            categories: vec![
+                CategoryResult::fail(CATEGORY_CONFIG, "config.yaml not found at /path"),
+                CategoryResult::skipped(CATEGORY_AUTH),
+                CategoryResult::skipped(CATEGORY_BEADS),
+                CategoryResult::skipped(CATEGORY_PLANS),
+                CategoryResult::skipped(CATEGORY_REPO),
+                CategoryResult::skipped(CATEGORY_DRIFT),
+            ],
+            drift_events: Vec::new(),
+            is_healthy: false,
+        };
+
+        // Exit code should be 1 on config failure
+        assert_eq!(result.exit_code(), 1);
+        // Config should be marked as failed
+        assert!(result.any_category_failed());
+        // Failure count should be 1
+        assert_eq!(result.failed_count(), 1);
+        // The failure message should be available
+        let config_result = &result.categories[0];
+        assert!(matches!(config_result.status, CategoryStatus::Fail(_)));
+        let fail_msg = match &config_result.status {
+            CategoryStatus::Fail(msg) => msg.clone(),
+            _ => String::new(),
+        };
+        assert!(fail_msg.contains("config.yaml not found"));
+    }
+
+    /// Unit test: Auth fail → exit 1, listed
+    #[test]
+    fn test_auth_fail_exits_1_listed() {
+        let result = DoctorResult {
+            categories: vec![
+                CategoryResult::pass(CATEGORY_CONFIG),
+                CategoryResult::fail(CATEGORY_AUTH, "GitHub token is invalid (HTTP 401)"),
+                CategoryResult::skipped(CATEGORY_BEADS),
+                CategoryResult::skipped(CATEGORY_PLANS),
+                CategoryResult::skipped(CATEGORY_REPO),
+                CategoryResult::skipped(CATEGORY_DRIFT),
+            ],
+            drift_events: Vec::new(),
+            is_healthy: false,
+        };
+
+        // Exit code should be 1 on auth failure
+        assert_eq!(result.exit_code(), 1);
+        assert!(result.any_category_failed());
+        assert_eq!(result.failed_count(), 1);
+
+        // Verify auth failure message is recorded
+        let auth_result = &result.categories[1];
+        assert!(matches!(auth_result.status, CategoryStatus::Fail(_)));
+        let fail_msg = match &auth_result.status {
+            CategoryStatus::Fail(msg) => msg.clone(),
+            _ => String::new(),
+        };
+        assert!(fail_msg.contains("token is invalid"));
+    }
+
+    /// Unit test: Drift detected → exit 1, events listed
+    #[test]
+    fn test_drift_detected_exits_1_events_listed() {
+        let drift_events = vec![
+            DriftEvent {
+                event_type: "closed_bead_open_issue".into(),
+                description: "Bead #b-001 is closed but linked GitHub issue #123 is open".into(),
+                github_issue_url: Some("https://github.com/owner/repo/issues/123".into()),
+                bead_id: Some("b-001".into()),
+                severity: DriftSeverity::Error,
+            },
+            DriftEvent {
+                event_type: "in_progress_bead_closed_issue".into(),
+                description: "Bead #b-002 is in-progress but linked GitHub issue #456 is closed"
+                    .into(),
+                github_issue_url: Some("https://github.com/owner/repo/issues/456".into()),
+                bead_id: Some("b-002".into()),
+                severity: DriftSeverity::Warning,
+            },
+        ];
+
+        let result = DoctorResult {
+            categories: vec![
+                CategoryResult::pass(CATEGORY_CONFIG),
+                CategoryResult::pass(CATEGORY_AUTH),
+                CategoryResult::pass(CATEGORY_BEADS),
+                CategoryResult::pass(CATEGORY_PLANS),
+                CategoryResult::pass(CATEGORY_REPO),
+                CategoryResult::warn(CATEGORY_DRIFT, vec!["2 drift events found".to_string()]),
+            ],
+            drift_events,
+            is_healthy: false,
+        };
+
+        // Exit code should be 1 on drift detected
+        assert_eq!(result.exit_code(), 1);
+        assert!(result.has_drift());
+        // Should have 2 drift events
+        assert_eq!(result.drift_events.len(), 2);
+    }
+
+    /// Unit test: Multiple failures → exit 1, ALL listed
+    #[test]
+    fn test_multiple_failures_exits_1_all_listed() {
+        let result = DoctorResult {
+            categories: vec![
+                CategoryResult::fail(CATEGORY_CONFIG, "Missing required keys: github.owner"),
+                CategoryResult::fail(CATEGORY_AUTH, "Cannot access repository (HTTP 404)"),
+                CategoryResult::fail(CATEGORY_PLANS, "One or more canonical plan files not found"),
+                CategoryResult::pass(CATEGORY_BEADS),
+                CategoryResult::pass(CATEGORY_REPO),
+                CategoryResult::pass(CATEGORY_DRIFT),
+            ],
+            drift_events: Vec::new(),
+            is_healthy: false,
+        };
+
+        // Exit code should be 1 with multiple failures
+        assert_eq!(result.exit_code(), 1);
+        assert!(result.any_category_failed());
+
+        // Should have 3 failures recorded
+        assert_eq!(result.failed_count(), 3);
+
+        // All 3 failures should be in the categories list
+        let failures: Vec<&CategoryResult> = result
+            .categories
+            .iter()
+            .filter(|c| matches!(c.status, CategoryStatus::Fail(_)))
+            .collect();
+
+        assert_eq!(failures.len(), 3);
+
+        // Verify each failure is correctly categorized
+        assert!(matches!(
+            failures[0].status,
+            CategoryStatus::Fail(ref m) if m.contains("Missing required keys")
+        ));
+        assert!(matches!(
+            failures[1].status,
+            CategoryStatus::Fail(ref m) if m.contains("Cannot access repository")
+        ));
+        assert!(matches!(
+            failures[2].status,
+            CategoryStatus::Fail(ref m) if m.contains("plan files not found")
+        ));
+    }
+
+    /// Unit test: Config + Auth + Drift → exit 1, all listed
+    #[test]
+    fn test_config_auth_drift_failure_exits_1_all_listed() {
+        let result = DoctorResult {
+            categories: vec![
+                CategoryResult::fail(CATEGORY_CONFIG, "config.yaml not valid"),
+                CategoryResult::fail(CATEGORY_AUTH, "Token expired"),
+                CategoryResult::pass(CATEGORY_BEADS),
+                CategoryResult::pass(CATEGORY_PLANS),
+                CategoryResult::pass(CATEGORY_REPO),
+                CategoryResult::warn(CATEGORY_DRIFT, vec!["1 drift event found".to_string()]),
+            ],
+            drift_events: vec![DriftEvent {
+                event_type: "orphan_bead".into(),
+                description: "Bead #b-099 has no github_issue_url".into(),
+                github_issue_url: None,
+                bead_id: Some("b-099".into()),
+                severity: DriftSeverity::Warning,
+            }],
+            is_healthy: false,
+        };
+
+        assert_eq!(result.exit_code(), 1);
+        assert!(result.any_category_failed());
+        assert!(result.has_drift());
+        assert_eq!(result.failed_count(), 2);
+        assert_eq!(result.drift_events.len(), 1);
+    }
 }

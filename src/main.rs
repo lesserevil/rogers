@@ -70,23 +70,16 @@ async fn main() -> Result<()> {
 }
 
 /// Run all doctor health checks
+///
+/// Executes all categories and collects failures from each.
+/// Does not fail-fast - collects ALL failures so the report lists all issues.
+/// Exit code 1 if any category fails OR drift is detected.
 async fn run_doctor_checks(
     config_path: &PathBuf,
     only_categories: &[String],
     verbose: bool,
 ) -> DoctorResult {
     let mut result = DoctorResult::new();
-    let config = match load_config(config_path) {
-        Ok(c) => c,
-        Err(e) => {
-            // If config can't be loaded, add a fail result and return
-            result.categories.push(CategoryResult::fail(
-                "config",
-                format!("Failed to load config: {}", e),
-            ));
-            return result;
-        }
-    };
 
     // Determine which categories to run
     let categories_to_run: Vec<&str> = if only_categories.is_empty() {
@@ -106,6 +99,47 @@ async fn run_doctor_checks(
         }
     }
 
+    // Load config - if it fails, record the failure and continue with other checks
+    // Note: Some checks (auth, repo, drift) won't be able to run without config values
+    // but we still try them and let them report their own failures
+    let config = match load_config(config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            // If config can't be loaded, add a fail result but continue checking
+            // other categories that don't strictly require a loaded config
+            result.categories.push(CategoryResult::fail(
+                CATEGORY_CONFIG,
+                format!("Failed to load config: {}", e),
+            ));
+            // Continue running other categories - they'll report their own issues
+            // about missing config values
+            categories::RodgersConfig {
+                github: categories::GitHubConfig {
+                    owner: String::new(),
+                    repo: String::new(),
+                    token: None,
+                    api_url: None,
+                },
+                scheduler: None,
+                beads: categories::BeadsConfig {
+                    remote: None,
+                    database: None,
+                },
+                llm: categories::LlmConfig {
+                    provider: None,
+                    base_url: None,
+                    model: None,
+                    api_key: None,
+                },
+                triage: None,
+                release: None,
+                rogation: None,
+                log_level: None,
+                error_channel: None,
+            }
+        }
+    };
+
     // Run config check first (always runs, always runs first)
     if categories_to_run.contains(&CATEGORY_CONFIG) {
         match categories::check_config(config_path) {
@@ -118,12 +152,6 @@ async fn run_doctor_checks(
                     .push(CategoryResult::fail(CATEGORY_CONFIG, e.to_string()));
             }
         }
-    }
-
-    // Check if config passed - if not, fail fast
-    if result.any_category_failed() {
-        // If config fails, skip remaining categories
-        return result;
     }
 
     // Run auth check
@@ -145,12 +173,8 @@ async fn run_doctor_checks(
         }
     }
 
-    // Check if auth passed - if not, fail fast
-    if result.any_category_failed() {
-        // If auth fails, skip remaining categories
-        return result;
-    }
-
+    // Continue running all remaining categories regardless of earlier failures.
+    // We collect ALL failures to give a complete health report.
     let token = config.github.token.as_deref().unwrap_or("");
     let owner = &config.github.owner;
     let repo = &config.github.repo;
@@ -213,12 +237,14 @@ async fn run_doctor_checks(
     }
 
     // Run drift check (always runs last if included)
+    // Collect drift events for inclusion in the result
     if categories_to_run.contains(&CATEGORY_DRIFT) {
         match drift::check_drift(owner, repo, token, api_url, verbose).await {
-            Ok(cat_result) => {
-                // Collect drift events from the drift result
-                // Note: In a real implementation, we'd pass actual drift events back
-                result.categories.push(cat_result);
+            Ok(drift_result) => {
+                // Add the category result (summary of drift check)
+                result.categories.push(drift_result.category_result);
+                // Collect all drift events for the report
+                result.drift_events.extend(drift_result.drift_events);
             }
             Err(e) => {
                 result
@@ -228,7 +254,7 @@ async fn run_doctor_checks(
         }
     }
 
-    // Set overall health status
+    // Set overall health status based on all collected results
     result.is_healthy = result.all_categories_passed() && !result.has_drift();
 
     result
