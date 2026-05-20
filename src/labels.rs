@@ -65,8 +65,15 @@ pub const RODGERS_AUTO_LABELS: &[LabelDefinition] = RODGERS_REQUIRED_LABELS;
 
 /// All labels Rodgers should NOT conflict with (optional warning list).
 pub const RODGERS_RESERVED_LABELS: &[&str] = &[
-    "bug", "feature", "question", "needs-information", "needs-documentation",
-    "ready-for-review", "will-not-do", "ready-for-work", "in-progress",
+    "bug",
+    "feature",
+    "question",
+    "needs-information",
+    "needs-documentation",
+    "ready-for-review",
+    "will-not-do",
+    "ready-for-work",
+    "in-progress",
 ];
 
 /// Returns true if the given label name is a Rodgers-reserved label.
