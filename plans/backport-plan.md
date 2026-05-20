@@ -1,0 +1,180 @@
+# Backport Plan
+
+**Status:** Draft  
+**Plan:** plans/backport-plan.md  
+**Depends on:** plans/architecture-plan.md, plans/release-management-plan.md  
+
+---
+
+## Summary
+
+When a fix lands on `main` or a release branch, Rodgers determines whether that fix needs to be propagated to older active release branches (maintenance releases). It creates beads to track the cherry-pick work, waits for human approval to proceed, and closes the loop when the backport is landed.
+
+---
+
+## What Needs Backporting
+
+Rodgers evaluates every merged commit for backport candidacy.
+
+### Automatic Backport Candidates
+
+Any commit that is:
+1. A bug fix (commit message or linked issue labeled `bug`)
+2. A security fix (any vulnerability patch)
+3. A documentation fix that corrects harmful or dangerously outdated information
+
+...must be evaluated for backport to all **active release branches**.
+
+### Active Release Branches
+
+A release branch is active if:
+1. It has been released (tag exists)
+2. The project has not announced end-of-life for that minor version
+3. A human has not explicitly marked the branch as closed for new releases
+
+Active branches are enumerated in `config.release.active_branches`. Rodgers reads this at startup.
+
+### Non-Backport Candidates
+
+The following are **not** backported automatically:
+- Feature commits (new functionality, not bug fixes)
+- Refactors with no behavioral change
+- Test-only additions
+- Documentation additions that are purely additive (new content, not corrections)
+
+A human can override and request backport for any non-candidate by applying a `backport-me` label to the original GitHub issue.
+
+---
+
+## Backport Detection
+
+On every triage run, Rodgers compares the set of merged commits on each active release branch against what has already been backported (tracked via beads). For each unreported commit that meets backport criteria:
+
+1. Identify the target release branches
+2. Create one `backport` bead per target branch
+3. Post a comment on the original GitHub issue noting the backport is pending
+
+---
+
+## Backport Bead
+
+Each backport bead is filed as follows:
+
+```bash
+bd create \
+  --title="Backport #{commit_sha_short} to {branch_name}" \
+  --description="$(cat <<'EOF'
+Plan: plans/backport-plan.md
+
+Backport for: #{commit_sha} - {one-line commit message}
+Source issue: #{number}
+Target branch: {branch_name}
+
+WHAT TO DO
+Cherry-pick commit {full_sha} to release/{X.Y}. Create a PR targeting
+release/{X.Y} with the cherry-pick. Resolve any merge conflicts.
+
+ACCEPTANCE
+- [ ] Cherry-pick of #{sha} applies cleanly to release/{X.Y} (or conflicts resolved)
+- [ ] PR is open targeting release/{X.Y}
+- [ ] CI passes on the backport PR
+- [ ] PR is merged or given explicit approval to close without merging
+
+PITFALLS
+- If the fix requires changes to shared library code that has diverged
+  between main and the target branch, the cherry-pick may require
+  manual conflict resolution. Document any non-trivial conflicts
+  in the bead before closing.
+EOF
+)"
+  --acceptance="Backport #{sha} to {branch_name} is merged or explicitly closed without merging"
+  --type=backport
+  --priority={1 for security, 2 otherwise}
+```
+
+The bead links back to the original GitHub issue and the source commit via `discovered-from` if supported.
+
+---
+
+## Approval to Backport
+
+Like releases, backports require human approval before Rodgers creates the PR. Rodgers requests approval via a GitHub Discussion in the same category used for releases:
+
+```
+## Backport Proposal
+
+**Commit:** {sha} — "{message}"
+**Source issue:** #{number}
+**Target branch:** release/{X.Y}
+
+This fix meets backport criteria. Approve by reacting 👍.
+Backport will be filed as a PR targeting release/{X.Y}.
+```
+
+---
+
+## Backport Execution
+
+When approved:
+
+1. Rodgers creates a branch `backport/{sha_short}/{branch_name}` from the target release branch
+2. Cherry-picks the source commit onto the new branch
+3. Opens a PR targeting the target release branch with the title format: `[backport] {short description} (#{original_pr})`
+4. Posts a comment on the original issue linking to the backport PR
+5. Closes the approval Discussion
+
+---
+
+## Conflict Handling
+
+If a cherry-pick has conflicts:
+
+1. Rodgers opens the backport branch with the partial cherry-pick and posts a comment: "Backport has merge conflicts. A human must resolve conflicts before this can be merged. Branch: backport/{sha}/{branch}"
+2. Files a bead for the conflict resolution: type=`backport-conflict`, linked to the backport PR
+3. The conflict-resolution bead waits for a human to resolve and merge
+
+Rodgers does not autonomously resolve merge conflicts.
+
+---
+
+## Integration with Release Management
+
+When a backport PR is merged to a release branch, Rodgers detects the merge and:
+1. Updates the backport bead status to closed
+2. Checks whether this backport completes the set of needed backports for the version
+3. If all critical backports are merged, files a bead suggesting a patch release (see plans/release-management-plan.md)
+
+---
+
+## Configuration
+
+```yaml
+release:
+  active_branches:
+    - release/1.x
+    - release/2.x
+  # main is always implicitly included as a source
+```
+
+---
+
+## Edge Cases
+
+**Fix is already in the release branch.** Rodgers checks the git history before filing a backport bead. If the commit or an equivalent fix is already present, it marks the backport as not-needed and closes the bead with a note.
+
+**Backport PR would be empty (file not present in target branch).** Rodgers identifies this case before creating the PR and instead creates a `note` bead: "Cannot backport #{sha} to {branch}: target file does not exist. Needs alternative approach."
+
+**Human explicitly closes a backport.** Rodgers respects the closure. It does not recreate it.
+
+**Security patch.** Security patches are marked `priority=1` (high). Rodgers may, at its discretion, post a security advisory notification on the original issue directing users to the patched release. This is opt-in and not automatic.
+
+---
+
+## Acceptance Criteria
+
+- [ ] CRIT-1: When a bug fix, security patch, or `backport-me` labeled issue is merged to main, Rodgers identifies all active release branches within one triage run
+- [ ] CRIT-2: Rodgers files a `backport` bead for each target branch within one triage run of detecting the candidate
+- [ ] CRIT-3: Rodgers creates a GitHub Discussion for each backport and waits for human approval before opening a PR
+- [ ] CRIT-4: A human 👍 approval triggers the creation of a backport branch and PR targeting the correct release branch within one triage run
+- [ ] CRIT-5: If a backport has merge conflicts, Rodgers files a conflict-resolution bead and posts an alert comment, but does not attempt autonomous conflict resolution
+- [ ] CRIT-6: When a backport PR is merged, Rodgers closes the corresponding backport bead and checks for release completeness
