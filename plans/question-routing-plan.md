@@ -18,17 +18,30 @@ When a community member files an issue labeled `question`, Rodgers determines wh
 
 When the Triage Engine encounters an issue labeled `question`, it passes it to the Question Router. If the issue has no existing comments from Rodgers, proceed to Step 2.
 
-### Step 2: Search Documentation
+### Step 2: Search Documentation and Code
 
 Rodgers searches `docs/` for content relevant to the question. Search is keyword-based over the full text of documentation files. The goal is recall: better to find a partial match than miss the right doc.
 
-**Search scope:**
+**Additionally**, when a question asks about code-level or implementation-level details, Rodgers searches the project source code directly. This covers questions like "how does X work under the hood?", "which function handles Y?", "walk me through the flow of Z", or "what data structure is used for W?". Rodgers should answer these from the code rather than treating them as doc gaps.
+
+**Search scope for docs:**
 - `docs/**/*.md` — all user-facing documentation
+
+**Search scope for code (when applicable):**
+- `src/**/*` — source files
+- `lib/**/*` — library files
+- Globally: any `*.rs`, `*.py`, `*.js`, `*.ts`, `*.go` file in the project
+
+**How Rodgers knows to search the code:**
+- Keywords in the issue title or body: "how does", "what function", "which module", "internals", "implementation", "source code", "can you walk me through", "flow of", "under the hood"
+- Explicit request to see or understand the code behavior
+- A question about a specific function, class, or module by name
 
 **Search targets:**
 - Filenames
-- Section headings
-- Paragraph text
+- Function and struct names
+- Comments and docstrings
+- Code logic comments
 
 ### Step 3a: Documentation Found
 
@@ -46,9 +59,31 @@ If this doesn't fully answer your question, please let us know and we will follo
 
 Rodgers then closes the issue or leaves it open based on the answer quality — if the linked doc fully answers, close the issue; if it's partial, leave it open and wait for follow-up.
 
-### Step 3b: Documentation Not Found
+### Step 3a-ii: Code Answer Found
 
-The absence of documentation is a documentation gap. Rodgers files a `chore` bead (`rodgers:type=docs`) to track the gap and proceeds:
+When Rodgers finds the answer by reading source code (not documentation):
+
+```
+Hi @[requestor], thanks for this question! I took a look at the source code to find the answer.
+
+[Plain-language explanation of how the code works, targeted at the specific question asked.
+Cite the relevant file and function name, line numbers if helpful.
+If the code is complex, walk through the logic step by step.]
+
+Relevant source: [file path], [function/struct name]
+
+If you'd like to dig further, the full implementation is at [file:line–line].
+```
+
+- **Close the issue** if the explanation fully answers the question
+- **Leave open** if the requestor may have follow-up questions
+- **Do NOT file a doc-gap bead** — the code is the canonical answer; no documentation gap exists
+
+### Step 3b: No Answer Found
+
+**This step applies only when neither documentation nor a code review yields an answer.** If Rodgers found relevant code but the question goes beyond what the code reveals, or the question asks about design intent rather than mechanics, treat as a documentation gap.
+
+If Rodgers cannot answer the question from docs or code, this is a documentation gap. Rodgers files a `chore` bead (`rodgers:type=docs`) to track the gap and proceeds:
 
 1. **File a `chore` bead** (metadata: `rodgers:type=docs`) with:
    - Type: `chore`
@@ -84,9 +119,11 @@ flowchart TD
     B -->|"YES"| C["No-op\n(already handled)"]
     B -->|"NO"| D["Search docs/"]
     D -->|"Doc found"| E["Post comment with link\nclose issue if fully answered"]
-    D -->|"Doc not found"| F["File chore bead\nrodgers:type=docs"]
-    F --> G["Post acknowledgment\non issue"]
-    G --> H["Label issue\nneeds-documentation\nremove question label"]
+    D -->|"Doc not found"| F["Question about\ncode internals?"]
+    F -->|"NO"| G["File chore bead\nrodgers:type=docs\nPost acknowledgment\nLabel issue needs-documentation\nremove question label"]
+    F -->|"YES"| H["Search source code\nsrc/, lib/, *.rs, *.py, etc."]
+    H -->|"Answer found in code"| I["Post code explanation\ncomment\nClose if fully answered\nDo NOT file bead"]
+    H -->|"No answer found"| G
 ```
 
 ---
@@ -103,12 +140,15 @@ flowchart TD
 
 **Requestor adds more context after Rodgers responds.** Rodgers processes the new comment as a new triage event — restarts from Step 1.
 
+**Question requires tracing multiple files.** When a question about code internals spans multiple files or modules, Rodgers finds the entry point and explains the flow, linking to all relevant files. If the full picture requires more depth than can fit in one comment, Rodgers posts a partial explanation and offers to continue.
+
 ---
 
 ## Acceptance Criteria
 
 - [ ] CRIT-1: When a `question` issue exists and docs exist that answer it, Rodgers posts a comment within one triage run with the correct doc link
-- [ ] CRIT-2: When a `question` issue exists and no docs answer it, Rodgers files a `chore` bead (`rodgers:type=docs`) within one triage run and posts an acknowledgment comment on the issue
-- [ ] CRIT-3: When the `chore` bead (`rodgers:type=docs`) is closed, Rodgers verifies the GitHub issue has a documentation link and closes or updates the issue accordingly
-- [ ] CRIT-4: Rodgers never closes a question issue without either answering it or filing a `chore` bead (`rodgers:type=docs`)
-- [ ] CRIT-5: Rodgers never routes to a non-question issue through this workflow
+- [ ] CRIT-2: When a `question` issue exists and no docs answer it, Rodgers searches the source code if the question is about implementation details before filing a doc-gap bead
+- [ ] CRIT-3: When Rodgers finds an answer in the source code, it posts a plain-language explanation citing the relevant file, function, and line numbers, then closes the issue if fully answered
+- [ ] CRIT-4: When a `chore` bead (`rodgers:type=docs`) is closed, Rodgers verifies the GitHub issue has a documentation link and closes or updates the issue accordingly
+- [ ] CRIT-5: Rodgers never closes a question issue without either answering it or filing a `chore` bead (`rodgers:type=docs`)
+- [ ] CRIT-6: Rodgers never routes a non-question issue through this workflow
