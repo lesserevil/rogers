@@ -69,6 +69,299 @@ Rodgers' inference engine. All reasoning, drafting, classification, and decision
 
 > Note: "LLM" here means a hosted inference endpoint. Rodgers IS the AI — it thinks and operates using the LLM the same way a human thinks using their brain. The LLM is the engine; Rodgers is the agent.
 
+#### LLM Tool Registry
+
+The following tools are available to the LLM within Rodgers' context. Each tool has a name, JSON-schema input parameters, a description of its return value, and documented failure modes.
+
+---
+
+**`search_docs`**
+Search the project documentation for a query string.
+
+*Parameters:*
+
+| Field | Type | Required | Description |
+|-------|------|---------|-------------|
+| `query` | string | yes | Search query |
+| `path` | string | no | Limit search to a subdirectory or file path |
+| `limit` | integer | no | Max results (default: 10) |
+
+*Returns:* List of `{path, line_number, snippet}` matches.
+
+*Failure modes:*
+
+- `NO_DOCS_FOUND` — No documentation files found in the repo. Return empty list, do not error.
+- `SEARCH_FAILED` — Search index unavailable. Log and return empty list.
+
+---
+
+**`search_code`**
+Search the codebase by glob pattern or regex.
+
+*Parameters:*
+
+| Field | Type | Required | Description |
+|-------|------|---------|-------------|
+| `pattern` | string | yes | Glob pattern (e.g., `src/**/*.py`) or regex (e.g., `^fn\s+\w+`) |
+| `target` | string | no | `content` (default) for regex search, `files` for glob-only |
+| `path` | string | no | Root directory to search within |
+| `limit` | integer | no | Max results (default: 50) |
+
+*Returns:* List of `{path, line_number, content}` for content search; list of file paths for glob search.
+
+*Failure modes:*
+
+- `NO_MATCHES` — Pattern matched nothing. Return empty list.
+- `INVALID_REGEX` — Regex is malformed. Return error with the parse failure message.
+
+---
+
+**`file_bead`**
+Create a new bead.
+
+*Parameters:*
+
+| Field | Type | Required | Description |
+|-------|------|---------|-------------|
+| `title` | string | yes | Bead title |
+| `description` | string | yes | Full bead description |
+| `type` | string | yes | Bead type: `bug`, `chore`, `feature`, `epic` |
+| `status` | string | no | Initial status (default: `open`) |
+| `tag` | string | no | Tag to attach (e.g., `rodgers:type=backport`) |
+| `acceptance` | string | no | Acceptance criteria text |
+| `parent` | string | no | ID of the parent epic bead |
+| `priority` | integer | no | Priority 1–5 (1 is highest) |
+| `assignee` | string | no | Username to assign to |
+
+*Returns:* `{id, title, url, created_at}` on success.
+
+*Failure modes:*
+
+- `BEAD_EXISTS` — A bead with the same title already exists in this project scope. Return `{id, existing: true, url}`.
+- `INVALID_TYPE` — `type` value is not a recognized bead type. Return error.
+- `PARENT_NOT_FOUND` — `parent` ID does not reference an existing epic bead. Return error.
+- `Bead creation failed` — Dolt write error. Return error with underlying message.
+
+---
+
+**`update_bead`**
+Update an existing bead's fields.
+
+*Parameters:*
+
+| Field | Type | Required | Description |
+|-------|------|---------|-------------|
+| `id` | string | yes | Bead ID |
+| `status` | string | no | New status: `open`, `in_progress`, `closed` |
+| `description` | string | no | New description |
+| `title` | string | no | New title |
+| `assignee` | string | no | New assignee |
+
+*Returns:* `{id, updated: true}` on success.
+
+*Failure modes:*
+
+- `BEAD_NOT_FOUND` — No bead with this ID exists. Return error.
+- `INVALID_STATUS` — Status value not in `open|in_progress|closed`. Return error.
+- `UPDATE_FAILED` — Dolt write error. Return error with underlying message.
+
+---
+
+**`close_bead`**
+Close a bead. Shorthand for `update_bead(id, status="closed")`.
+
+*Parameters:*
+
+| Field | Type | Required | Description |
+|-------|------|---------|-------------|
+| `id` | string | yes | Bead ID |
+
+*Returns:* `{id, closed: true}` on success.
+
+*Failure modes:*
+
+- `BEAD_NOT_FOUND` — No bead with this ID exists. Return error.
+
+---
+
+**`list_beads`**
+Query beads with optional filters.
+
+*Parameters:*
+
+| Field | Type | Required | Description |
+|-------|------|---------|-------------|
+| `status` | string | no | Filter by status: `open`, `in_progress`, `closed` |
+| `type` | string | no | Filter by type: `bug`, `chore`, `feature`, `epic` |
+| `tag` | string | no | Filter by tag (exact match) |
+| `linked_issue` | integer | no | Filter by GitHub issue number |
+| `assignee` | string | no | Filter by assignee |
+| `limit` | integer | no | Max results (default: 50) |
+
+*Returns:* List of `{id, title, type, status, tags, linked_issue, created_at}` beads.
+
+*Failure modes:*
+
+- `LIST_FAILED` — Dolt read error. Return error with underlying message.
+
+---
+
+**`get_issue`**
+Fetch a GitHub issue including body, comments, labels, and assignees.
+
+*Parameters:*
+
+| Field | Type | Required | Description |
+|-------|------|---------|-------------|
+| `number` | integer | yes | GitHub issue number |
+
+*Returns:* `{number, title, body, author, labels, assignees, state, created_at, updated_at, comments: [{author, body, created_at}]}`.
+
+*Failure modes:*
+
+- `ISSUE_NOT_FOUND` — Issue number does not exist. Return error.
+- `GITHUB_API_ERROR` — GitHub API returned an error. Return error with HTTP status and message.
+
+---
+
+**`post_comment`**
+Post a comment on a GitHub issue or Discussion.
+
+*Parameters:*
+
+| Field | Type | Required | Description |
+|-------|------|---------|-------------|
+| `target` | string | yes | `issue/{number}` or `discussion/{number}` |
+| `body` | string | yes | Comment body (markdown) |
+
+*Returns:* `{id, created_at}` on success.
+
+*Failure modes:*
+
+- `TARGET_NOT_FOUND` — Issue or Discussion does not exist. Return error.
+- `COMMENT_FAILED` — GitHub API error. Return error with HTTP status and message.
+- `RATE_LIMITED` — GitHub rate limit exceeded. Return error with `retry_after` seconds if known.
+
+---
+
+**`apply_labels`**
+Apply and/or remove labels on a GitHub issue.
+
+*Parameters:*
+
+| Field | Type | Required | Description |
+|-------|------|---------|-------------|
+| `issue` | integer | yes | GitHub issue number |
+| `add` | list[string] | no | Labels to add |
+| `remove` | list[string] | no | Labels to remove |
+
+*Returns:* `{issue, labels: [current label list]}` on success.
+
+*Failure modes:*
+
+- `ISSUE_NOT_FOUND` — Issue does not exist. Return error.
+- `LABEL_NOT_FOUND` — One or more labels to add do not exist on the repo. GitHub creates them automatically in practice; this is only a warning in the return.
+- `GITHUB_API_ERROR` — Return error with HTTP status.
+
+---
+
+**`set_milestone`**
+Assign or clear a milestone on a GitHub issue.
+
+*Parameters:*
+
+| Field | Type | Required | Description |
+|-------|------|---------|-------------|
+| `issue` | integer | yes | GitHub issue number |
+| `milestone` | string | no | Milestone title to assign. Omit to clear. |
+
+*Returns:* `{issue, milestone: title_or_null}` on success.
+
+*Failure modes:*
+
+- `ISSUE_NOT_FOUND` — Issue does not exist. Return error.
+- `MILESTONE_NOT_FOUND` — No milestone with this title exists on the repo. Return error.
+
+---
+
+**`create_discussion`**
+Create a GitHub Discussion in a given category.
+
+*Parameters:*
+
+| Field | Type | Required | Description |
+|-------|------|---------|-------------|
+| `title` | string | yes | Discussion title |
+| `body` | string | yes | Discussion body |
+| `category` | string | yes | Category name (e.g., `Announcements`, `Q&A`) |
+
+*Returns:* `{id, number, url, created_at}` on success.
+
+*Failure modes:*
+
+- `CATEGORY_NOT_FOUND` — No Discussion category with this name exists. Return error.
+- `DISCUSSION_FAILED` — GitHub API error. Return error.
+
+---
+
+**`update_discussion`**
+Update or close a GitHub Discussion.
+
+*Parameters:*
+
+| Field | Type | Required | Description |
+|-------|------|---------|-------------|
+| `id` | integer | yes | Discussion number |
+| `body` | string | no | New body |
+| `state` | string | no | `OPEN` or `CLOSED`. Omit to leave unchanged. |
+
+*Returns:* `{id, updated: true}` on success.
+
+*Failure modes:*
+
+- `DISCUSSION_NOT_FOUND` — Discussion does not exist. Return error.
+
+---
+
+**`git_branch`**
+Create a git branch.
+
+*Parameters:*
+
+| Field | Type | Required | Description |
+|-------|------|---------|-------------|
+| `name` | string | yes | Branch name |
+| `from` | string | no | Base branch/commit (default: repo default branch) |
+
+*Returns:* `{name, created: true, sha}` on success.
+
+*Failure modes:*
+
+- `BRANCH_EXISTS` — Branch with this name already exists. Return error.
+- `FROM_REF_NOT_FOUND` — Base branch or commit does not exist. Return error.
+
+---
+
+**`git_tag`**
+Create a git tag.
+
+*Parameters:*
+
+| Field | Type | Required | Description |
+|-------|------|---------|-------------|
+| `name` | string | yes | Tag name (e.g., `v1.2.3`) |
+| `target` | string | no | Commit SHA or branch to tag (default: repo HEAD) |
+| `message` | string | no | Annotated tag message (optional) |
+
+*Returns:* `{name, created: true, sha}` on success.
+
+*Failure modes:*
+
+- `TAG_EXISTS` — Tag name already exists. Return error.
+- `TARGET_NOT_FOUND` — Commit SHA or branch does not exist. Return error.
+
+---
+
 **Triage Engine**
 
 Reads new and updated issues since the last run. For each issue, Rodgers uses the LLM to classify intent (Bug, Feature Request, Question, or Other), determine information completeness, decide what labels to apply, and draft an initial response. Rodgers then applies the triage state machine (see plans/triage-workflow-plan.md).
