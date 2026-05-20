@@ -200,7 +200,10 @@ pub fn valid_transitions(state: TriageState) -> Vec<(TriageEvent, TriageState)> 
         TriageState::NeedsInfo => vec![
             (TriageEvent::StalePing, TriageState::NeedsInfo),
             (TriageEvent::StaleClose, TriageState::Stale),
-            (TriageEvent::RequestorResponded, TriageState::NewUnclassified),
+            (
+                TriageEvent::RequestorResponded,
+                TriageState::NewUnclassified,
+            ),
         ],
         TriageState::Stale => vec![(TriageEvent::IssueClosed, TriageState::Closed)],
         TriageState::SearchDocs => vec![
@@ -427,7 +430,11 @@ impl TriageStateMachine {
             }
             (TriageState::WillNotDo, event) => {
                 return Err(TransitionError {
-                    message: format!("Invalid transition: {:?} from {:?}", event, TriageState::WillNotDo),
+                    message: format!(
+                        "Invalid transition: {:?} from {:?}",
+                        event,
+                        TriageState::WillNotDo
+                    ),
                 });
             }
             (TriageState::Closed, event) => {
@@ -794,29 +801,36 @@ mod tests {
         // Verify we have all expected states from the Mermaid diagram
         let expected_states = vec![
             TriageState::NewUnclassified,
-            TriageState::Bug, TriageState::Feature, TriageState::Question,
-            TriageState::BugIncomplete, TriageState::FeatureIncomplete, TriageState::QuestionIncomplete,
+            TriageState::Bug,
+            TriageState::Feature,
+            TriageState::Question,
+            TriageState::BugIncomplete,
+            TriageState::FeatureIncomplete,
+            TriageState::QuestionIncomplete,
             TriageState::NeedsInfo,
             TriageState::Stale,
             TriageState::SearchDocs,
-            TriageState::DocFound, TriageState::DocGap,
+            TriageState::DocFound,
+            TriageState::DocGap,
             TriageState::ReadyForReview,
-            TriageState::WillNotDo, TriageState::ReadyForWork,
+            TriageState::WillNotDo,
+            TriageState::ReadyForWork,
             TriageState::FileEpicBeads,
             TriageState::InProgress,
             TriageState::Closed,
         ];
 
         for state in expected_states {
-            assert!(
-                all_states.contains(&state),
-                "Missing state: {:?}",
-                state
-            );
+            assert!(all_states.contains(&state), "Missing state: {:?}", state);
         }
 
         // Count matches - we should have exactly 18 states
-        assert_eq!(all_states.len(), 18, "Expected 18 states, got {}", all_states.len());
+        assert_eq!(
+            all_states.len(),
+            18,
+            "Expected 18 states, got {}",
+            all_states.len()
+        );
     }
 
     /// Test AC-6: All transitions from the Mermaid diagram are implemented
@@ -925,7 +939,11 @@ mod tests {
 
         for event in &auto_events {
             let result = sm.transition(*event);
-            assert!(result.is_err(), "Auto event {:?} should fail on ReadyForReview", event);
+            assert!(
+                result.is_err(),
+                "Auto event {:?} should fail on ReadyForReview",
+                event
+            );
             let err = result.unwrap_err();
             assert!(
                 err.message.contains("human gate") || err.message.contains("Human gates"),
@@ -957,7 +975,11 @@ mod tests {
 
         for event in &auto_events {
             let result = sm.transition(*event);
-            assert!(result.is_err(), "Auto event {:?} should fail on ReadyForWork", event);
+            assert!(
+                result.is_err(),
+                "Auto event {:?} should fail on ReadyForWork",
+                event
+            );
         }
 
         // Only explicit transition events should work on ReadyForWork
@@ -997,11 +1019,17 @@ mod tests {
         sm.needs_info_since = Some(fourteen_days_ago);
         sm.did_stale_ping = false;
         assert!(sm.is_stale_ping_due(), "14 days should trigger ping");
-        assert!(!sm.is_stale_close_due(), "14 days should not trigger close yet");
+        assert!(
+            !sm.is_stale_close_due(),
+            "14 days should not trigger close yet"
+        );
 
         // After ping is sent, should not ping again
         sm.did_stale_ping = true;
-        assert!(!sm.is_stale_ping_due(), "Already pinged, should not ping again");
+        assert!(
+            !sm.is_stale_ping_due(),
+            "Already pinged, should not ping again"
+        );
     }
 
     #[test]

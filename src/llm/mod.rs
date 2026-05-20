@@ -8,5 +8,5 @@ pub mod prompts;
 pub mod validator;
 
 pub use client::{ChatMessage, ChatRequest, LlmClient, ResponseFormat};
-pub use prompts::{ClassificationPrompt, IssueMetadata};
+pub use prompts::{BreakdownPrompt, ClassificationPrompt, IssueMetadata};
 pub use validator::{ClassificationOutput, OutputValidator, ValidationError, ValidationResult};

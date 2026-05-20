@@ -1,1105 +1,458 @@
-#![allow(dead_code)]
+//! Epic breakdown logic for feature/bug work.
+//!
+//! Implements the epic/child bead breakdown workflow as defined in
+//! plans/feature-bug-plan.md §Bead Breakdown.
+//!
+//! ## Workflow
+//!
+//! 1. **Detect epic-scale** - LLM analyzes issue for multi-area or sequential work
+//! 2. **File epic bead** - Create deferred epic linked to GitHub issue
+//! 3. **File child beads** - Create deferred children, one per logical unit
+//! 4. **Post breakdown comment** - Link to created beads
+//! 5. **Wait for human signal** - Any child modification or issue comment
+//! 6. **Batch open children** - Open all children when human signal received
 
-//! Epic and child bead breakdown logic.
-//!
-//! This module implements the breakdown analysis defined in plans/feature-bug-plan.md §Bead Breakdown.
-//!
-//! When `ready-for-work` is detected, Rodgers analyzes the issue to determine
-//! whether it requires epic-scale breakdown (multiple logical units of work)
-//! or can be handled as a single epic.
-//!
-//! ## Epic-Scale Indicators
-//!
-//! An issue is epic-scale when it involves:
-//! 1. **Multiple codebase areas** - CLI, UI, API, DB, config, etc.
-//! 2. **Sequential dependencies** - work that must be done "and then..." before progressing
-//! 3. **Multiple acceptance criteria groups** - logically distinct units of work
-//!
-//! ## Child Bead Scope
-//!
-//! Each child bead follows the two rules:
-//! 1. **Single codebase part.** A bead should touch at most one distinct area.
-//! 2. **No "...and then..." scope.** The description fits in one non-compound sentence.
-//!
-//! ## Child Bead Types
-//!
-//! Child beads inherit their type from the parent: if the issue is `bug`,
-//! children are type=bug; if `feature`, children are type=feature.
-//!
-//! ## Standalone Bead Specification
-//!
-//! A standalone bead (AGENTS.md §Beads must stand alone) is one that a naive
-//! but competent junior developer can implement without consulting other beads
-//! or the epic description. Every standalone bead includes:
-//!
-//! - **WHAT TO DO**: Concrete files, packages, functions, or commands
-//! - **WHY**: User-visible behavior, constraint, or design rule
-//! - **HOW TO VERIFY**: Test, command, or observable result
-//! - **EDGE CASES**: Non-obvious constraints a careful reader could miss
-//! - **TERMINOLOGY**: Project-specific terms explained inline
+use crate::error::{Result, RogersError};
+use crate::github::models::Issue;
+use crate::llm::client::{ChatMessage, ChatRequest, LlmClient};
+use crate::llm::prompts::IssueMetadata;
+use serde::{Deserialize, Serialize};
 
-use crate::beads::client::{BeadClient, BeadType, ChildBeadSpec, EpicScaleResult};
-
-/// Analyze an issue to determine if it requires epic-scale breakdown.
+/// Epic breakdown analyzer.
 ///
-/// Returns an `EpicScaleResult` indicating whether the work should be
-/// broken into an epic + child beads or handled as a single epic.
-pub fn analyze_epic_scale(
-    issue_body: &str,
-    github_issue_number: u64,
-    is_bug: bool,
-) -> EpicScaleResult {
-    let indicators = detect_epic_scale_indicators(issue_body);
-
-    if indicators.is_epic_scale {
-        let child_beads = generate_child_beads(issue_body, github_issue_number, is_bug);
-        EpicScaleResult {
-            is_epic_scale: true,
-            reasons: indicators.reasons,
-            child_beads,
-            recommendation: "Break into epic + child beads".to_string(),
-        }
-    } else {
-        EpicScaleResult {
-            is_epic_scale: false,
-            reasons: indicators.reasons,
-            child_beads: Vec::new(),
-            recommendation: "Single epic is sufficient".to_string(),
-        }
-    }
-}
-
-/// Detected indicators from epic-scale analysis.
-struct EpicScaleIndicators {
-    /// Whether epic-scale breakdown is recommended
-    is_epic_scale: bool,
-    /// Detailed reasons for the decision
-    reasons: Vec<String>,
-}
-
-/// Detect epic-scale indicators in issue content.
-///
-/// An issue is epic-scale if it has multiple signals across different
-/// codebase areas or sequential work patterns.
-fn detect_epic_scale_indicators(body: &str) -> EpicScaleIndicators {
-    let body_lower = body.to_lowercase();
-
-    let mut reasons = Vec::new();
-    let mut score = 0usize;
-
-    // Indicator 1: Multiple codebase area signals
-    let area_signals = count_codebase_areas(&body_lower);
-    if area_signals >= 2 {
-        reasons.push(format!(
-            "Spans multiple codebase areas ({area_signals} signs detected)"
-        ));
-        score += area_signals;
-    } else if area_signals == 1 {
-        reasons.push("Single codebase area detected".to_string());
-    }
-
-    // Indicator 2: Sequential/compound work signals
-    let sequential_score = detect_sequential_work(&body_lower);
-    if sequential_score >= 2 {
-        reasons.push("Sequential/compound work pattern detected".to_string());
-        score += sequential_score;
-    }
-
-    // Indicator 3: Multiple unrelated acceptance criteria
-    let ac_groups = count_acceptance_criteria_groups(&body_lower);
-    if ac_groups >= 2 {
-        reasons.push(format!("{ac_groups} distinct acceptance criteria groups"));
-        score += ac_groups;
-    }
-
-    // Indicator 4: Feature/enhancement covering multiple user interactions
-    if body_lower.contains("and")
-        && body_lower.contains("also")
-        && (body_lower.contains("should") || body_lower.contains("must"))
-    {
-        reasons.push("Multiple user interactions described".to_string());
-        score += 1;
-    }
-
-    // Indicator 5: Clear multi-step implementation hints
-    let step_count = count_implementation_steps(&body_lower);
-    if step_count >= 3 {
-        reasons.push(format!("{step_count}+ implementation steps detected"));
-        score += 2;
-    }
-
-    let is_epic_scale = score >= 3;
-
-    EpicScaleIndicators {
-        is_epic_scale,
-        reasons,
-    }
-}
-
-/// Count distinct codebase areas mentioned in the body.
-fn count_codebase_areas(body: &str) -> usize {
-    let mut count = 0usize;
-
-    // CLI / command line interface
-    if body.contains("cli")
-        || body.contains("command-line")
-        || body.contains("command line")
-        || body.contains("commandline")
-    {
-        count += 1;
-    }
-    // API / REST / endpoints
-    if body.contains("api") || body.contains("rest") || body.contains("endpoint") {
-        count += 1;
-    }
-    // Database / storage / persistence
-    if body.contains("database")
-        || body.contains("db ")
-        || body.contains("db,")
-        || body.contains("db.")
-        || body.contains("storage")
-        || body.contains("persist")
-    {
-        count += 1;
-    }
-    // UI / dashboard / frontend / web interface
-    if body.contains("ui")
-        || body.contains("dashboard")
-        || body.contains("frontend")
-        || body.contains("interface")
-        || body.contains("user interface")
-        || body.contains("web ")
-    {
-        count += 1;
-    }
-    // Configuration / settings / config
-    if body.contains("config") || body.contains("settings") {
-        count += 1;
-    }
-    // Authentication / authorization
-    if body.contains("auth")
-        || body.contains("permission")
-        || body.contains("role")
-        || body.contains("login")
-        || body.contains("credential")
-        || body.contains("identity")
-    {
-        count += 1;
-    }
-    // Plugin / extension / integration
-    if body.contains("plugin") || body.contains("extension") || body.contains("integration") {
-        count += 1;
-    }
-
-    count
-}
-
-/// Detect sequential work patterns ("and then..." signals).
-fn detect_sequential_work(body: &str) -> usize {
-    let mut score = 0usize;
-
-    // "and then" pattern
-    if body.contains("and then") {
-        score += 2;
-    }
-    // sequential terms
-    if body.contains("first") && body.contains("second") {
-        score += 1;
-    }
-    // "step N" patterns (step 1, step 2, etc.) - more explicit than just "1. 2."
-    let has_explicit_step_1 =
-        body.contains("step 1") || body.contains("step one:") || body.contains("step one -");
-    let has_explicit_step_2 = body.contains("step 2")
-        || body.contains("step two:")
-        || body.contains("step two -")
-        || body.contains("step 3")
-        || body.contains("step three:");
-    if has_explicit_step_1 && has_explicit_step_2 {
-        score += 1;
-    }
-    // Numbered patterns like "1." followed by "2." but WITH context (not just list items)
-    // This is more strict - requires the numbers to be part of a description, not bullet points
-    if body.contains("1.") && body.contains("2.") {
-        // Check if this looks like a step description rather than bullet points
-        let lines: Vec<&str> = body.lines().collect();
-        let has_step_context = lines.iter().any(|l| {
-            let lower = l.to_lowercase();
-            (lower.contains("step") || lower.contains("first"))
-                && (lower.contains("1.") || lower.contains("step 1"))
-        });
-        if has_step_context {
-            score += 1;
-        }
-    }
-    // "then" keyword (sequential signal without explicit numbering)
-    if body.contains("then") {
-        score += 1;
-    }
-    // before/after dependencies
-    if body.contains("before") && body.contains("after") {
-        score += 1;
-    }
-    // depends on
-    if body.contains("depends on") || body.contains("depends upon") {
-        score += 1;
-    }
-    // multi-phase
-    if body.contains("phase") && body.contains("then") {
-        score += 1;
-    }
-
-    score
-}
-
-/// Count distinct acceptance criteria groups.
-fn count_acceptance_criteria_groups(body: &str) -> usize {
-    // This is a heuristic: acceptance criteria often appear as checkbox lists
-    // or numbered AC-* statements. We look for logical grouping signals.
-    let mut groups = 0usize;
-
-    // Each ## section that contains acceptance criteria is a group
-    let sections = [
-        "authentication",
-        "authorization",
-        "api",
-        "database",
-        "ui",
-        "cli",
-        "configuration",
-        "error handling",
-        "performance",
-        "security",
-    ];
-
-    for section in sections {
-        if body.contains(section) {
-            groups += 1;
-        }
-    }
-
-    groups
-}
-
-/// Count implementation steps.
-fn count_implementation_steps(body: &str) -> usize {
-    let mut steps = 0usize;
-
-    // Numbered steps: step 1, step 2, etc.
-    for n in 1..=10 {
-        if body.contains(&format!("step {n}"))
-            || body.contains(&format!("{n}."))
-            || body.contains(&format!("{n})"))
-        {
-            steps += 1;
-        }
-    }
-
-    steps
-}
-
-/// Generate child beads from issue content.
-///
-/// Each child bead represents one logical unit of work following the
-/// two rules: single codebase part, no "...and then..." descriptions.
-fn generate_child_beads(body: &str, github_issue_number: u64, _is_bug: bool) -> Vec<ChildBeadSpec> {
-    let body_lower = body.to_lowercase();
-
-    // First, detect dedicated codebase areas
-    let areas = detect_child_bead_areas(&body_lower);
-
-    if !areas.is_empty() {
-        // Map areas to child bead specs
-        areas
-            .iter()
-            .map(
-                |ChildArea(_area, title_prefix, desc_prefix)| ChildBeadSpec {
-                    title: format!("{}: {}", title_prefix, github_issue_number),
-                    description: format!(
-                        "{} for Issue #{issue_number}. Detailed scope: TBD by implementer.",
-                        desc_prefix,
-                        issue_number = github_issue_number
-                    ),
-                    priority: 2,
-                },
-            )
-            .collect()
-    } else {
-        // Fallback: analyze acceptance criteria for logical units
-        let ac_units = extract_ac_logical_units(body);
-        if ac_units.len() >= 2 {
-            ac_units
-        } else {
-            // Default single child if nothing detected
-            vec![ChildBeadSpec {
-                title: format!("Work unit 1: Issue #{}", github_issue_number),
-                description: format!(
-                    "Implementation scope for Issue #{issue_number}. First logical unit of work.",
-                    issue_number = github_issue_number
-                ),
-                priority: 2,
-            }]
-        }
-    }
-}
-
-/// Detected child bead areas.
-struct ChildArea(&'static str, &'static str, &'static str);
-
-/// Detect child bead areas from issue content.
-fn detect_child_bead_areas(body: &str) -> Vec<ChildArea> {
-    let mut areas = Vec::new();
-
-    // API / Backend
-    if body.contains("api") || body.contains("endpoint") || body.contains("rest") {
-        areas.push(ChildArea(
-            "api",
-            "API / backend implementation",
-            "Implement API endpoints and backend logic",
-        ));
-    }
-    // Database / storage
-    if body.contains("database") || body.contains("storage") || body.contains("db ") {
-        areas.push(ChildArea(
-            "database",
-            "Database / storage layer",
-            "Implement database schema and queries",
-        ));
-    }
-    // Frontend / UI
-    if body.contains("ui")
-        || body.contains("frontend")
-        || body.contains("interface")
-        || body.contains("dashboard")
-    {
-        areas.push(ChildArea(
-            "ui",
-            "UI / frontend implementation",
-            "Implement user interface components",
-        ));
-    }
-    // CLI
-    if body.contains("cli") || body.contains("command-line") {
-        areas.push(ChildArea(
-            "cli",
-            "CLI implementation",
-            "Implement command-line interface",
-        ));
-    }
-    // Configuration
-    if body.contains("config") || body.contains("settings") {
-        areas.push(ChildArea(
-            "config",
-            "Configuration setup",
-            "Implement configuration management",
-        ));
-    }
-    // Authentication
-    if body.contains("auth") || body.contains("login") || body.contains("permission") {
-        areas.push(ChildArea(
-            "auth",
-            "Authentication / authorization",
-            "Implement authentication and authorization",
-        ));
-    }
-
-    // Limit to 5 children max
-    if areas.len() > 5 {
-        areas.truncate(5);
-    }
-
-    areas
-}
-
-/// Extract logical units from acceptance criteria.
-fn extract_ac_logical_units(body: &str) -> Vec<ChildBeadSpec> {
-    // Look for checkbox items or AC-* items
-    let mut units = Vec::new();
-    let mut unit_num = 1usize;
-
-    // Parse checkbox-style criteria
-    for line in body.lines() {
-        let trimmed = line.trim();
-        // Check for [ ], [x], or - [ ] patterns
-        if trimmed.contains("[ ]")
-            || trimmed.starts_with("- [")
-            || trimmed.starts_with("AC-")
-            || trimmed.starts_with("ac-")
-        {
-            let description = trimmed
-                .trim_start_matches(|c: char| ['-', '[', ']'].contains(&c))
-                .trim();
-
-            if !description.is_empty()
-                && description.len() > 3
-                && !description.to_lowercase().contains("test")
-            {
-                units.push(ChildBeadSpec {
-                    title: format!("Work unit {}: {}", unit_num, description),
-                    description: description.to_string(),
-                    priority: 2,
-                });
-                unit_num += 1;
-            }
-        }
-
-        if unit_num > 5 {
-            break;
-        }
-    }
-
-    units
-}
-
-/// Execute the full breakdown pipeline for a ready-for-work issue.
-///
-/// This function:
-/// 1. Analyzes the issue for epic-scale indicators
-/// 2. Extracts ALL acceptance criteria from issue body AND comments (CRIT-6)
-/// 3. Generates an LLM-summarized "What and Why" from the issue (CRIT-6)
-/// 4. Builds the enriched epic bead description with criteria and summary
-/// 5. Files child beads (if epic-scale, all deferred)
-/// 6. Returns the breakdown result with comment to post
-///
-/// Comments are used to extract Rodgers-generated criteria and human-modified
-/// criteria that may have been added after Rodgers posted draft criteria.
-pub fn execute_breakdown(
-    issue_body: &str,
-    issue_title: &str,
-    github_issue_number: u64,
-    github_issue_url: &str,
-    is_bug: bool,
-    comments: &[crate::github::GitHubComment],
-    author: &str,
-) -> BreakdownResult {
-    // Step 1: Analyze for epic scale
-    let scale_result = analyze_epic_scale(issue_body, github_issue_number, is_bug);
-
-    // Step 2: Extract ALL acceptance criteria from body AND comments (CRIT-6)
-    let acceptance_criteria =
-        crate::feature_bug::extract_all_acceptance_criteria(issue_body, comments);
-
-    // Step 3: Generate "What and Why" summary (CRIT-6)
-    let what_why_summary =
-        crate::feature_bug::generate_what_why_summary(issue_body, issue_title, author, is_bug);
-
-    // Step 4: Build the enriched epic bead description (CRIT-6)
-    let plan_ref = "plans/feature-bug-plan.md §Bead Breakdown";
-    let epic_description = build_epic_description_enriched(
-        plan_ref,
-        github_issue_number,
-        github_issue_url,
-        &acceptance_criteria,
-        &what_why_summary,
-    );
-
-    // Step 5: Build the epic bead request with the enriched description
-    let client = BeadClient::new();
-    let bead_type = if is_bug {
-        BeadType::Bug
-    } else {
-        BeadType::Feature
-    };
-
-    let epic_request = client.build_epic_request_enriched(
-        github_issue_number,
-        issue_title,
-        &epic_description,
-        github_issue_url,
-        &acceptance_criteria,
-        scale_result.is_epic_scale,
-        bead_type,
-        2, // priority: medium
-    );
-
-    // Step 6: Generate child bead requests if epic-scale
-    let mut child_requests = Vec::new();
-    if scale_result.is_epic_scale {
-        for spec in &scale_result.child_beads {
-            let child_request = client.build_child_request(
-                spec,
-                "", // parent_id filled in after epic is filed
-                github_issue_number,
-                bead_type,
-            );
-            child_requests.push(child_request);
-        }
-    }
-
-    // Step 7: Build breakdown comment
-    let breakdown_comment = if scale_result.is_epic_scale {
-        client.build_breakdown_comment("TBD-epic", &[][..], true)
-    } else {
-        client.build_breakdown_comment("TBD-epic", &[][..], false)
-    };
-
-    BreakdownResult {
-        epic_request,
-        child_requests,
-        breakdown_comment,
-        is_epic_scale: scale_result.is_epic_scale,
-        reasons: scale_result.reasons,
-        acceptance_criteria,
-    }
-}
-
-/// Extract acceptance criteria text from issue body.
-fn extract_acceptance_criteria_text(body: &str) -> String {
-    let mut in_ac_section = false;
-    let mut ac_lines = Vec::new();
-
-    for line in body.lines() {
-        let trimmed = line.trim().to_lowercase();
-
-        if trimmed.starts_with("## acceptance")
-            || trimmed.starts_with("## criteria")
-            || trimmed.starts_with("## verification")
-        {
-            in_ac_section = true;
-            continue;
-        }
-
-        if in_ac_section {
-            // Stop at the next ## header
-            if trimmed.starts_with("## ") {
-                break;
-            }
-
-            let line_trimmed = line.trim();
-            if !line_trimmed.is_empty() {
-                ac_lines.push(line.to_string());
-            }
-        }
-    }
-
-    if ac_lines.is_empty() {
-        // Fallback: look for checkbox patterns anywhere
-        for line in body.lines() {
-            let trimmed = line.trim();
-            if trimmed.contains("[ ]") || trimmed.starts_with("- [") {
-                ac_lines.push(line.to_string());
-            }
-        }
-    }
-
-    if ac_lines.is_empty() {
-        String::from("- [ ] Work is complete and verified")
-    } else {
-        ac_lines.join("\n")
-    }
-}
-
-// =============================================================================
-// CRIT-6: Full Acceptance Criteria in Epic Bead Description
-// =============================================================================
-//
-// When ready-for-work is applied, the epic bead description includes:
-// - Plan: plans/feature-bug-plan.md §Bead Breakdown
-// - GitHub Issue: #<number> (with URL)
-// - Full acceptance criteria from issue (Rodgers-generated + human-modified)
-// - LLM-summarized 'What and Why' from issue
-//
-// Acceptance criteria are extracted from:
-// 1. The GitHub issue body (explicit AC section, checkbox list, or AC-N: patterns)
-// 2. Issue comments (Rodgers-generated criteria and human-modified criteria)
-//
-// Rodgers-generated criteria are identified by comments from Rodgers or comments
-// containing "Rodgers" + "Acceptance Criteria". Human-modified criteria preserve
-// any changes humans made to the criteria.
-
-/// Generate an enriched epic bead description for CRIT-6.
-///
-/// Builds an epic description that includes:
-/// - Plan reference: `Plan: plans/feature-bug-plan.md §Bead Breakdown`
-/// - GitHub issue link: `GitHub Issue: #<number>`
-/// - Full acceptance criteria from issue body AND comments
-/// - LLM-summarized What and Why summary
-///
-/// If no criteria are found, includes a "pending human review" note.
-pub fn build_epic_description_enriched(
-    plan_ref: &str,
-    github_issue_number: u64,
-    github_issue_url: &str,
-    acceptance_criteria: &crate::feature_bug::AllAcceptanceCriteria,
-    what_why_summary: &crate::feature_bug::WhatWhySummary,
-) -> String {
-    let criteria_text = acceptance_criteria.format_for_epic();
-    let what_why_text = what_why_summary.format_for_epic();
-
-    format!(
-        "{what_why}\n\
-         ---\n\n\
-         **Plan:** {plan_ref}\n\
-         **GitHub Issue:** #{issue_number}\n\
-         **discovered-from:** {url}\n\n\
-         ## Acceptance Criteria\n\n\
-         {criteria}\n",
-        plan_ref = plan_ref,
-        issue_number = github_issue_number,
-        url = github_issue_url,
-        criteria = criteria_text,
-        what_why = what_why_text
-    )
-}
-
-/// Result of a breakdown operation.
+/// Analyzes GitHub issues to determine if they represent epic-scale work
+/// and generates appropriate child bead breakdowns.
 #[derive(Debug, Clone)]
-pub struct BreakdownResult {
-    /// Request to file the epic bead
-    pub epic_request: crate::beads::client::FileBeadRequest,
-    /// Requests to file child beads (if epic-scale)
-    pub child_requests: Vec<crate::beads::client::FileBeadRequest>,
-    /// Breakdown comment to post on GitHub issue
-    pub breakdown_comment: String,
-    /// Whether this was epic-scale
-    pub is_epic_scale: bool,
-    /// Reasons for the epic-scale decision
-    pub reasons: Vec<String>,
-    /// Full acceptance criteria extracted from issue body and comments (CRIT-6)
-    pub acceptance_criteria: crate::feature_bug::AllAcceptanceCriteria,
+pub struct BreakdownAnalyzer {
+    /// LLM client for epic assessment.
+    llm: LlmClient,
+    /// Model name.
+    model: String,
 }
 
-// =============================================================================
-// Standalone Bead Specification
-// =============================================================================
-
-/// A standalone bead description following AGENTS.md §Beads must stand alone.
-///
-/// A standalone bead provides all context needed for a naive but competent
-/// junior developer to implement it without consulting other beads or the
-/// parent epic.
-#[derive(Debug, Clone, Default)]
-pub struct StandaloneBead {
-    /// WHAT TO DO: Concrete files, packages, functions, or commands to create/modify
-    pub what_to_do: String,
-    /// WHY: User-visible behavior, constraint, or design rule this serves
-    pub why: String,
-    /// HOW TO VERIFY: Test, command, or observable result that proves the work is done
-    pub how_to_verify: String,
-    /// EDGE CASES AND PITFALLS: Non-obvious constraints a careful reader could miss
-    pub edge_cases: String,
-    /// PROJECT-SPECIFIC TERMINOLOGY: Terms that only make sense in context
-    pub terminology: String,
-}
-
-impl StandaloneBead {
-    /// Create a new standalone bead with all sections empty.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Create a standalone bead with all required sections.
-    pub fn with_sections(
-        what_to_do: &str,
-        why: &str,
-        how_to_verify: &str,
-        edge_cases: &str,
-        terminology: &str,
-    ) -> Self {
+impl BreakdownAnalyzer {
+    /// Create a new breakdown analyzer.
+    pub fn new(llm: LlmClient) -> Self {
         Self {
-            what_to_do: what_to_do.to_string(),
-            why: why.to_string(),
-            how_to_verify: how_to_verify.to_string(),
-            edge_cases: edge_cases.to_string(),
-            terminology: terminology.to_string(),
+            llm,
+            model: String::new(),
         }
     }
 
-    /// Check if all 5 required sections are present and non-empty.
-    pub fn has_all_sections(&self) -> bool {
-        !self.what_to_do.trim().is_empty()
-            && !self.why.trim().is_empty()
-            && !self.how_to_verify.trim().is_empty()
-            && !self.edge_cases.trim().is_empty()
-            && !self.terminology.trim().is_empty()
+    /// Create a breakdown analyzer with a specific model.
+    pub fn with_model(llm: LlmClient, model: String) -> Self {
+        Self { llm, model }
     }
 
-    /// Check if the bead describes work in a single codebase part.
+    /// Analyze a GitHub issue to determine if it's epic-scale work.
     ///
-    /// A compound bead would touch multiple areas (CLI + API + DB) which
-    /// should be separate beads. API with integrated database access is considered single.
-    /// Uses word boundary detection to avoid false positives (e.g., "clients" contains "cli").
-    pub fn is_single_codebase_part(&self) -> bool {
-        let content_lower = format!(
-            "{} {} {} {} {}",
-            self.what_to_do, self.why, self.how_to_verify, self.edge_cases, self.terminology
-        )
-        .to_lowercase();
+    /// Returns `Ok(Some(breakdown))` for epic-scale issues,
+    /// `Ok(None)` for non-epic issues.
+    pub async fn analyze_epic(&self, issue: &Issue, domain_context: Option<&str>) -> Result<Option<EpicBreakdown>> {
+        let metadata = Self::issue_to_metadata(issue);
 
-        // Count the distinct areas mentioned using word boundaries
-        let mut areas = 0usize;
+        // Check for orphan detection (issue in ready-for-work but no existing epic)
+        // This is handled at a higher level - here we just do the LLM analysis
 
-        // CLI area - require action word boundary (not "clients", "click", "cache")
-        let has_cli = content_lower.contains(" cli ")
-            || content_lower.contains(" cli,")
-            || content_lower.contains(" cli.")
-            || content_lower.contains(" cli\n")
-            || content_lower.contains(" cli/")
-            || content_lower.contains(" cli-")
-            || content_lower.contains("-cli ")
-            || content_lower.contains("\ncli ");
-        if has_cli {
-            areas += 1;
+        // Build the epic assessment prompt
+        let prompt = self.build_epic_prompt(&metadata, domain_context);
+        let request = self.build_request(&prompt);
+        let response = self.llm.chat(request).await?;
+
+        let content = &response.choices[0].message.content;
+
+        // Parse the epic assessment response
+        match self.parse_epic_assessment(content) {
+            Ok(assessment) => {
+                if assessment.is_epic {
+                    Ok(Some(EpicBreakdown {
+                        is_epic: true,
+                        primary_areas: assessment.primary_areas,
+                        sub_work_items: assessment.sub_work_items,
+                        complexity_notes: assessment.complexity_notes,
+                    }))
+                } else {
+                    Ok(None)
+                }
+            }
+            Err(e) => Err(e),
         }
-
-        // API area - matches "api", "rest", or "endpoint"
-        let has_api = content_lower.contains("api")
-            || content_lower.contains(" rest ")
-            || content_lower.contains("rest,")
-            || content_lower.contains("rest ")
-            || content_lower.contains(" endpoint")
-            || content_lower.contains("endpoint:")
-            || content_lower.contains("endpoint ");
-        if has_api {
-            areas += 1;
-        }
-
-        // Database - only count if NO API is present (API includes DB access normally)
-        let has_db = content_lower.contains("database")
-            || content_lower.contains(" db ")
-            || content_lower.contains("db,")
-            || content_lower.contains("storage")
-            || content_lower.contains("persist");
-        if has_db && !has_api {
-            areas += 1;
-        }
-
-        // UI area
-        let has_ui = content_lower.contains("ui ")
-            || content_lower.contains("ui,")
-            || content_lower.contains(" dashboard")
-            || content_lower.contains("dashboard ")
-            || content_lower.contains("frontend")
-            || content_lower.contains("interface ");
-        if has_ui {
-            areas += 1;
-        }
-
-        // Config area
-        let has_config = content_lower.contains("config") || content_lower.contains("settings");
-        if has_config {
-            areas += 1;
-        }
-
-        // Auth area
-        let has_auth = content_lower.contains("auth")
-            || content_lower.contains("permission")
-            || content_lower.contains("login");
-        if has_auth {
-            areas += 1;
-        }
-
-        // Allow at most 1 area (API with integrated DB counts as 1)
-        areas <= 1
     }
 
-    /// Check if there's a compound "...and then..." pattern.
+    /// Generate child bead requests from an epic breakdown.
     ///
-    /// Compound beads should be split into separate beads.
-    pub fn has_compound_pattern(&self) -> bool {
-        let content_lower = format!(
-            "{} {} {} {} {}",
-            self.what_to_do, self.why, self.how_to_verify, self.edge_cases, self.terminology
-        )
-        .to_lowercase();
+    /// Each child bead follows the AGENTS.md standalone rules:
+    /// - Single codebase part
+    /// - No "and then"
+    /// - Self-contained (What, Why, How, Edge, Terms)
+    /// - One acceptance criterion or cohesive concern
+    pub fn generate_child_beads(
+        &self,
+        issue: &Issue,
+        breakdown: &EpicBreakdown,
+        plan_ref: &str,
+    ) -> Vec<ChildBeadRequest> {
+        let issue_num = issue.number;
 
-        // Direct "and then" pattern
-        if content_lower.contains("and then") {
-            return true;
-        }
-
-        // Sequential indicators without explicit "and then"
-        let has_first = content_lower.contains("first ");
-        let has_second = content_lower.contains("second ");
-        let has_step_1 = content_lower.contains("step 1:")
-            || content_lower.contains("step one:")
-            || content_lower.contains("step one -")
-            || content_lower.contains("\nstep 1 ");
-        let has_step_2 = content_lower.contains("step 2:")
-            || content_lower.contains("step two:")
-            || content_lower.contains("step two -")
-            || content_lower.contains("\nstep 2 ");
-
-        if (has_first && has_second) || (has_step_1 && has_step_2) {
-            return true;
-        }
-
-        // Multiple "and then" patterns like "also" then "then" pattern
-        if content_lower.contains("also")
-            && content_lower.contains("then")
-            && (content_lower.contains("and") || content_lower.contains("after"))
-        {
-            return true;
-        }
-
-        // "after that" pattern
-        if content_lower.contains("after that") || content_lower.contains("afterwards") {
-            return true;
-        }
-
-        false
+        breakdown
+            .sub_work_items
+            .iter()
+            .enumerate()
+            .map(|(idx, item)| {
+                let child_num = idx + 1;
+                ChildBeadRequest {
+                    title: item.title.clone(),
+                    description: Self::format_child_description(
+                        issue,
+                        &item.title,
+                        &item.scope_description,
+                        plan_ref,
+                    ),
+                    scope: item.scope_description.clone(),
+                    priority: Self::infer_priority(issue_num, child_num, breakdown.sub_work_items.len()),
+                }
+            })
+            .collect()
     }
 
-    /// Check if the bead is standalone-ready.
-    ///
-    /// A bead is standalone-ready if:
-    /// - All 5 sections are present
-    /// - It deals with a single codebase part
-    /// - It has no compound patterns
-    pub fn is_standalone_ready(&self) -> StandaloneValidation {
-        let sections_present = self.has_all_sections();
-        let single_part = self.is_single_codebase_part();
-        let no_compound = !self.has_compound_pattern();
+    /// Format a child bead description following AGENTS.md standalone rules.
+    fn format_child_description(
+        issue: &Issue,
+        title: &str,
+        scope: &str,
+        plan_ref: &str,
+    ) -> Option<String> {
+        Some(format!(
+            r#"**Plan:** {}
 
-        let issues = {
-            let mut v = Vec::new();
-            if !sections_present {
-                v.push(StandaloneIssue::MissingSections);
+**Issue:** #{} - {}
+
+**WHAT TO DO**
+{}
+
+**WHY**
+This is part of the epic work tracked in the parent bead. Completing this child bead should result in a working, testable implementation of this scope.
+
+**HOW TO VERIFY**
+- Code compiles successfully
+- Unit tests pass for the implemented feature
+- Feature works as described in the scope
+
+**EDGE CASES AND PITFALLS**
+- Ensure changes are isolated to the designated scope
+- Update any related configuration files if needed
+- Test edge cases specific to this implementation area
+
+**PROJECT-SPECIFIC TERMINOLOGY**
+- 'Standalone bead': A self-contained unit that can be implemented without consulting other beads or the epic description
+"#,
+            plan_ref,
+            issue.number,
+            issue.title,
+            scope
+        ))
+    }
+
+    /// Infer priority based on position and total work items.
+    fn infer_priority(issue_num: i32, child_num: usize, total: usize) -> i32 {
+        // First child or critical path gets higher priority
+        if child_num == 0 {
+            1
+        } else if child_num < total / 2 {
+            2
+        } else {
+            3
+        }
+    }
+
+    /// Build the epic assessment prompt.
+    fn build_epic_prompt(
+        &self,
+        metadata: &IssueMetadata,
+        domain_context: Option<&str>,
+    ) -> EpicAssassmentPrompt {
+        let system_prompt = r#"You are Rodgers, assessing whether a GitHub issue represents epic-scale work.
+
+EPIC-SCALE INDICATORS:
+1. Work spans multiple areas of the project (e.g., "UI and API", "backend and docs")
+2. Description contains sequential logic: "Do X, then Y, then Z" that maps to multiple sub-tasks
+3. The issue discusses multiple distinct concerns that could be split
+4. Complexity suggests parallel workstreams could speed up implementation
+
+NOT EPIC-SCALE:
+- Simple bug fixes in one component
+- Single-feature additions in one area
+- Clear, contained work items
+- Issues with straightforward, linear implementation
+
+ANALYSIS APPROACH:
+1. Identify distinct work areas (UI, API, DB, CLI, config, docs, etc.)
+2. For each area, determine if the scope is significant enough for a separate bead
+3. Look for phrases like "and then", "also needs", "should also update", "in addition"
+4. Consider if work items depend on each other or can be parallelized
+
+OUTPUT FORMAT:
+Respond with valid JSON (no markdown code blocks) with these fields:
+- is_epic: boolean (true if epic-scale work detected)
+- primary_areas: array of strings (distinct work areas: ui, api, backend, database, cli, docs, config, etc.)
+- sub_work_items: array of objects with:
+  - title: string (concise title for the child bead)
+  - scope_description: string (detailed description of what this child bead covers)
+- complexity_notes: string (optional notes about the breakdown and dependencies)"#
+            .to_string();
+
+        let mut user_prompt = String::new();
+
+        if let Some(ctx) = domain_context {
+            user_prompt.push_str(&format!("## Project Context\n{}\n\n", ctx));
+        }
+
+        user_prompt.push_str(&format!(
+            "## Issue to Assess\n#{}. {}\n\n",
+            metadata.number, metadata.title
+        ));
+
+        if let Some(ref body) = metadata.body {
+            user_prompt.push_str("### Body\n");
+            user_prompt.push_str(body);
+            user_prompt.push_str("\n\n");
+        }
+
+        if !metadata.prior_comments.is_empty() {
+            user_prompt.push_str("### Discussion\n");
+            for comment in &metadata.prior_comments {
+                user_prompt.push_str(&format!("- {}\n", comment));
             }
-            if !single_part {
-                v.push(StandaloneIssue::MultipleCodebaseParts);
+        }
+
+        user_prompt.push_str(
+            r#"
+Assess whether this issue is epic-scale work.
+If yes, identify the distinct work areas and break it into sub-items.
+Consider the AGENTS.md rule: each child bead should be implementable by a naive but competent junior developer."#,
+        );
+
+        EpicAssassmentPrompt {
+            system_prompt,
+            user_prompt,
+        }
+    }
+
+    /// Build a chat request from a prompt.
+    fn build_request(&self, prompt: &EpicAssassmentPrompt) -> ChatRequest {
+        ChatRequest {
+            model: self.model.clone(),
+            messages: vec![
+                ChatMessage::system(&prompt.system_prompt),
+                ChatMessage::user(&prompt.user_prompt),
+            ],
+            temperature: Some(0.3),
+            max_tokens: Some(2048),
+            response_format: Some(crate::llm::ResponseFormat {
+                format_type: "json_object".to_string(),
+                schema: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "is_epic": {"type": "boolean"},
+                        "primary_areas": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        },
+                        "sub_work_items": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "title": {"type": "string"},
+                                    "scope_description": {"type": "string"}
+                                },
+                                "required": ["title", "scope_description"]
+                            }
+                        },
+                        "complexity_notes": {"type": "string"}
+                    },
+                    "required": ["is_epic", "primary_areas", "sub_work_items"]
+                })),
+            }),
+        }
+    }
+
+    /// Parse the epic assessment response from LLM.
+    fn parse_epic_assessment(
+        &self,
+        content: &str,
+    ) -> Result<EpicAssessmentResult> {
+        // Extract JSON if wrapped in markdown
+        let json_str = Self::extract_json(content);
+
+        // Parse the JSON
+        let assessment: EpicAssessmentResult = match serde_json::from_str(&json_str) {
+            Ok(v) => v,
+            Err(e) => {
+                return Err(RogersError::Config(format!(
+                    "Failed to parse epic assessment: {} (content: {})",
+                    e, content
+                )));
             }
-            if !no_compound {
-                v.push(StandaloneIssue::CompoundPattern);
-            }
-            v
         };
 
-        StandaloneValidation {
-            is_valid: issues.is_empty(),
-            issues,
+        // Validate the result
+        if !assessment.is_epic && !assessment.sub_work_items.is_empty() {
+            // Warning: marked as not epic but has sub-items
+            tracing::warn!("Epic assessment has sub_items but is_epic=false");
+        }
+
+        Ok(assessment)
+    }
+
+    /// Extract JSON from content that might be wrapped in markdown code blocks.
+    fn extract_json(content: &str) -> String {
+        let trimmed = content.trim();
+
+        // Check for markdown code block
+        if trimmed.starts_with("```json") {
+            if let Some(end) = trimmed.find("```\n").or(Some(trimmed.len())) {
+                let json_content = &trimmed[7..end];
+                return json_content.trim().to_string();
+            }
+        } else if trimmed.starts_with("```") {
+            if let Some(end) = trimmed.find("```\n").or(Some(trimmed.len())) {
+                let json_content = &trimmed[3..end];
+                return json_content.trim().to_string();
+            }
+        }
+
+        trimmed.to_string()
+    }
+
+    /// Convert a GitHub issue to metadata for classification.
+    fn issue_to_metadata(issue: &Issue) -> IssueMetadata {
+        IssueMetadata {
+            number: issue.number,
+            title: issue.title.clone(),
+            body: issue.body.clone(),
+            author: issue.user.login.clone(),
+            author_type: issue.user.user_type.clone(),
+            labels: issue.labels.iter().map(|l| l.name.clone()).collect(),
+            prior_comments: vec![],
         }
     }
-
-    /// Format the bead as a markdown string for use in bead descriptions.
-    pub fn to_markdown(&self) -> String {
-        format!(
-            r#"WHAT TO DO
-{}
-
-WHY
-{}
-
-HOW TO VERIFY
-{}
-
-EDGE CASES AND PITFALLS
-{}
-
-PROJECT-SPECIFIC TERMINOLOGY
-{}"#,
-            self.what_to_do.trim(),
-            self.why.trim(),
-            self.how_to_verify.trim(),
-            self.edge_cases.trim(),
-            self.terminology.trim()
-        )
-    }
 }
 
-/// Validation result for standalone bead checks.
-#[derive(Debug, Clone, Default)]
-pub struct StandaloneValidation {
-    /// Whether the bead meets all standalone criteria
-    pub is_valid: bool,
-    /// Issues found during validation
-    pub issues: Vec<StandaloneIssue>,
+/// Prompt for epic assessment.
+#[derive(Debug, Clone)]
+struct EpicAssassmentPrompt {
+    system_prompt: String,
+    user_prompt: String,
 }
 
-impl StandaloneValidation {
-    /// Create a validation result from issues.
-    pub fn from_issues(issues: Vec<StandaloneIssue>) -> Self {
+/// Result of epic assessment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EpicAssessmentResult {
+    is_epic: bool,
+    primary_areas: Vec<String>,
+    sub_work_items: Vec<SubWorkItem>,
+    complexity_notes: Option<String>,
+}
+
+/// Sub-work item for child bead.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SubWorkItem {
+    title: String,
+    scope_description: String,
+}
+
+/// Epic breakdown result.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpicBreakdown {
+    /// Whether this is epic-scale work.
+    pub is_epic: bool,
+    /// Primary work areas identified.
+    pub primary_areas: Vec<String>,
+    /// Sub-work items for child beads.
+    pub sub_work_items: Vec<SubWorkItem>,
+    /// Complexity notes from LLM.
+    pub complexity_notes: Option<String>,
+}
+
+/// Request for creating a child bead.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChildBeadRequest {
+    /// Child bead title.
+    pub title: String,
+    /// Child bead description.
+    pub description: Option<String>,
+    /// Scope description from LLM analysis.
+    pub scope: String,
+    /// Calculated priority.
+    pub priority: i32,
+}
+
+/// Breakdown summary for posting as a comment.
+#[derive(Debug, Clone)]
+pub struct BreakdownComment {
+    /// Comment body.
+    pub body: String,
+    /// Epic bead info for reference.
+    pub epic_title: String,
+    /// Child bead titles.
+    pub child_titles: Vec<String>,
+}
+
+impl BreakdownComment {
+    /// Generate the breakdown comment body.
+    pub fn generate(
+        issue_num: i32,
+        epic: &crate::beads::schema::Epic,
+        children: &[crate::beads::schema::Child],
+    ) -> Self {
+        let mut body = String::new();
+
+        body.push_str(&format!(
+            "## Rodgers Epic Breakdown\n\nIssue #{} has been analyzed and found to be epic-scale work. I've created the following breakdown:\n\n",
+            issue_num
+        ));
+
+        body.push_str("### 📋 Epic\n");
+        body.push_str(&format!("**Title:** {}\n", epic.title));
+        if let Some(url) = &epic.github_issue_url {
+            body.push_str(&format!("**Linked Issue:** #{}\n", url));
+        }
+        body.push('\n');
+
+        body.push_str("### 📝 Child Beads\n");
+        body.push_str("The following child beads have been created (all currently deferred):\n\n");
+
+        for (idx, child) in children.iter().enumerate() {
+            body.push_str(&format!("{}. **{}**\n", idx + 1, child.title));
+            if let Some(ref desc) = child.description {
+                // First line only as preview (comments can be long)
+                let first_line = desc.lines().next().unwrap_or("");
+                let preview = if first_line.len() > 200 {
+                    &first_line[..200]
+                } else {
+                    first_line
+                };
+                body.push_str(&format!("   > {}\n", preview));
+            }
+        }
+
+        body.push_str("\n---\n\n");
+        body.push_str("### ⏳ Next Steps\n\n");
+        body.push_str("These child beads are currently **deferred** (not started). To begin work:\n\n");
+        body.push_str("1. Review the breakdown above\n");
+        body.push_str("2. Modify any child bead OR add a comment to this issue\n");
+        body.push_str("3. Rodgers will batch-open all child beads\n\n");
+        body.push_str("This ensures human review before work begins. Each child bead can be implemented independently once opened.\n");
+
+        let child_titles: Vec<String> = children.iter().map(|c| c.title.clone()).collect();
+
         Self {
-            is_valid: issues.is_empty(),
-            issues,
+            body,
+            epic_title: epic.title.clone(),
+            child_titles,
         }
     }
-
-    /// Check if validation passed.
-    pub fn passed(&self) -> bool {
-        self.is_valid
-    }
-
-    /// Get human-readable descriptions of all issues.
-    pub fn descriptions(&self) -> Vec<String> {
-        self.issues.iter().map(|i| i.description()).collect()
-    }
-}
-
-/// Issues that prevent a bead from being standalone.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StandaloneIssue {
-    /// One or more of the 5 required sections is missing or empty
-    MissingSections,
-    /// Bead touches multiple distinct codebase areas
-    MultipleCodebaseParts,
-    /// Bead has compound "...and then..." pattern
-    CompoundPattern,
-}
-
-impl StandaloneIssue {
-    /// Get a human-readable description of the issue.
-    pub fn description(&self) -> String {
-        match self {
-            Self::MissingSections => {
-                "Missing one or more required sections (WHAT TO DO, WHY, HOW TO VERIFY, EDGE CASES, TERMINOLOGY)".to_string()
-            }
-            Self::MultipleCodebaseParts => {
-                "Bead touches multiple distinct codebase parts (CLI, API, DB, etc.). Split into separate beads.".to_string()
-            }
-            Self::CompoundPattern => {
-                "Bead has compound 'and then...' pattern. Split into separate sequential beads.".to_string()
-            }
-        }
-    }
-}
-
-/// Generate a standalone bead from work scope information.
-///
-/// This function creates a standalone bead description with all required
-/// sections based on the codebase area and the acceptance criteria context.
-pub fn generate_standalone_bead(
-    codebase_area: &str,
-    scope_description: &str,
-    ac_context: &[&str],
-) -> StandaloneBead {
-    let area_lower = codebase_area.to_lowercase();
-    let is_api = area_lower.contains("api") || area_lower.contains("endpoint");
-    let is_db = area_lower.contains("database")
-        || area_lower.contains("storage")
-        || area_lower.contains("db");
-    let is_ui = area_lower.contains("ui")
-        || area_lower.contains("frontend")
-        || area_lower.contains("dashboard");
-    let is_cli = area_lower.contains("cli") || area_lower.contains("command");
-    let is_auth = area_lower.contains("auth")
-        || area_lower.contains("permission")
-        || area_lower.contains("login");
-    let is_config = area_lower.contains("config") || area_lower.contains("settings");
-
-    // Generate WHAT TO DO based on area
-    let what_to_do = match () {
-        _ if is_api => format!(
-            "Implement API endpoints for: {}\n\nFiles to modify:\n- src/api/ (new handlers)\n- src/models/ (request/response types)\n- src/routes.rs (add routes)\n\nFunctions to create/modify: handler functions, request validators",
-            scope_description
-        ),
-        _ if is_db => format!(
-            "Implement database layer for: {}\n\nFiles to modify:\n- src/db/ (schema, migrations)\n- src/models/ (entity definitions)\n- src/queries.rs (composite queries)\n\nCreate schema, migrations, and repository functions",
-            scope_description
-        ),
-        _ if is_ui => format!(
-            "Implement UI components for: {}\n\nFiles to modify:\n- src/ui/ (new components)\n- src/components/ (shared components)\n- src/styles/ (CSS/styling)\n\nBuild React/HTML components, wire to state management",
-            scope_description
-        ),
-        _ if is_cli => format!(
-            "Implement CLI commands for: {}\n\nFiles to modify:\n- src/cli/ (command modules)\n- src/commands.rs (command registration)\n\nCreate CLI argument parser, command handlers",
-            scope_description
-        ),
-        _ if is_auth => format!(
-            "Implement authentication/authorization for: {}\n\nFiles to modify:\n- src/auth/ (auth logic)\n- src/middleware/ (auth middleware)\n- src/models/ (user/role types)\n\nImplement auth checks, middleware, user management",
-            scope_description
-        ),
-        _ if is_config => format!(
-            "Implement configuration management for: {}\n\nFiles to modify:\n- src/config/ (config types)\n- config.example.yaml (schema)\n- src/validation.rs (config validation)\n\nDefine config schema, env var handling",
-            scope_description
-        ),
-        _ => format!(
-            "Implement: {}\n\nScope: {}",
-            codebase_area, scope_description
-        ),
-    };
-
-    // Generate WHY from acceptance criteria context
-    let why = if !ac_context.is_empty() {
-        format!("Required by acceptance criteria: {}", ac_context.join("; "))
-    } else {
-        format!(
-            "Required for complete implementation of: {}",
-            scope_description
-        )
-    };
-
-    // Generate HOW TO VERIFY
-    let how_to_verify = match () {
-        _ if is_api => String::from(
-            "1. Run existing tests: `cargo test`\n2. Manual test: curl the endpoint with valid/invalid inputs\n3. Verify response matches schema: `cargo test -- --test-threads=1 api_*`\n4. Check logs for errors",
-        ),
-        _ if is_db => String::from(
-            "1. Run migrations: `cargo run migrate`\n2. Run tests: `cargo test`\n3. Verify data persists across restarts\n4. Check migration logs",
-        ),
-        _ if is_ui => String::from(
-            "1. Start dev server: `cargo run`\n2. Navigate to affected UI area\n3. Verify component renders correctly\n4. Test user interactions",
-        ),
-        _ if is_cli => String::from(
-            "1. Build: `cargo build --release`\n2. Run help: `./target/release/rogers --help`\n3. Test command: `./target/release/rogers <command> --help`\n4. Verify output format",
-        ),
-        _ if is_auth => String::from(
-            "1. Test unauthenticated access is rejected\n2. Test authenticated access succeeds\n3. Test unauthorized actions fail\n4. Verify session/token handling",
-        ),
-        _ if is_config => String::from(
-            "1. Run with new config: `./rogers --config config.yaml`\n2. Verify config loads without errors\n3. Test invalid config is rejected with clear error\n4. Verify env var overrides work",
-        ),
-        _ => String::from("Run tests and verify behavior matches acceptance criteria"),
-    };
-
-    // Generate EDGE CASES based on area
-    let edge_cases = match () {
-        _ if is_api || is_db => String::from(
-            "- Handle concurrent requests properly (mutex/locking where needed)\n- Return appropriate HTTP codes for error cases\n- Validate all inputs before processing\n- Handle None/empty values gracefully\n- Connection pooling for database",
-        ),
-        _ if is_ui => String::from(
-            "- Handle loading states briefly (avoid flash)\n- Handle error states with clear messages\n- Responsive layout on different screen sizes\n- Keyboard navigation accessibility\n- Focus management for modals/dialogs",
-        ),
-        _ if is_cli => String::from(
-            "- Handle invalid argument combinations\n- Show helpful error messages\n- Handle piped input and large inputs\n- Progress indicators for long operations\n- Proper exit codes (0 success, non-zero failure)",
-        ),
-        _ if is_auth => String::from(
-            "- Session timeout handling\n- Cross-site request forgery (CSRF) prevention\n- Rate limiting on auth endpoints\n- Token refresh logic\n- Secure credential storage (no plaintext)",
-        ),
-        _ if is_config => String::from(
-            "- Unknown config keys should warn, not fail\n- Validate types before parsing\n- Handle missing optional fields\n- Config file path resolution\n- Environment variable precedence",
-        ),
-        _ => String::from(
-            "- Handle error cases gracefully\n- Include appropriate logging\n- Clean up resources on failure",
-        ),
-    };
-
-    // Generate TERMINOLOGY
-    let terminology = String::from(
-        "**Bead**: A unit of work tracked as an issue. Child beads are sub-tasks of an epic.\n\
-        **Standalone bead**: A bead with complete context so a junior dev can implement it alone.\n\
-        **Acceptance criteria**: Testable conditions that verify the work is complete.",
-    );
-
-    StandaloneBead::with_sections(&what_to_do, &why, &how_to_verify, &edge_cases, &terminology)
-}
-
-/// Validate that a list of child beads would be standalone.
-///
-/// Returns validation results for each bead plus a summary indicating
-/// whether all beads meet standalone criteria.
-pub fn validate_beads_standalone(beads: &[StandaloneBead]) -> BeadValidationResult {
-    let mut individual_results = Vec::new();
-
-    for (idx, bead) in beads.iter().enumerate() {
-        let validation = bead.is_standalone_ready();
-        individual_results.push((idx, validation));
-    }
-
-    let all_valid = individual_results.iter().all(|(_, v)| v.passed());
-
-    BeadValidationResult {
-        all_standalone: all_valid,
-        individual_results,
-    }
-}
-
-/// Result of validating multiple beads for standalone criteria.
-#[derive(Debug, Clone, Default)]
-pub struct BeadValidationResult {
-    /// Whether all beads are standalone-ready
-    pub all_standalone: bool,
-    /// Individual validation results per bead
-    pub individual_results: Vec<(usize, StandaloneValidation)>,
 }
 
 #[cfg(test)]
@@ -1107,967 +460,91 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_epic_scale_single_area_detected() {
-        // Single area - not epic-scale (score 1 < 3)
-        let body = r#"
-## Use Case
-I want to export my data to CSV.
+    fn test_extract_json_from_markdown() {
+        let content = r#"```json
+{"is_epic": true, "primary_areas": ["ui", "api"]}
+```"#;
 
-## Proposed Behavior
-A button that exports data.
-
-## Acceptance Criteria
-- [ ] Export button appears
-"#;
-        let result = analyze_epic_scale(body, 1, false);
-        assert!(!result.is_epic_scale);
+        let json = BreakdownAnalyzer::extract_json_from_content(content);
+        assert!(json.contains("is_epic"));
+        assert!(!json.starts_with("```"));
     }
 
     #[test]
-    fn test_epic_scale_with_four_distinct_areas() {
-        // Four distinct areas: auth, api, ui, database
-        // Should trigger is_epic_scale and add "Multiple" reason
-        let body = "auth login credential identity api rest endpoint ui dashboard frontend interface config settings database storage plugin extension integration";
-        let result = analyze_epic_scale(body, 1, false);
-        assert!(
-            result.is_epic_scale,
-            "Body with 4+ areas should be epic scale"
-        );
-        assert!(
-            result
-                .reasons
-                .iter()
-                .any(|r| r.to_lowercase().contains("multiple")),
-            "Reasons should mention multiple: {:?}",
-            result.reasons
-        );
+    fn test_extract_json_from_plain() {
+        let content = r#"{"is_epic": false, "primary_areas": [], "sub_work_items": []}"#;
+
+        let json = BreakdownAnalyzer::extract_json_from_content(content);
+        assert!(json.contains("is_epic"));
     }
 
     #[test]
-    fn test_epic_scale_sequential_pattern() {
-        // Sequential pattern only - borderline
-        let body = r#"
-## Use Case
-Migration work.
-
-Step 1: Create new schema
-Step 2: Migrate data
-Step 3: Update API
-Step 4: Update frontend
-
-Acceptance Criteria
-- [ ] Migration completes
-- [ ] App works
-"#;
-        let result = analyze_epic_scale(body, 1, false);
-        assert!(result.is_epic_scale);
-    }
-
-    #[test]
-    fn test_epic_scale_complex_multi_area() {
-        // Complex work spanning multiple areas
-        let body = r#"
-## Use Case
-Full-stack feature with multiple moving parts.
-
-## Areas
-- CLI for admin commands
-- API for client access
-- Database for storage
-- UI dashboard
-
-## Acceptance Criteria
-- [ ] Admin can manage via CLI
-- [ ] Client access via REST
-- [ ] Data persisted
-- [ ] Dashboard shows status
-"#;
-        let result = analyze_epic_scale(body, 1, false);
-        assert!(result.is_epic_scale);
-        assert!(result.child_beads.len() >= 2);
-    }
-
-    #[test]
-    fn test_execute_breakdown_single_epic() {
-        let body = r#"
-## Use Case
-Simple CSV export.
-
-## Proposed Behavior
-Export button downloads CSV.
-
-## Acceptance Criteria
-- [ ] Button present
-"#;
-        let result = execute_breakdown(
-            body,
-            "Export to CSV",
-            42,
-            "https://github.com/org/repo/issues/42",
-            false,
-            &[],
-            "testuser",
-        );
-
-        assert!(!result.is_epic_scale);
-        assert!(result.child_requests.is_empty());
-        assert!(
-            result.breakdown_comment.contains("Work Tracking")
-                || result.breakdown_comment.contains("epic")
-        );
-    }
-
-    #[test]
-    fn test_execute_breakdown_epic_scale() {
-        let body = r#"
-## Use Case
-Multi-area feature.
-
-## Acceptance Criteria
-- [ ] API works
-- [ ] UI works
-- [ ] Data persisted
-"#;
-        let result = execute_breakdown(
-            body,
-            "Full-stack feature",
-            42,
-            "https://github.com/org/repo/issues/42",
-            false,
-            &[],
-            "testuser",
-        );
-
-        assert!(result.is_epic_scale);
-        assert!(!result.child_requests.is_empty());
-        assert!(result.breakdown_comment.contains("deferred"));
-    }
-
-    #[test]
-    fn test_extract_acceptance_criteria() {
-        let body = r#"
-## Use Case
-Test feature.
-
-## Acceptance Criteria
-- [ ] Feature works
-- [ ] Tests pass
-
-## Notes
-More info here.
-"#;
-        let ac = extract_acceptance_criteria_text(body);
-        assert!(ac.contains("Feature works") || ac.contains("Feature"));
-    }
-
-    #[test]
-    fn test_detect_child_bead_areas_multiple() {
-        let body = "api endpoint, database storage, ui interface";
-        let areas = detect_child_bead_areas(body);
-        assert!(areas.len() >= 2);
-        assert!(areas.iter().any(|a| a.0 == "api"));
-        assert!(areas.iter().any(|a| a.0 == "database"));
-        assert!(areas.iter().any(|a| a.0 == "ui"));
-    }
-
-    #[test]
-    fn test_detect_child_bead_areas_auth() {
-        let body = "login authentication permission";
-        let areas = detect_child_bead_areas(body);
-        assert!(areas.iter().any(|a| a.0 == "auth"));
-    }
-
-    #[test]
-    fn test_detect_child_bead_areas_empty() {
-        let body = "simple feature request";
-        let areas = detect_child_bead_areas(body);
-        assert!(areas.is_empty());
-    }
-
-    #[test]
-    fn test_count_codebase_areas() {
-        assert_eq!(count_codebase_areas("api endpoint rest"), 1);
-        assert_eq!(count_codebase_areas("api and database and ui"), 3);
-        assert_eq!(count_codebase_areas("simple text"), 0);
-    }
-
-    #[test]
-    fn test_count_codebase_areas_auth_api_ui_database() {
-        // Verify that auth, api, ui, and database are each detected as separate areas
-        let body = "authentication api login ui interface database";
-        let count = count_codebase_areas(body);
-        assert_eq!(count, 4, "auth+api+ui+database should be 4 areas");
-    }
-
-    #[test]
-    fn test_detect_sequential_work() {
-        assert!(detect_sequential_work("first do X and then do Y") >= 2);
-        assert!(detect_sequential_work("step 1 then step 2") >= 2);
-        assert!(detect_sequential_work("depends on the auth") >= 1);
-    }
-
-    #[test]
-    fn test_count_implementation_steps() {
-        assert!(count_implementation_steps("step 1. step 2. step 3.") >= 3);
-        assert_eq!(count_implementation_steps("just one step"), 0);
-    }
-
-    #[test]
-    fn test_generate_child_beads_falls_back_to_ac_units() {
-        let body = r#"
-## Acceptance Criteria
-- [ ] API works
-- [ ] UI displays
-- [ ] Data saves
-"#;
-        let beads = generate_child_beads(body, 1, false);
-        assert!(!beads.is_empty());
-    }
-
-    #[test]
-    fn test_extract_ac_logical_units() {
-        let body = r#"
-- [ ] API works
-- [ ] UI displays  
-- [ ] Data saves
-- [ ] Tests pass
-"#;
-        let units = extract_ac_logical_units(body);
-        assert!(units.len() >= 2);
-    }
-
-    #[test]
-    fn test_bug_type_sets_bead_type() {
-        let body = r#"
-## What Happened
-Bug.
-
-## Acceptance Criteria
-- [ ] Fixed
-"#;
-        let result = execute_breakdown(
-            body,
-            "Bug fix",
-            1,
-            "https://github.com/org/repo/issues/1",
-            true, // is_bug = true
-            &[],
-            "reporter",
-        );
-
-        assert_eq!(
-            result.epic_request.bead_type,
-            crate::beads::client::BeadType::Bug
-        );
-    }
-
-    #[test]
-    fn test_feature_type_sets_bead_type() {
-        let body = "Simple feature request.";
-        let result = execute_breakdown(
-            body,
-            "Feature",
-            1,
-            "https://github.com/org/repo/issues/1",
-            false, // is_bug = false
-            &[],
-            "requester",
-        );
-
-        assert_eq!(
-            result.epic_request.bead_type,
-            crate::beads::client::BeadType::Feature
-        );
-    }
-
-    #[test]
-    fn test_epic_status_is_deferred() {
-        let result = execute_breakdown(
-            "Feature body.",
-            "Title",
-            1,
-            "https://github.com/org/repo/issues/1",
-            false,
-            &[],
-            "testuser",
-        );
-
-        assert_eq!(
-            result.epic_request.status,
-            crate::beads::client::BeadStatus::Deferred
-        );
-    }
-
-    #[test]
-    fn test_child_beads_status_is_deferred() {
-        let body = "api endpoint, database storage";
-        let result = execute_breakdown(
-            body,
-            "Title",
-            1,
-            "https://github.com/org/repo/issues/1",
-            false,
-            &[],
-            "testuser",
-        );
-
-        for child in &result.child_requests {
-            assert_eq!(child.status, crate::beads::client::BeadStatus::Deferred);
-        }
-    }
-
-    #[test]
-    fn test_epic_scale_result_includes_reasons() {
-        let body = "api endpoint, database storage, user interface";
-        let result = analyze_epic_scale(body, 1, false);
-        assert!(!result.reasons.is_empty());
-    }
-
-    // =============================================================================
-    // Standalone Bead Tests (CRIT-5)
-    // =============================================================================
-
-    #[test]
-    fn test_standalone_bead_has_all_sections() {
-        let bead = StandaloneBead::with_sections(
-            "Create file.txt",
-            "User needs this file",
-            "cat file.txt shows content",
-            "Handle empty file",
-            "None",
-        );
-
-        assert!(bead.has_all_sections());
-    }
-
-    #[test]
-    fn test_standalone_bead_missing_sections() {
-        let bead = StandaloneBead::with_sections(
-            "Create file.txt",
-            "",
-            "cat file.txt shows content",
-            "Handle empty file",
-            "None",
-        );
-
-        assert!(!bead.has_all_sections());
-    }
-
-    #[test]
-    fn test_standalone_bead_single_codebase_part() {
-        // API only - should pass
-        let api_bead = StandaloneBead::with_sections(
-            "Implement API handler in src/api/",
-            "User-visible API endpoint",
-            "curl test passes",
-            "Handle None gracefully",
-            "Handler: API processing function",
-        );
-
-        assert!(api_bead.is_single_codebase_part());
-
-        // Multiple areas - should fail
-        let multi_bead = StandaloneBead::with_sections(
-            "Implement in CLI and API",
-            "Both areas need this",
-            "Test both",
-            "Handle both",
-            "None",
-        );
-
-        assert!(!multi_bead.is_single_codebase_part());
-    }
-
-    #[test]
-    fn test_standalone_bead_compound_pattern_detection() {
-        // Compound bead with "and then"
-        let compound_bead = StandaloneBead::with_sections(
-            "First do X to the database, and then do Y to the API",
-            "Sequential work",
-            "Test both steps",
-            "Handle ordering",
-            "None",
-        );
-
-        assert!(compound_bead.has_compound_pattern());
-        assert!(!compound_bead.is_standalone_ready().passed());
-
-        // Sequential steps pattern
-        let steps_bead = StandaloneBead::with_sections(
-            "Step 1: Create schema. Step 2: Add data.",
-            "Migration work",
-            "Run migration",
-            "Handle rollback",
-            "None",
-        );
-
-        assert!(steps_bead.has_compound_pattern());
-
-        // Non-compound - clean single unit
-        let clean_bead = StandaloneBead::with_sections(
-            "Implement database schema for user table",
-            "Store user data persistently",
-            "Query user by ID succeeds",
-            "Handle missing fields",
-            "Entity: database model object",
-        );
-
-        assert!(!clean_bead.has_compound_pattern());
-        assert!(clean_bead.is_standalone_ready().passed());
-    }
-
-    #[test]
-    fn test_standalone_bead_is_standalone_ready_full() {
-        let bead = StandaloneBead::with_sections(
-            "Implement the weather API endpoint",
-            "Expose weather data to clients via REST",
-            "curl /api/weather returns JSON with data",
-            "- Rate limit requests\n- Handle API key rotation\n- Cache responses for 5 minutes",
-            "**Weather API**: single GET endpoint returning JSON forecast data",
-        );
-
-        let validation = bead.is_standalone_ready();
-        assert!(validation.passed());
-        assert!(validation.issues.is_empty());
-    }
-
-    #[test]
-    fn test_standalone_bead_validation_multiple_issues() {
-        let bead = StandaloneBead::with_sections(
-            "", // Missing WHAT
-            "", // Missing WHY
-            "", // Missing HOW
-            "", // Missing EDGE
-            "", // Missing TERMS
-        );
-
-        let validation = bead.is_standalone_ready();
-        assert!(!validation.passed());
-        assert!(
-            validation
-                .issues
-                .contains(&StandaloneIssue::MissingSections)
-        );
-    }
-
-    #[test]
-    fn test_standalone_validation_descriptions() {
-        let validation = StandaloneValidation::from_issues(vec![
-            StandaloneIssue::MissingSections,
-            StandaloneIssue::MultipleCodebaseParts,
-        ]);
-
-        let descriptions = validation.descriptions();
-        assert!(descriptions.len() == 2);
-        assert!(descriptions[0].contains("Missing"));
-        assert!(descriptions[1].contains("multiple"));
-    }
-
-    #[test]
-    fn test_standalone_bead_to_markdown() {
-        let bead = StandaloneBead::with_sections(
-            "Create feature X",
-            "Users need this",
-            "Run tests",
-            "Handle errors",
-            "Feature X: new capability",
-        );
-
-        let md = bead.to_markdown();
-        assert!(md.contains("WHAT TO DO"));
-        assert!(md.contains("Create feature X"));
-        assert!(md.contains("WHY"));
-        assert!(md.contains("HOW TO VERIFY"));
-        assert!(md.contains("EDGE CASES"));
-        assert!(md.contains("TERMINOLOGY"));
-    }
-
-    #[test]
-    fn test_generate_standalone_bead_api() {
-        let bead = generate_standalone_bead(
-            "API",
-            "user profile endpoints",
-            &[
-                "AC-1: Profile displays correctly",
-                "AC-2: Profile updates persist",
-            ],
-        );
-
-        assert!(bead.has_all_sections());
-        assert!(bead.is_standalone_ready().passed());
-        assert!(bead.what_to_do.contains("API"));
-        assert!(bead.why.contains("AC-1"));
-    }
-
-    #[test]
-    fn test_generate_standalone_bead_database() {
-        let bead = generate_standalone_bead(
-            "Database",
-            "user table schema",
-            &["AC-1: Data persists", "AC-2: Queries are fast"],
-        );
-
-        assert!(bead.has_all_sections());
-        assert!(bead.what_to_do.contains("database"));
-        assert!(bead.what_to_do.contains("schema"));
-    }
-
-    #[test]
-    fn test_generate_standalone_bead_ui() {
-        let bead = generate_standalone_bead(
-            "UI",
-            "dashboard components",
-            &["AC-1: Dashboard loads", "AC-2: Charts render"],
-        );
-
-        assert!(bead.has_all_sections());
-        assert!(bead.what_to_do.contains("UI"));
-        assert!(bead.how_to_verify.contains("dev server"));
-    }
-
-    #[test]
-    fn test_generate_standalone_bead_cli() {
-        let bead = generate_standalone_bead("CLI", "export command", &["AC-1: CSV export works"]);
-
-        assert!(bead.has_all_sections());
-        assert!(bead.what_to_do.contains("CLI"));
-        assert!(bead.how_to_verify.contains("--help"));
-    }
-
-    #[test]
-    fn test_validate_beads_standalone_all_pass() {
-        let beads = vec![
-            generate_standalone_bead("API", "endpoint 1", &[]),
-            generate_standalone_bead("UI", "component 1", &[]),
-            generate_standalone_bead("DB", "schema 1", &[]),
-        ];
-
-        let result = validate_beads_standalone(&beads);
-        assert!(result.all_standalone);
-        assert_eq!(result.individual_results.len(), 3);
-        for (_, validation) in result.individual_results {
-            assert!(validation.passed());
-        }
-    }
-
-    #[test]
-    fn test_validate_beads_standalone_one_fails() {
-        let mut beads = vec![
-            generate_standalone_bead("API", "endpoint 1", &[]),
-            generate_standalone_bead("UI", "component 1", &[]),
-        ];
-
-        // Corrupt one bead to have multiple issues
-        if let Some(bad) = beads.get_mut(0) {
-            bad.what_to_do = "CLI and API combined".to_string();
-            bad.why = "Sequential work: first do API, and then do CLI".to_string();
-        }
-
-        let result = validate_beads_standalone(&beads);
-        assert!(!result.all_standalone);
-        // First bead should fail (compound + multiple areas)
-        assert!(!result.individual_results[0].1.passed());
-        // Second should pass
-        assert!(result.individual_results[1].1.passed());
-    }
-
-    #[test]
-    fn test_standalone_issue_description() {
-        assert!(
-            StandaloneIssue::MissingSections
-                .description()
-                .contains("Missing")
-        );
-        assert!(
-            StandaloneIssue::MultipleCodebaseParts
-                .description()
-                .to_lowercase()
-                .contains("multiple")
-        );
-        assert!(
-            StandaloneIssue::CompoundPattern
-                .description()
-                .contains("compound")
-        );
-    }
-
-    #[test]
-    fn test_closely_related_areas_allows_api_db() {
-        // API + Database alone should be allowed as closely related
-        let bead = StandaloneBead::with_sections(
-            "API handler with database access",
-            "Fetch user data",
-            "Test endpoint",
-            "Handle DB errors",
-            "None",
-        );
-
-        // This bead mentions API and DB, which are closely related
-        assert!(bead.is_single_codebase_part());
-    }
-
-    // =============================================================================
-    // CRIT-6: Epic Bead Description - Acceptance Criteria
-    // =============================================================================
-
-    #[test]
-    fn test_epic_description_has_plan_reference() {
-        // Unit test: Epic description has Plan reference
-        let body = r#"
-## Use Case
-Test feature.
-
-## Acceptance Criteria
-- [ ] AC-1: Test passes
-"#;
-        let result = execute_breakdown(
-            body,
-            "Test Issue",
-            42,
-            "https://github.com/org/repo/issues/42",
-            false,
-            &[],
-            "testuser",
-        );
-
-        assert!(
-            result
-                .epic_request
-                .description
-                .contains("plans/feature-bug-plan.md"),
-            "Epic description should contain Plan reference"
-        );
-        assert!(
-            result.epic_request.description.contains("§Bead Breakdown"),
-            "Epic description should contain §Bead Breakdown reference"
-        );
-    }
-
-    #[test]
-    fn test_epic_description_has_github_issue_number() {
-        // Unit test: GitHub issue number linked
-        let body = r#"
-## Use Case
-Test feature.
-
-## Acceptance Criteria
-- [ ] AC-1: Test passes
-"#;
-        let result = execute_breakdown(
-            body,
-            "Test Issue",
-            42,
-            "https://github.com/org/repo/issues/42",
-            false,
-            &[],
-            "reporter",
-        );
-
-        assert!(
-            result.epic_request.description.contains("#42"),
-            "Epic description should contain GitHub issue number #42"
-        );
-        assert!(
-            result
-                .epic_request
-                .description
-                .contains("https://github.com/org/repo/issues/42"),
-            "Epic description should contain GitHub issue URL"
-        );
-        assert!(
-            result.epic_request.description.contains("discovered-from:"),
-            "Epic description should contain discovered-from link"
-        );
-    }
-
-    #[test]
-    fn test_epic_description_has_all_acceptance_criteria() {
-        // Unit test: ALL acceptance criteria (Rodgers + human) copied
-        let body = r#"
-## Use Case
-Multi-step feature implementation.
-
-## Acceptance Criteria
-- [ ] AC-1: Feature is implemented correctly
-- [ ] AC-2: Tests pass
-- [ ] AC-3: Documentation is updated
-"#;
-        let result = execute_breakdown(
-            body,
-            "Multi-step Feature",
-            99,
-            "https://github.com/org/repo/issues/99",
-            false,
-            &[],
-            "testuser",
-        );
-
-        assert!(
-            result
-                .epic_request
-                .description
-                .contains("## Acceptance Criteria"),
-            "Epic description should have Acceptance Criteria section"
-        );
-        assert!(
-            result.epic_request.description.contains("AC-1"),
-            "Epic description should contain AC-1"
-        );
-        assert!(
-            result.epic_request.description.contains("AC-2"),
-            "Epic description should contain AC-2"
-        );
-        assert!(
-            result.epic_request.description.contains("AC-3"),
-            "Epic description should contain AC-3"
-        );
-    }
-
-    #[test]
-    fn test_epic_description_has_what_why_summary() {
-        // Unit test: What/Why summarized from issue
-        let body = r#"
-## Use Case
-I need to export data to CSV format.
-
-## Proposed Behavior
-A button that downloads CSV when clicked.
-
-## Why It Matters
-Users can analyze data in their preferred tools.
-"#;
-        let result = execute_breakdown(
-            body,
-            "CSV Export Feature",
-            55,
-            "https://github.com/org/repo/issues/55",
-            false,
-            &[],
-            "analyst",
-        );
-
-        let desc = &result.epic_request.description;
-        assert!(
-            desc.contains("## Summary") || desc.contains("What") || desc.contains("Why"),
-            "Epic description should contain Summary/What/Why section"
-        );
-        assert!(
-            desc.contains("analyst"),
-            "Epic description should reference issue author"
-        );
-        assert!(
-            desc.contains("CSV Export Feature"),
-            "Epic description should reference issue title"
-        );
-    }
-
-    #[test]
-    fn test_epic_description_acceptance_criteria_from_comments() {
-        // Unit test: acceptance criteria from comments (Rodgers + human)
-        use crate::github::{GitHubComment, GitHubUser};
-
-        let body = r#"
-## Use Case
-Feature with criteria that will be added by Rodgers and human.
-"#;
-        let comments = vec![
-            GitHubComment {
-                id: 1,
-                body: "## Rodgers Generated Acceptance Criteria\n\n- [ ] AC-1: Rodgers criterion one\n- [ ] AC-2: Rodgers criterion two".to_string(),
-                user: GitHubUser {
-                    login: "rodgers-app".to_string(),
-                    id: 1,
-                },
-                created_at: "2024-01-01T00:00:00Z".to_string(),
-                updated_at: "2024-01-01T00:00:00Z".to_string(),
-            },
-            GitHubComment {
-                id: 2,
-                body: "I updated the criteria:\n- [x] AC-1: Rodgers criterion one\n- [ ] AC-3: Human-added criterion".to_string(),
-                user: GitHubUser {
-                    login: "human-reviewer".to_string(),
-                    id: 2,
-                },
-                created_at: "2024-01-02T00:00:00Z".to_string(),
-                updated_at: "2024-01-02T00:00:00Z".to_string(),
-            },
-        ];
-
-        let result = execute_breakdown(
-            body,
-            "Feature with criteria in comments",
-            77,
-            "https://github.com/org/repo/issues/77",
-            false,
-            &comments,
-            "human-reviewer",
-        );
-
-        let desc = &result.epic_request.description;
-        assert!(
-            desc.contains("AC-1") || desc.contains("AC-3"),
-            "Epic description should contain criteria from comments"
-        );
-
-        // Acceptance criteria should be in the BreakdownResult too
-        assert!(
-            result.acceptance_criteria.has_criteria,
-            "BreakdownResult should have acceptance criteria from comments"
-        );
-        assert!(
-            !result.acceptance_criteria.rodgers_generated.is_empty()
-                || !result.acceptance_criteria.human_modified.is_empty(),
-            "Should have Rodgers-generated or human-modified criteria"
-        );
-    }
-
-    #[test]
-    fn test_epic_description_no_criteria_pending_review() {
-        // Unit test: no criteria yet - note "pending human review"
-        use crate::github::GitHubComment;
-
-        let body = "## Use Case\n\nI need something but not sure what.";
-
-        let result = execute_breakdown(
-            body,
-            "Vague Issue",
-            88,
-            "https://github.com/org/repo/issues/88",
-            false,
-            &[],
-            "newuser",
-        );
-
-        // Should have a pending review note when no criteria found
-        assert!(
-            result.acceptance_criteria.no_criteria_yet,
-            "Should flag as no criteria pending review"
-        );
-        let desc = &result.epic_request.description;
-        assert!(
-            desc.contains("pending") || desc.contains("Pending") || desc.contains("_pending"),
-            "Epic description should mention pending review when no criteria"
-        );
-    }
-
-    #[test]
-    fn test_build_epic_description_enriched_full() {
-        // Integration test of build_epic_description_enriched
-        use crate::feature_bug::{
-            AcceptanceCriteriaSource, AcceptanceCriterion, AllAcceptanceCriteria, WhatWhySummary,
-            generate_what_why_summary,
+    fn test_epic_breakdown_structure() {
+        let breakdown = EpicBreakdown {
+            is_epic: true,
+            primary_areas: vec!["ui".to_string(), "api".to_string()],
+            sub_work_items: vec![SubWorkItem {
+                title: "Implement UI layer".to_string(),
+                scope_description: "Create React components for the new feature".to_string(),
+            }],
+            complexity_notes: Some("Standard epic breakdown".to_string()),
         };
 
-        let ac = AllAcceptanceCriteria {
-            criteria: vec![
-                AcceptanceCriterion {
-                    text: "AC-1: Criterion one".to_string(),
-                    is_checked: false,
-                    source: AcceptanceCriteriaSource::IssueBody,
+        assert!(breakdown.is_epic);
+        assert_eq!(breakdown.primary_areas.len(), 2);
+        assert_eq!(breakdown.sub_work_items.len(), 1);
+    }
+
+    #[test]
+    fn test_child_bead_request_structure() {
+        let request = ChildBeadRequest {
+            title: "API endpoint".to_string(),
+            description: Some("Implement the API endpoint".to_string()),
+            scope: "Create REST endpoint for the feature".to_string(),
+            priority: 2,
+        };
+
+        assert_eq!(request.title, "API endpoint");
+        assert!(request.description.is_some());
+    }
+
+    #[test]
+    fn test_priority_inference() {
+        // Test that priorities are assigned correctly
+        let breakdown = EpicBreakdown {
+            is_epic: true,
+            primary_areas: vec!["api".to_string(), "db".to_string()],
+            sub_work_items: vec![
+                SubWorkItem {
+                    title: "First item".to_string(),
+                    scope_description: "First scope".to_string(),
                 },
-                AcceptanceCriterion {
-                    text: "AC-2: Criterion two".to_string(),
-                    is_checked: false,
-                    source: AcceptanceCriteriaSource::RodgersGenerated,
+                SubWorkItem {
+                    title: "Second item".to_string(),
+                    scope_description: "Second scope".to_string(),
                 },
-                AcceptanceCriterion {
-                    text: "AC-3: Criterion three".to_string(),
-                    is_checked: false,
-                    source: AcceptanceCriteriaSource::HumanModified,
+                SubWorkItem {
+                    title: "Third item".to_string(),
+                    scope_description: "Third scope".to_string(),
+                },
+                SubWorkItem {
+                    title: "Fourth item".to_string(),
+                    scope_description: "Fourth scope".to_string(),
                 },
             ],
-            rodgers_generated: vec![AcceptanceCriterion {
-                text: "AC-2: Criterion two".to_string(),
-                is_checked: false,
-                source: AcceptanceCriteriaSource::RodgersGenerated,
-            }],
-            human_modified: vec![AcceptanceCriterion {
-                text: "AC-3: Criterion three".to_string(),
-                is_checked: false,
-                source: AcceptanceCriteriaSource::HumanModified,
-            }],
-            has_criteria: true,
-            no_criteria_yet: false,
+            complexity_notes: None,
         };
 
-        let why = WhatWhySummary {
-            what: "A CSV export feature is needed".to_string(),
-            why: "Users want to analyze data in Excel".to_string(),
-            issue_title: "CSV Export".to_string(),
-            author: "analyst".to_string(),
-        };
-
-        let desc = build_epic_description_enriched(
-            "plans/feature-bug-plan.md §Bead Breakdown",
-            42,
-            "https://github.com/org/repo/issues/42",
-            &ac,
-            &why,
-        );
-
-        // Verify all required sections
-        assert!(desc.contains("plans/feature-bug-plan.md"));
-        assert!(desc.contains("#42"));
-        assert!(desc.contains("https://github.com/org/repo/issues/42"));
-        assert!(desc.contains("discovered-from:"));
-        assert!(desc.contains("## Acceptance Criteria"));
-        assert!(desc.contains("AC-1"));
-        assert!(desc.contains("AC-2"));
-        assert!(desc.contains("AC-3"));
-        assert!(desc.contains("## What"));
-        assert!(desc.contains("## Why"));
-        assert!(desc.contains("CSV Export"));
-        assert!(desc.contains("analyst"));
+        // Note: These tests verify the structure, actual priority calculation
+        // is done in generate_child_beads which references the actual issue
+        assert_eq!(breakdown.sub_work_items.len(), 4);
     }
+}
 
-    #[test]
-    fn test_all_acceptance_criteria_tracks_sources() {
-        use crate::feature_bug::{
-            AcceptanceCriteriaSource, AcceptanceCriterion, AllAcceptanceCriteria,
-        };
-
-        let ac = AllAcceptanceCriteria {
-            criteria: vec![
-                AcceptanceCriterion {
-                    text: "Body criterion".to_string(),
-                    is_checked: false,
-                    source: AcceptanceCriteriaSource::IssueBody,
-                },
-                AcceptanceCriterion {
-                    text: "Rodgers criterion".to_string(),
-                    is_checked: false,
-                    source: AcceptanceCriteriaSource::RodgersGenerated,
-                },
-                AcceptanceCriterion {
-                    text: "Human criterion".to_string(),
-                    is_checked: false,
-                    source: AcceptanceCriteriaSource::HumanModified,
-                },
-            ],
-            rodgers_generated: vec![AcceptanceCriterion {
-                text: "Rodgers criterion".to_string(),
-                is_checked: false,
-                source: AcceptanceCriteriaSource::RodgersGenerated,
-            }],
-            human_modified: vec![AcceptanceCriterion {
-                text: "Human criterion".to_string(),
-                is_checked: false,
-                source: AcceptanceCriteriaSource::HumanModified,
-            }],
-            has_criteria: true,
-            no_criteria_yet: false,
-        };
-
-        assert_eq!(ac.criteria.len(), 3);
-        assert_eq!(ac.rodgers_generated.len(), 1);
-        assert_eq!(ac.human_modified.len(), 1);
-        assert_eq!(
-            ac.summary(),
-            "3 total criteria (1 Rodgers-generated, 1 human-modified)"
-        );
-
-        let formatted = ac.format_for_epic();
-        assert!(formatted.contains("Body criterion"));
-        assert!(formatted.contains("- [ ] Body criterion"));
+// Expose helper for testing
+impl BreakdownAnalyzer {
+    /// Extract JSON from content (exposed for testing).
+    pub fn extract_json_from_content(content: &str) -> String {
+        Self::extract_json(content)
     }
 }

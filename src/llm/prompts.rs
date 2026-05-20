@@ -402,6 +402,106 @@ If yes, identify the distinct work areas and break it into sub-items."#,
     }
 }
 
+/// Breakdown prompt for epic analysis.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BreakdownPrompt {
+    /// System prompt for the LLM.
+    pub system_prompt: String,
+    /// User prompt for breakdown analysis.
+    pub user_prompt: String,
+}
+
+impl BreakdownPrompt {
+    /// Create a breakdown prompt for epic-scale detection and child bead generation.
+    pub fn for_epic_breakdown(metadata: &IssueMetadata, domain_context: Option<&str>) -> Self {
+        let system_prompt = Self::breakdown_system_prompt();
+        let user_prompt = Self::breakdown_user_prompt(metadata, domain_context);
+
+        Self {
+            system_prompt,
+            user_prompt,
+        }
+    }
+
+    /// System prompt for epic breakdown.
+    fn breakdown_system_prompt() -> String {
+        r#"You are Rodgers, analyzing whether a GitHub issue represents epic-scale work and generating child bead breakdowns.
+
+CHILD BEAD RULES (from AGENTS.md):
+- Single codebase part: Each bead should touch at most one distinct area (CLI, UI, API, DB, config, docs)
+- No 'and then': Each bead's scope should be describable in a single, non-compound sentence
+- Standalone: A naive but competent junior developer could implement it without consulting other beads
+- One acceptance criterion or cohesive concern per child bead
+
+EPIC-SCALE INDICATORS:
+1. Work spans multiple areas of the project (e.g., "UI and API", "backend and docs")
+2. Description contains sequential logic: "Do X, then Y, then Z" that maps to multiple sub-tasks
+3. The issue discusses multiple distinct concerns that could be split
+4. Complexity suggests parallel workstreams could speed up implementation
+
+OUTPUT FORMAT:
+Respond with valid JSON (no markdown code blocks) with these fields:
+- primary_areas: array of strings (distinct work areas: ui, api, backend, database, cli, docs, config)
+- sub_work_items: array of objects with:
+  - title: string (concise title for the child bead)
+  - scope_description: string (detailed description of what this child bead covers, following standalone bead rules)
+- complexity_notes: string (optional notes about the breakdown and dependencies)
+
+IMPORTANT:
+- Generate at least 2 child beads for epic work
+- Each child bead should be independently implementable
+- Focus on distinct codebase areas as child bead scopes
+- Consider AGENTS.md standalone rules: complete, self-contained descriptions"#
+            .to_string()
+    }
+
+    /// User prompt for breakdown analysis.
+    fn breakdown_user_prompt(metadata: &IssueMetadata, domain_context: Option<&str>) -> String {
+        let mut prompt = String::new();
+
+        if let Some(ctx) = domain_context {
+            prompt.push_str(&format!("## Project Context\n{}\n\n", ctx));
+        }
+
+        prompt.push_str(&format!(
+            "## Issue to Analyze\n#{}. {}\n\n",
+            metadata.number, metadata.title
+        ));
+
+        if let Some(ref body) = metadata.body {
+            prompt.push_str("### Body\n");
+            prompt.push_str(body);
+            prompt.push_str("\n\n");
+        }
+
+        if !metadata.labels.is_empty() {
+            prompt.push_str(&format!(
+                "### Existing Labels\n{}\n\n",
+                metadata.labels.join(", ")
+            ));
+        }
+
+        if !metadata.prior_comments.is_empty() {
+            prompt.push_str("### Discussion\n");
+            for comment in &metadata.prior_comments {
+                prompt.push_str(&format!("- {}\n", comment));
+            }
+        }
+
+        prompt.push_str(
+            r#"
+Analyze this issue for epic-scale work:
+1. Is this epic-scale (multi-area or sequential work)?
+2. What distinct work areas are involved?
+3. Break down into standalone child beads following AGENTS.md rules.
+
+Consider the project structure and how work could be parallelized."#,
+        );
+
+        prompt
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,6 +581,26 @@ mod tests {
 
         assert!(prompt.system_prompt.contains("epic"));
         assert!(prompt.user_prompt.contains("456"));
+    }
+
+    #[test]
+    fn test_breakdown_prompt() {
+        let metadata = create_test_metadata();
+        let prompt = BreakdownPrompt::for_epic_breakdown(&metadata, None);
+
+        assert!(prompt.system_prompt.contains("CHILD BEAD"));
+        assert!(prompt.system_prompt.contains("epic-scale"));
+        assert!(prompt.user_prompt.contains("Issue to Analyze"));
+    }
+
+    #[test]
+    fn test_breakdown_prompt_with_context() {
+        let metadata = create_test_metadata();
+        let context = "This project has: cli/, backend/, frontend/, docs/ directories.";
+        let prompt = BreakdownPrompt::for_epic_breakdown(&metadata, Some(context));
+
+        assert!(prompt.user_prompt.contains("cli/"));
+        assert!(prompt.user_prompt.contains("backend/"));
     }
 
     #[test]
