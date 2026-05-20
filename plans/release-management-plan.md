@@ -116,11 +116,12 @@ Rodgers detects release readiness
 When approved, Rodgers:
 
 1. Creates a branch `release/X.Y.Z` from the source branch (main or release branch)
-2. Files a `chore` bead (`rodgers:type=release`) describing all remaining release work: building artifacts, running final tests, tagging, creating the GitHub Release
-3. Posts a comment on the original proposal Discussion: "Release {X.Y.Z} branch created. Release bead filed for tracking. [Link to branch]"
-4. Closes the proposal Discussion
+2. Files a `chore` bead (`rodgers:type=release`) describing the build, test, tag, and GitHub Release creation work
+3. Creates the git tag `X.Y.Z` and the GitHub Release (APIs, no artifact generation)
+4. Posts a comment on the original proposal Discussion: "Release {X.Y.Z} branch created, tag created, GitHub Release created. Artifact build via CI. [Link to release]"
+5. Closes the proposal Discussion
 
-Rodgers does not build artifacts, run tests, create tags, or create GitHub Releases. These are tracked in the bead for actors outside Rodgers.
+Rodgers does not run the CI build that produces release artifacts. It creates the tag and GitHub Release entry. CI generates the artifacts.
 
 ---
 
@@ -132,7 +133,7 @@ Rodgers does not build artifacts, run tests, create tags, or create GitHub Relea
 4. Human approves with 👍
 5. Rodgers creates release branch + files release bead
 6. Rodgers notifies via Discussion
-7. Actors outside Rodgers do the build/test/tag/release
+7. Actors outside Rodgers do: build release artifacts (CI), run final verification, create the git tag, create the GitHub Release (Rodgers can do the git tag and GitHub Release APIs, but the artifact build is CI)
 
 ---
 
