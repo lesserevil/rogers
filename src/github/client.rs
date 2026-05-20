@@ -156,9 +156,7 @@ impl GitHubClient {
             self.api_base, owner, repo, issue_number
         );
 
-        let response = self
-            .fetch_json_raw(&url)
-            .await?;
+        let response = self.fetch_json_raw(&url).await?;
 
         let status = response.status();
         if status.as_u16() == 404 {
@@ -503,7 +501,8 @@ mod tests {
     // Backward compatibility tests
     #[test]
     fn test_parse_issue_url() {
-        let result = GitHubClient::parse_issue_url("https://github.com/test-owner/test-repo/issues/42");
+        let result =
+            GitHubClient::parse_issue_url("https://github.com/test-owner/test-repo/issues/42");
         assert_eq!(result, Some(("test-owner".into(), "test-repo".into(), 42)));
     }
 

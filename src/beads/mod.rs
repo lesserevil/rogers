@@ -84,7 +84,10 @@ impl BeadsClient {
     }
 
     /// Fetch beads by status (placeholder)
-    pub async fn get_beads_by_status(&self, _status: BeadStatusCompat) -> crate::error::Result<Vec<Bead>> {
+    pub async fn get_beads_by_status(
+        &self,
+        _status: BeadStatusCompat,
+    ) -> crate::error::Result<Vec<Bead>> {
         Ok(Vec::new())
     }
 
