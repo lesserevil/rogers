@@ -5,13 +5,16 @@
 //!
 //! - Completeness verification (see `completeness` module)
 //! - Will-not-do handling (see `will_not_do` module)
+//! - Breakdown for ready-for-work (see `breakdown` module)
 //! - Transition to ready-for-review when complete
 //! - Application of needs-information when incomplete
 //! - Generating summary comments and acceptance criteria
 
+mod breakdown;
 mod completeness;
 pub mod will_not_do;
 
+pub use breakdown::{BreakdownResult, analyze_epic_scale, execute_breakdown};
 pub use completeness::{
     CompletenessCheckResult, check_bug_completeness, check_feature_completeness,
 };

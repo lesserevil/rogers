@@ -135,7 +135,65 @@ Issue details:
 Respond with ONLY the comment text (no preamble or explanation).
 "#;
 
-/// Result from LLM field extraction for bug reports.
+/// Prompt for analyzing whether an issue requires epic-scale breakdown.
+///
+/// Epic-scale issues span multiple codebase areas or have sequential dependencies,
+/// requiring breakdown into an epic bead + child beads. Standard work can be
+/// handled as a single epic bead.
+///
+/// Epic-scale indicators:
+/// - Multiple distinct codebase areas (CLI, API, DB, UI, config)
+/// - Sequential dependencies ("and then...", step 1, step 2, etc.)
+/// - Multiple logically distinct acceptance criteria groups
+pub const EPIC_SCALE_ANALYSIS_PROMPT: &str = r#"You are analyzing a GitHub issue to determine whether it requires epic-scale breakdown.
+
+An issue is epic-scale when it involves:
+1. **Multiple codebase areas** - CLI, UI, API, database, configuration, auth, etc.
+2. **Sequential dependencies** - work that must be done in phases, "and then..." patterns
+3. **Multiple distinct units** - different logical concerns that could be worked on separately
+
+Standard (single epic) issues:
+- Describe work in one codebase area
+- Can be described without "and then"
+- One logical unit of acceptance criteria
+
+Analyze the issue and respond with a JSON object:
+{"is_epic_scale": true/false, "reasons": [...], "child_beads": [{"title": "...", "description": "..."}]}
+
+If is_epic_scale is true, provide one child_beads entry per distinct unit of work.
+Each child_beads title should indicate the codebase area it touches.
+Do NOT provide more than 5 child beads - group if needed.
+
+Issue content:
+{issue_content}
+"#;
+
+/// Prompt for breaking down an epic-scale issue into child bead specifications.
+///
+/// Given an issue determined to be epic-scale, generate specific child bead
+/// titles and descriptions following the two rules:
+/// 1. **Single codebase part** - One entry per area (CLI, API, DB, UI, config)
+/// 2. **No "...and then..." scope** - Each bead fits in one non-compound sentence
+pub const EPIC_BREAKDOWN_PROMPT: &str = r#"You are breaking down an epic-scale GitHub issue into child bead specifications.
+
+Each child bead must follow two rules:
+1. **Single codebase part.** Touches at most one distinct area: CLI, UI, API, database, config, auth, etc.
+2. **No "...and then..." scope.** Description fits in one non-compound sentence. If it naturally continues with "and then...", split into separate beads.
+
+Generate child bead specifications as a JSON array:
+[
+  {"title": "Area: Short description of this unit", "description": "Concrete scope: what this bead does specifically", "priority": 2}
+]
+
+Maximum 5 child beads. Priority: 0=critical, 1=high, 2=medium, 3=low.
+Group related work into a single bead rather than splitting finely.
+
+Issue title: {issue_title}
+Issue body: {issue_body}
+
+Respond with ONLY the JSON array, no preamble.
+"#;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BugFieldExtraction {
     /// Whether behavior observed is present

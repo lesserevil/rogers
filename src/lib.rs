@@ -10,6 +10,7 @@
 //!   - `completeness` - Completeness verification for bug/feature issues
 //! - `triage` - Triage loop processing
 
+pub mod beads;
 pub mod error;
 pub mod feature_bug;
 pub mod labels;
