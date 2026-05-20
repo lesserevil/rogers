@@ -62,6 +62,6 @@ pub enum Commands {
 
 impl Cli {
     pub fn parse() -> Self {
-        Self::parse_from_env_or_exit()
+        <Self as clap::Parser>::parse()
     }
 }
