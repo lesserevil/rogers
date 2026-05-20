@@ -2,4 +2,4 @@
 
 pub mod client;
 
-pub use client::BeadClient;
+pub use client::{BeadClient, BeadResult};

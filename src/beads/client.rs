@@ -23,6 +23,8 @@ pub struct BeadClient {
     parent_id: Option<String>,
     priority: Option<u8>,
     assignee: Option<String>,
+    deps: Vec<String>,
+    external_ref: Option<String>,
 }
 
 impl BeadClient {
@@ -64,6 +66,20 @@ impl BeadClient {
 
     pub fn with_assignee(mut self, assignee: &str) -> Self {
         self.assignee = Some(assignee.to_string());
+        self
+    }
+
+    /// Add a dependency for the bead (e.g. "discovered-from:#42").
+    ///
+    /// May be called multiple times to add multiple dependencies.
+    pub fn with_deps(mut self, deps: &str) -> Self {
+        self.deps.push(deps.to_string());
+        self
+    }
+
+    /// Set an external reference (e.g. "gh-42" for GitHub PR #42).
+    pub fn with_external_ref(mut self, external_ref: &str) -> Self {
+        self.external_ref = Some(external_ref.to_string());
         self
     }
 
@@ -155,6 +171,16 @@ fn build_bd_create_args(client: &BeadClient) -> Vec<String> {
     if let Some(ref assignee) = client.assignee {
         args.push("--assignee".to_string());
         args.push(assignee.clone());
+    }
+
+    if !client.deps.is_empty() {
+        args.push("--deps".to_string());
+        args.push(client.deps.join(","));
+    }
+
+    if let Some(ref external_ref) = client.external_ref {
+        args.push("--external-ref".to_string());
+        args.push(external_ref.clone());
     }
 
     args

@@ -165,6 +165,68 @@ impl GithubClient {
             Err(e) => Err(e),
         }
     }
+
+    // ---------------------------------------------------------------------------
+    // Discussions
+    // ---------------------------------------------------------------------------
+
+    /// Create a GitHub Discussion for backport approval.
+    ///
+    /// Uses the category configured in `config.release.approval_discussion_category`.
+    /// The discussion body is the approval prompt; reactions (👍/👎) are the vote.
+    ///
+    /// Returns the URL to the created discussion.
+    pub async fn create_discussion(
+        &self,
+        category_id: &str,
+        title: &str,
+        body: &str,
+    ) -> Result<Discussion, RogersError> {
+        #[derive(Serialize)]
+        struct CreateDiscussionRequest {
+            category_id: String,
+            title: String,
+            body: String,
+        }
+
+        #[derive(Deserialize)]
+        struct DiscussionWrapper {
+            #[serde(flatten)]
+            inner: Discussion,
+        }
+
+        let path = "/discussions";
+        let request = CreateDiscussionRequest {
+            category_id: category_id.to_string(),
+            title: title.to_string(),
+            body: body.to_string(),
+        };
+
+        let url = format!("{}{}", self.base_url(), path);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", &self.auth_header())
+            .header("Accept", "application/vnd.github+json")
+            .json(&request)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let code = resp.status().as_u16();
+            let message = resp.text().await.unwrap_or_default();
+            return Err(RogersError::GitHubStatus { code, message });
+        }
+
+        let wrapper: DiscussionWrapper = resp.json().await.map_err(RogersError::GitHub)?;
+        Ok(wrapper.inner)
+    }
+
+    /// List discussion categories to find the category ID by name.
+    pub async fn discussion_categories(&self) -> Result<Vec<DiscussionCategory>, RogersError> {
+        let path = "/discussions/categories";
+        self.get_paginated(path).await
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -233,4 +295,26 @@ pub struct GithubBranch {
     pub name: String,
     pub sha: String,
     pub protected: bool,
+}
+
+/// A GitHub Discussion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Discussion {
+    pub id: u64,
+    pub number: u64,
+    pub title: String,
+    pub body: Option<String>,
+    pub url: String,
+    pub html_url: String,
+    pub category: DiscussionCategory,
+}
+
+/// A GitHub Discussion category.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscussionCategory {
+    pub id: u64,
+    pub name: String,
+    pub slug: String,
 }

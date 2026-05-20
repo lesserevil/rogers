@@ -60,9 +60,16 @@ pub async fn run_triage(
         );
     }
 
-    // Step 4: Delegate to backport manager
-    let backport_results =
-        crate::backport::manager::process_candidates(&candidates, &active_branches).await?;
+    // Step 4: Delegate to backport manager (passing github client + discussion category
+    // for creating approval discussions per backport bead)
+    let discussion_category = &config.release.approval_discussion_category;
+    let backport_results = crate::backport::manager::process_candidates(
+        &candidates,
+        &active_branches,
+        github,
+        discussion_category,
+    )
+    .await?;
 
     let result = TriageResult {
         merged_prs_count,
