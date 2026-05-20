@@ -11,11 +11,11 @@
 //! - Failed migrations roll back and return errors
 //! - Dolt auto-commit is enabled by default for audit trail
 
-use crate::error::{Result, RogersError};
 use crate::beads::client::BeadsClient;
 use crate::beads::schema::{
     CREATE_CHILDREN_SQL, CREATE_EPICS_SQL, CREATE_STATE_SQL, SCHEMA_VERSION,
 };
+use crate::error::{Result, RogersError};
 
 /// Migration entry point representation.
 #[derive(Debug)]
@@ -30,17 +30,11 @@ pub struct Migration {
 
 /// Get all migrations in order.
 pub fn get_migrations() -> Vec<Migration> {
-    vec![
-        Migration {
-            version: 1,
-            description: "Create initial Rodgers schema tables (epics, children, state)",
-            statements: vec![
-                CREATE_EPICS_SQL,
-                CREATE_CHILDREN_SQL,
-                CREATE_STATE_SQL,
-            ],
-        },
-    ]
+    vec![Migration {
+        version: 1,
+        description: "Create initial Rodgers schema tables (epics, children, state)",
+        statements: vec![CREATE_EPICS_SQL, CREATE_CHILDREN_SQL, CREATE_STATE_SQL],
+    }]
 }
 
 /// Run all pending migrations.
@@ -84,15 +78,14 @@ pub fn run_migrations(client: &BeadsClient) -> Result<Vec<i32>> {
 
 /// Get the current schema version from the database.
 fn get_current_schema_version(client: &BeadsClient) -> Result<i32> {
-    let result = client.query(
-        "SELECT value FROM rodgers_state WHERE key = 'schema.version'",
-    );
+    let result = client.query("SELECT value FROM rodgers_state WHERE key = 'schema.version'");
 
     match result {
         Ok(rows) => {
             if let Some(row) = rows.first() {
                 if let Some(value) = row.get("value") {
-                    return value
+                    let version_str = value.as_str().unwrap_or("");
+                    return version_str
                         .parse::<i32>()
                         .map_err(|e| RogersError::Beads(format!("Invalid schema version: {}", e)));
                 }
@@ -185,7 +178,11 @@ fn verify_table_columns(
         Ok(rows) => {
             let columns: Vec<String> = rows
                 .iter()
-                .filter_map(|row| row.get("Field").or(row.get("field")))
+                .filter_map(|row| {
+                    row.get("Field")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
                 .collect();
 
             for col in required_columns {

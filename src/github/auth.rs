@@ -62,7 +62,6 @@ impl GitHubAuth {
         }
 
         // GitHub PATs are typically in format: ghp_*, gho_*, ghu_*, ghs_*, ghr_*
-        // Fine-grained tokens start with gho_ or ghp_
         // Classic tokens: ghp_ (personal access tokens)
         // OAuth: gho_ (OAuth access tokens)
         // GitHub App: ghu_ (GitHub App user-to-server tokens)
@@ -73,17 +72,28 @@ impl GitHubAuth {
             .iter()
             .any(|prefix| self.token.starts_with(prefix));
 
-        // Also accept any bearer token (for GitHub Enterprise with different formats)
-        if !has_valid_prefix {
-            // Check if it looks like a bearer token (alphanumeric string of reasonable length)
-            if self.token.len() >= 20 && self.token.chars().all(|c| c.is_alphanumeric()) {
-                // Treat as valid bearer token
+        if has_valid_prefix {
+            // For prefixed tokens, require at least some minimum length after prefix
+            // GitHub PATs are typically 40+ characters total
+            let prefix_len = valid_prefixes
+                .iter()
+                .find(|prefix| self.token.starts_with(*prefix))
+                .map(|p| p.len())
+                .unwrap_or(0);
+            let remaining_len = self.token.len() - prefix_len;
+            if remaining_len >= 16 {
+                // Minimum 16 chars after prefix (total >= 20)
                 return Ok(());
             }
             return Err(AuthError::InvalidTokenFormat);
         }
 
-        Ok(())
+        // Also accept any bearer token (alphanumeric string of reasonable length)
+        if self.token.len() >= 20 && self.token.chars().all(|c| c.is_alphanumeric()) {
+            return Ok(());
+        }
+
+        Err(AuthError::InvalidTokenFormat)
     }
 
     /// Create an Authorization header value.
@@ -106,7 +116,7 @@ impl GitHubAuth {
 
 impl From<&crate::config::GitHubConfig> for GitHubAuth {
     fn from(config: &crate::config::GitHubConfig) -> Self {
-        GitHubAuth::new(&config.token, config.api_url.as_ref())
+        GitHubAuth::new(&config.token, config.api_url.as_deref().unwrap_or_default())
     }
 }
 
@@ -188,8 +198,7 @@ impl AuthError {
     pub fn is_retryable(&self) -> bool {
         matches!(
             self,
-            AuthError::InsufficientPermissions { .. }
-                | AuthError::MissingRequiredScopes { .. }
+            AuthError::InsufficientPermissions { .. } | AuthError::MissingRequiredScopes { .. }
         )
     }
 }
@@ -200,33 +209,33 @@ mod tests {
 
     #[test]
     fn test_new_auth() {
-        let auth = GitHubAuth::new("ghp_test123", None);
+        let auth = GitHubAuth::new_with_default_api("ghp_test123");
         assert_eq!(auth.token(), "ghp_test123");
         assert_eq!(auth.api_url(), "https://api.github.com");
     }
 
     #[test]
     fn test_new_auth_with_api_url() {
-        let auth = GitHubAuth::new("ghp_test123", Some("https://github.example.com/api/v3"));
+        let auth = GitHubAuth::new("ghp_test123", "https://github.example.com/api/v3");
         assert_eq!(auth.api_url(), "https://github.example.com/api/v3");
     }
 
     #[test]
     fn test_auth_header() {
-        let auth = GitHubAuth::new("ghp_test123", None);
+        let auth = GitHubAuth::new_with_default_api("ghp_test123");
         assert_eq!(auth.auth_header(), "Bearer ghp_test123");
     }
 
     #[test]
     fn test_auth_headers() {
-        let auth = GitHubAuth::new("ghp_test123", None);
+        let auth = GitHubAuth::new_with_default_api("ghp_test123");
         let headers = auth.auth_headers();
         assert!(headers.contains_key(reqwest::header::AUTHORIZATION));
     }
 
     #[test]
     fn test_validate_empty_token() {
-        let auth = GitHubAuth::new("", None);
+        let auth = GitHubAuth::new_with_default_api("");
         let result = auth.validate_token();
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AuthError::EmptyToken));
@@ -234,7 +243,7 @@ mod tests {
 
     #[test]
     fn test_validate_whitespace_token() {
-        let auth = GitHubAuth::new("   ", None);
+        let auth = GitHubAuth::new_with_default_api("   ");
         let result = auth.validate_token();
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AuthError::EmptyToken));
@@ -242,37 +251,37 @@ mod tests {
 
     #[test]
     fn test_validate_valid_classic_pat() {
-        let auth = GitHubAuth::new("ghp_abcdefghijklmnopqrstuvwxyz1234567890", None);
+        let auth = GitHubAuth::new_with_default_api("ghp_abcdefghijklmnopqrstuvwxyz1234567890");
         assert!(auth.validate_token().is_ok());
     }
 
     #[test]
     fn test_validate_valid_oauth_token() {
-        let auth = GitHubAuth::new("gho_abcdefghijklmnopqrstuvwxyz1234567890", None);
+        let auth = GitHubAuth::new_with_default_api("gho_abcdefghijklmnopqrstuvwxyz1234567890");
         assert!(auth.validate_token().is_ok());
     }
 
     #[test]
     fn test_validate_valid_github_app_user_token() {
-        let auth = GitHubAuth::new("ghu_abcdefghijklmnopqrstuvwxyz1234567890", None);
+        let auth = GitHubAuth::new_with_default_api("ghu_abcdefghijklmnopqrstuvwxyz1234567890");
         assert!(auth.validate_token().is_ok());
     }
 
     #[test]
     fn test_validate_valid_github_app_server_token() {
-        let auth = GitHubAuth::new("ghs_abcdefghijklmnopqrstuvwxyz1234567890", None);
+        let auth = GitHubAuth::new_with_default_api("ghs_abcdefghijklmnopqrstuvwxyz1234567890");
         assert!(auth.validate_token().is_ok());
     }
 
     #[test]
     fn test_validate_valid_github_app_refresh_token() {
-        let auth = GitHubAuth::new("ghr_abcdefghijklmnopqrstuvwxyz1234567890", None);
+        let auth = GitHubAuth::new_with_default_api("ghr_abcdefghijklmnopqrstuvwxyz1234567890");
         assert!(auth.validate_token().is_ok());
     }
 
     #[test]
     fn test_validate_invalid_short_token() {
-        let auth = GitHubAuth::new("ghp_short", None);
+        let auth = GitHubAuth::new_with_default_api("ghp_short");
         let result = auth.validate_token();
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), AuthError::InvalidTokenFormat));
@@ -281,7 +290,7 @@ mod tests {
     #[test]
     fn test_validate_generic_bearer_token() {
         // Accept any 20+ char alphanumeric token as a bearer token
-        let auth = GitHubAuth::new("abcdefghijklmnopqrstuvwxyz1234567890", None);
+        let auth = GitHubAuth::new_with_default_api("abcdefghijklmnopqrstuvwxyz1234567890");
         assert!(auth.validate_token().is_ok());
     }
 

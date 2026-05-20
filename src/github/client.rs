@@ -6,10 +6,10 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+use crate::error::{Result, RogersError};
 use crate::github::auth::{AuthError, GitHubAuth};
 use crate::github::models::*;
 use crate::github::rate_limit::RateLimitHandler;
-use crate::error::{Result, RogersError};
 
 /// Figuratively "GitHub" but shorter for the module namespace.
 type GhResult<T> = Result<T>;
@@ -31,11 +31,7 @@ pub struct GitHubClient {
 
 impl GitHubClient {
     /// Create a new GitHubClient from configuration.
-    pub fn new(
-        owner: impl Into<String>,
-        repo: impl Into<String>,
-        auth: GitHubAuth,
-    ) -> Self {
+    pub fn new(owner: impl Into<String>, repo: impl Into<String>, auth: GitHubAuth) -> Self {
         let client = Client::builder()
             .user_agent("Rodgers/0.1.0 (GitHub-native community relations agent)")
             .build()
@@ -86,7 +82,10 @@ impl GitHubClient {
     }
 
     /// Execute a request and handle rate limiting with retry.
-    async fn execute<T: for<'de> Deserialize<'de>>(&mut self, request: reqwest::RequestBuilder) -> GhResult<T> {
+    async fn execute<T: for<'de> Deserialize<'de>>(
+        &mut self,
+        request: reqwest::RequestBuilder,
+    ) -> GhResult<T> {
         let mut attempts = 0u32;
         let max_retries = self.rate_limit.max_retries();
 
@@ -130,7 +129,10 @@ impl GitHubClient {
                 }
                 return Err(RogersError::GitHubStatus {
                     code: status.as_u16(),
-                    message: format!("Authorization failed: {}", status.canonical_reason().unwrap_or("Unknown")),
+                    message: format!(
+                        "Authorization failed: {}",
+                        status.canonical_reason().unwrap_or("Unknown")
+                    ),
                 });
             }
 
@@ -181,9 +183,7 @@ impl GitHubClient {
     /// Get an issue by number.
     pub async fn get_issue(&mut self, number: i32) -> GhResult<Issue> {
         let url = self.repo_url(&format!("/issues/{}", number));
-        let request = self.client
-            .get(&url)
-            .headers(self.auth.auth_headers());
+        let request = self.client.get(&url).headers(self.auth.auth_headers());
         self.execute(request).await
     }
 
@@ -221,16 +221,15 @@ impl GitHubClient {
             url = format!("{}?{}", url, params.join("&"));
         }
 
-        let request = self.client
-            .get(&url)
-            .headers(self.auth.auth_headers());
+        let request = self.client.get(&url).headers(self.auth.auth_headers());
         self.execute::<Vec<Issue>>(request).await
     }
 
     /// Create a new issue.
     pub async fn create_issue(&mut self, req: CreateIssueRequest) -> GhResult<Issue> {
         let url = self.repo_url("/issues");
-        let request = self.client
+        let request = self
+            .client
             .post(&url)
             .headers(self.auth.auth_headers())
             .json(&req);
@@ -240,7 +239,8 @@ impl GitHubClient {
     /// Update an existing issue.
     pub async fn update_issue(&mut self, number: i32, req: UpdateIssueRequest) -> GhResult<Issue> {
         let url = self.repo_url(&format!("/issues/{}", number));
-        let request = self.client
+        let request = self
+            .client
             .patch(&url)
             .headers(self.auth.auth_headers())
             .json(&req);
@@ -250,9 +250,7 @@ impl GitHubClient {
     /// Get comments on an issue.
     pub async fn get_issue_comments(&mut self, number: i32) -> GhResult<Vec<Comment>> {
         let url = self.repo_url(&format!("/issues/{}/comments", number));
-        let request = self.client
-            .get(&url)
-            .headers(self.auth.auth_headers());
+        let request = self.client.get(&url).headers(self.auth.auth_headers());
         self.execute(request).await
     }
 
@@ -261,7 +259,8 @@ impl GitHubClient {
         use serde_json::json;
 
         let url = self.repo_url(&format!("/issues/{}/comments", number));
-        let request = self.client
+        let request = self
+            .client
             .post(&url)
             .headers(self.auth.auth_headers())
             .json(&json!({ "body": body }));
@@ -273,9 +272,7 @@ impl GitHubClient {
     /// Get a pull request by number.
     pub async fn get_pull_request(&mut self, number: i32) -> GhResult<PullRequest> {
         let url = self.repo_url(&format!("/pulls/{}", number));
-        let request = self.client
-            .get(&url)
-            .headers(self.auth.auth_headers());
+        let request = self.client.get(&url).headers(self.auth.auth_headers());
         self.execute(request).await
     }
 
@@ -303,9 +300,7 @@ impl GitHubClient {
             url = format!("{}?{}", url, params.join("&"));
         }
 
-        let request = self.client
-            .get(&url)
-            .headers(self.auth.auth_headers());
+        let request = self.client.get(&url).headers(self.auth.auth_headers());
         self.execute::<Vec<PullRequest>>(request).await
     }
 
@@ -314,18 +309,14 @@ impl GitHubClient {
     /// Get all labels for the repository.
     pub async fn list_labels(&mut self) -> GhResult<Vec<Label>> {
         let url = self.repo_url("/labels");
-        let request = self.client
-            .get(&url)
-            .headers(self.auth.auth_headers());
+        let request = self.client.get(&url).headers(self.auth.auth_headers());
         self.execute(request).await
     }
 
     /// Get a label by name.
     pub async fn get_label(&mut self, name: &str) -> GhResult<Label> {
         let url = self.repo_url(&format!("/labels/{}", name));
-        let request = self.client
-            .get(&url)
-            .headers(self.auth.auth_headers());
+        let request = self.client.get(&url).headers(self.auth.auth_headers());
         self.execute(request).await
     }
 
@@ -336,7 +327,8 @@ impl GitHubClient {
         labels: Vec<&str>,
     ) -> GhResult<Vec<Label>> {
         let url = self.repo_url(&format!("/issues/{}/labels", issue_number));
-        let request = self.client
+        let request = self
+            .client
             .post(&url)
             .headers(self.auth.auth_headers())
             .json(&serde_json::json!({ "labels": labels }));
@@ -350,9 +342,7 @@ impl GitHubClient {
         label_name: &str,
     ) -> GhResult<()> {
         let url = self.repo_url(&format!("/issues/{}/labels/{}", issue_number, label_name));
-        let request = self.client
-            .delete(&url)
-            .headers(self.auth.auth_headers());
+        let request = self.client.delete(&url).headers(self.auth.auth_headers());
         let _: serde_json::Value = self.execute(request).await?;
         Ok(())
     }
@@ -364,7 +354,8 @@ impl GitHubClient {
         labels: Vec<&str>,
     ) -> GhResult<Vec<Label>> {
         let url = self.repo_url(&format!("/issues/{}/labels", issue_number));
-        let request = self.client
+        let request = self
+            .client
             .put(&url)
             .headers(self.auth.auth_headers())
             .json(&serde_json::json!({ "labels": labels }));
@@ -376,9 +367,7 @@ impl GitHubClient {
     /// Get a release by tag name or ID.
     pub async fn get_release(&mut self, tag: &str) -> GhResult<Release> {
         let url = self.repo_url(&format!("/releases/tags/{}", tag));
-        let request = self.client
-            .get(&url)
-            .headers(self.auth.auth_headers());
+        let request = self.client.get(&url).headers(self.auth.auth_headers());
         self.execute(request).await
     }
 
@@ -402,9 +391,7 @@ impl GitHubClient {
             url = format!("{}?{}", url, params.join("&"));
         }
 
-        let request = self.client
-            .get(&url)
-            .headers(self.auth.auth_headers());
+        let request = self.client.get(&url).headers(self.auth.auth_headers());
         self.execute::<Vec<Release>>(request).await
     }
 
@@ -421,7 +408,8 @@ impl GitHubClient {
         use serde_json::json;
 
         let url = self.repo_url("/releases");
-        let request = self.client
+        let request = self
+            .client
             .post(&url)
             .headers(self.auth.auth_headers())
             .json(&json!({
@@ -440,9 +428,7 @@ impl GitHubClient {
     /// Get current rate limit status.
     pub async fn get_rate_limit(&mut self) -> GhResult<RateLimitResponse> {
         let url = self.api_url("/rate_limit");
-        let request = self.client
-            .get(&url)
-            .headers(self.auth.auth_headers());
+        let request = self.client.get(&url).headers(self.auth.auth_headers());
         let response: RateLimitResponse = self.execute(request).await?;
 
         // Update our handler with the latest info
@@ -466,12 +452,10 @@ impl GitHubClient {
             variables: Option<Q>,
         }
 
-        let request_body = GraphQLRequest {
-            query,
-            variables,
-        };
+        let request_body = GraphQLRequest { query, variables };
 
-        let request = self.client
+        let request = self
+            .client
             .post(&self.graphql_url())
             .headers(self.auth.auth_headers())
             .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -558,18 +542,24 @@ impl GitHubClient {
             after: after.map(String::from),
         };
 
-        let response: GraphQLResponse<RepositoryDiscussions> = self.graphql(query, Some(variables)).await?;
+        let response: GraphQLResponse<RepositoryDiscussions> =
+            self.graphql(query, Some(variables)).await?;
 
         if let Some(errors) = response.errors {
             if !errors.is_empty() {
                 return Err(RogersError::GitHubStatus {
                     code: 400,
-                    message: errors.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("; "),
+                    message: errors
+                        .iter()
+                        .map(|e| e.message.clone())
+                        .collect::<Vec<_>>()
+                        .join("; "),
                 });
             }
         }
 
-        response.data
+        response
+            .data
             .map(|d| {
                 let conn = d.repository.discussions;
                 DiscussionsResponse {
@@ -639,18 +629,24 @@ impl GitHubClient {
             discussion: Discussion,
         }
 
-        let response: GraphQLResponse<CreateDiscussionResponse> = self.graphql(mutation, Some(variables)).await?;
+        let response: GraphQLResponse<CreateDiscussionResponse> =
+            self.graphql(mutation, Some(variables)).await?;
 
         if let Some(errors) = response.errors {
             if !errors.is_empty() {
                 return Err(RogersError::GitHubStatus {
                     code: 400,
-                    message: errors.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("; "),
+                    message: errors
+                        .iter()
+                        .map(|e| e.message.clone())
+                        .collect::<Vec<_>>()
+                        .join("; "),
                 });
             }
         }
 
-        response.data
+        response
+            .data
             .map(|d| d.create_discussion.discussion)
             .ok_or_else(|| RogersError::GitHubStatus {
                 code: 200,
@@ -691,7 +687,8 @@ impl GitHubClient {
 
         let response: GraphQLResponse<RepoResponse> = self.graphql(query, Some(variables)).await?;
 
-        response.data
+        response
+            .data
             .map(|d| d.repository.id)
             .ok_or_else(|| RogersError::GitHubStatus {
                 code: 200,
@@ -757,8 +754,10 @@ pub struct DiscussionsResponse {
 mod tests {
     use super::*;
 
+    const TEST_TOKEN: &str = "ghp_test_token_1234567890";
+
     fn create_test_client() -> GitHubClient {
-        let auth = GitHubAuth::new("ghp_test_token_1234567890", None);
+        let auth = GitHubAuth::new_with_default_api(TEST_TOKEN);
         GitHubClient::new("test-owner", "test-repo", auth)
     }
 
@@ -772,19 +771,13 @@ mod tests {
     #[test]
     fn test_api_url() {
         let client = create_test_client();
-        assert_eq!(
-            client.api_url("/test"),
-            "https://api.github.com/test"
-        );
+        assert_eq!(client.api_url("/test"), "https://api.github.com/test");
     }
 
     #[test]
     fn test_graphql_url() {
         let client = create_test_client();
-        assert_eq!(
-            client.graphql_url(),
-            "https://api.github.com/graphql"
-        );
+        assert_eq!(client.graphql_url(), "https://api.github.com/graphql");
     }
 
     #[test]
@@ -807,7 +800,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_client_validates_auth_on_creation() {
-        let auth = GitHubAuth::new("ghp_test_token_1234567890", None);
+        let auth = GitHubAuth::new_with_default_api(TEST_TOKEN);
         let client = GitHubClient::new("test-owner", "test-repo", auth);
 
         // Auth is valid at creation time

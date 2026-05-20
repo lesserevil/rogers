@@ -23,19 +23,19 @@ pub struct Config {
 /// is left unchanged (allowing config files to be shared with documentation).
 pub fn interpolate_env_var(value: &str) -> String {
     let mut result = value.to_string();
-    
+
     // Simple scan for ${VAR} pattern without regex
     let mut start = 0;
     while let Some(dollar_pos) = result[start..].find('$') {
         let abs_pos = start + dollar_pos;
-        
+
         // Check if followed by ${...}
         if abs_pos + 1 < result.len() && result.chars().nth(abs_pos + 1) == Some('{') {
             if let Some(close_pos) = result[abs_pos + 2..].find('}') {
                 let var_start = abs_pos + 2;
                 let var_end = var_start + close_pos;
                 let var_name = &result[var_start..var_end];
-                
+
                 if let Ok(env_value) = env::var(var_name) {
                     let full_match = format!("${{{}}}", var_name);
                     result = result.replace(&full_match, &env_value);
@@ -47,11 +47,11 @@ pub fn interpolate_env_var(value: &str) -> String {
                 continue;
             }
         }
-        
+
         // No ${...}, move past this $
         start = abs_pos + 1;
     }
-    
+
     result
 }
 
@@ -61,21 +61,21 @@ pub fn apply_env_interpolation(config: &mut Config) {
     if let Some(api_url) = &config.github.api_url {
         config.github.api_url = Some(interpolate_env_var(api_url));
     }
-    
+
     config.beads.remote = interpolate_env_var(&config.beads.remote);
     if let Some(database) = &config.beads.database {
         config.beads.database = Some(interpolate_env_var(database));
     }
-    
+
     if let Some(base_url) = &config.llm.base_url {
         config.llm.base_url = Some(interpolate_env_var(base_url));
     }
     config.llm.api_key = interpolate_env_var(&config.llm.api_key);
-    
+
     if let Some(level) = &config.log_level {
         config.log_level = Some(interpolate_env_var(level));
     }
-    
+
     if let Some(channel) = &config.error_channel {
         config.error_channel = Some(interpolate_env_var(channel));
     }
@@ -202,9 +202,17 @@ impl Default for LlmConfig {
 impl Default for TriageConfig {
     fn default() -> Self {
         Self {
-            default_labels: Some(vec!["bug".to_string(), "enhancement".to_string(), "question".to_string()]),
+            default_labels: Some(vec![
+                "bug".to_string(),
+                "enhancement".to_string(),
+                "question".to_string(),
+            ]),
             bot_labels: Some(vec![]),
-            close_labels: Some(vec!["wontfix".to_string(), "duplicate".to_string(), "not planned".to_string()]),
+            close_labels: Some(vec![
+                "wontfix".to_string(),
+                "duplicate".to_string(),
+                "not planned".to_string(),
+            ]),
             assignees: Some(vec![]),
         }
     }
