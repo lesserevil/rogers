@@ -2,7 +2,6 @@
 //!
 //! This module provides the interface for filing epic and child beads
 //! against GitHub issues.
-
 pub mod client;
 
 pub use client::{
