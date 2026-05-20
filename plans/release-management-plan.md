@@ -16,9 +16,11 @@ Rodgers monitors the release branches and cuts new releases when criteria are me
 
 Rodgers maintains a standard release branch strategy:
 
-```
-main
-  └── release/X.Y.Z  (cut when release is approved)
+```mermaid
+flowchart LR
+    main --> release["release/X.Y.Z<br/>cut when release is approved"]
+    release --> r1["release/1.x<br/>(active)"]
+    release --> r2["release/2.x<br/>(active)"]
 ```
 
 - **`main`** — All development flows here. Possibly a `canary` or `nightly` integration point depending on project maturity.
@@ -85,21 +87,16 @@ Release will be cut within 48 hours of approval unless vetoed.
 
 ## Release Approval Flow
 
-```
-Rodgers detects release readiness
-  │
-  └─► Creates GitHub Discussion (Release Proposal)
-        │
-        └─► Waits for human reaction (👍/👎) or comment
-              │
-              ├─► 👍 (approval)
-              │     └─► Rodgers creates release branch
-              │           └─► Rodgers files release chore bead
-              │           └─► Posts release notification as GitHub Discussion comment
-              │
-              └─► 👎 or rejection comment
-                    └─► Rodgers acknowledges and asks for guidance
-                          └─► Waits for follow-up discussion or new bead
+```mermaid
+flowchart TD
+    A["Rodgers detects\nrelease readiness"] --> B["Creates GitHub Discussion\n(Release Proposal)"]
+    B --> C["Waits for human\nreaction (👍/👎) or comment"]
+    C --> D{"Reaction?"}
+    D -->|"👍 approval"| E["Rodgers creates\nrelease branch"]
+    E --> F["Rodgers files\nrelease chore bead"]
+    F --> G["Posts release notification\nas GitHub Discussion comment"]
+    D -->|"👎 or rejection"| H["Rodgers acknowledges\nand asks for guidance"]
+    H --> I["Waits for follow-up\ndiscussion or new bead"]
 ```
 
 ### Approval Criteria
