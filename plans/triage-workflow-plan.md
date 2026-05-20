@@ -43,67 +43,46 @@ Labels are applied only when Rodgers is the first to triage the issue. If anothe
 
 ## State Machine
 
-```
-                     ┌─────────────────────────────────────────────┐
-                     │  NEW / UNCLASSIFIED                        │
-                     │  Rodgers applies initial label              │
-                     └──────────────────┬────────────────────────┘
-                                        │
-                    ┌───────────────────┼───────────────────┐
-                    │ bug               │ feature           │ question
-                    ▼                   ▼                   ▼
-              ┌──────────┐       ┌──────────┐        ┌──────────┐
-              │INCOMPLETE│       │INCOMPLETE│        │INCOMPLETE│
-              │  (bug)   │       │ (feat)   │        │(question)│
-              └────┬─────┘       └────┬─────┘        └────┬─────┘
-                   │                  │                   │
-          All required info?           │                   │
-              │               All required info?          │
-              │                  │                          │
-              ├─ NO ─────────────┼── NO ────────────── NO ─┘
-              │                  │                        │
-              ▼                  ▼                         ▼
-        ┌───────────┐      ┌───────────┐           ┌──────────┐
-        │ NEEDS     │      │ NEEDS     │           │ SEARCH   │
-        │ INFO      │      │ INFO      │           │ DOCS     │
-        └───────────┘      └───────────┘           └──────────┘
-```
+```mermaid
+stateDiagram-v2
+    [*] --> NEW_UNCLASSIFIED
+    NEW_UNCLASSIFIED --> BUG: apply bug label
+    NEW_UNCLASSIFIED --> FEATURE: apply feature label
+    NEW_UNCLASSIFIED --> QUESTION: apply question label
 
-```
-                                          ┌─────────────────────────────┐
-                                          │  NEEDS-INFORMATION          │
-                                          │  Requested [field] from      │
-                                          │  requestor                   │
-                                          └─────────────┬───────────────┘
-                                                        │ Requestor responds
-                                                        │ (new comment)
-                                                        ▼
-                                          ┌─────────────────────────────┐
-                                          │  (back to top — reprocess    │
-                                          │   as if new comment read)    │
-                                          └─────────────────────────────┘
-```
+    BUG --> BUG_INCOMPLETE: missing required info
+    FEATURE --> FEATURE_INCOMPLETE: missing required info
+    QUESTION --> QUESTION_INCOMPLETE: missing required info
 
-```
-                                          ┌─────────────────────────────┐
-                                          │  READY-FOR-REVIEW            │
-                                          │  Rodgers: has enough info    │
-                                          │  Label: ready-for-review     │
-                                          └─────────────┬───────────────┘
-                                                        │ Human applies
-                                                        │ will-not-do
-                                                        │ OR ready-for-work
-                                                        ▼
-                              ┌───────────────────────────┴───────────────────────────┐
-                              │                                                           │
-                              ▼                                                           ▼
-                    ┌─────────────────┐                                    ┌───────────────────┐
-                    │   WILL-NOT-DO   │                                    │   READY-FOR-WORK  │
-                    │                 │                                    │                   │
-                    │ Rodgers: inform │                                    │ Rodgers: epic +   │
-                    │ requestor       │                                    │ child beads       │
-                    │ Rodgers: close  │                                    └───────────────────┘
-                    └─────────────────┘
+    QUESTION_INCOMPLETE --> SEARCH_DOCS: all required info present
+    BUG_INCOMPLETE --> READY_FOR_REVIEW: all required info present
+    FEATURE_INCOMPLETE --> READY_FOR_REVIEW: all required info present
+
+    BUG_INCOMPLETE --> NEEDS_INFO: post comment, label needs-information
+    FEATURE_INCOMPLETE --> NEEDS_INFO: post comment, label needs-information
+
+    NEEDS_INFO --> NEEDS_INFO: awaiting requestor response
+    NEEDS_INFO --> NEW_UNCLASSIFIED: requestor responded\n(restart from top)
+
+    NEEDS_INFO --> STALE: no response > 28 days\n(close with notice)
+    STALE --> [*]
+
+    SEARCH_DOCS --> DOC_FOUND: answer exists in docs/
+    SEARCH_DOCS --> DOC_GAP: no answer exists
+
+    DOC_FOUND --> CLOSE_QUESTION: post link comment\nclose issue
+    DOC_GAP --> FILE_DOCS_BEAD: file docs bead\nlabel needs-documentation\npost acknowledgment
+
+    READY_FOR_REVIEW --> WILL_NOT_DO: human applies label
+    READY_FOR_REVIEW --> READY_FOR_WORK: human applies label
+
+    WILL_NOT_DO --> INFORM_REQUESTOR: post closure comment
+    INFORM_REQUESTOR --> CLOSE_ISSUE: close issue
+    CLOSE_ISSUE --> [*]
+
+    READY_FOR_WORK --> FILE_EPIC_BEADS: epic + child beads\npost link comment
+    FILE_EPIC_BEADS --> IN_PROGRESS: label in-progress
+    IN_PROGRESS --> [*]
 ```
 
 ---
@@ -116,13 +95,21 @@ Labels are applied only when Rodgers is the first to triage the issue. If anothe
 
 **Action:** Rodgers reads the issue body and author context, applies the appropriate initial label (`bug`, `feature`, or `question`), and applies any `bot_labels` detection (see triage configuration). Moves to `INCOMPLETE` or proceeds directly to the appropriate workflow.
 
-### INCOMPLETE
+### INCOMPLETE (bug / feature)
 
-**Entry:** Issue is labeled `bug`, `feature`, or `question` but is missing required information for its type.
+**Entry:** Issue is labeled `bug` or `feature` but is missing required information for its type.
 
 **Action:** Rodgers posts a comment requesting the specific missing information. Applies `needs-information` label. The specific field(s) requested are enumerated in the comment.
 
 **Exit:** When the requestor responds, the next triage run processes the new comment as a state machine restart from `NEW`.
+
+### INCOMPLETE (question)
+
+**Entry:** Issue is labeled `question` but Rodgers needs clarification to understand what is being asked.
+
+**Action:** Rodgers posts a comment asking for clarification. Applies `needs-information` label.
+
+**Exit:** Same as bug/feature incomplete.
 
 ### NEEDS-INFORMATION
 
@@ -131,7 +118,31 @@ Labels are applied only when Rodgers is the first to triage the issue. If anothe
 When Rodgers sees `needs-information` applied, it checks:
 - Has the requestor responded since the label was applied?
   - Yes → remove label, restart from top
-  - No → has it been more than 14 days? If yes, post a gentle ping comment. If still no response after 4 more runs, close with a stale comment.
+  - No → has it been more than 14 days? If yes, post a gentle ping comment. If still no response after 4 more runs (28 days total), transition to `STALE`.
+
+### STALE
+
+**Entry:** No response for 28 days after `needs-information` was applied.
+
+**Action:** Rodgers posts a comment: "We haven't heard back on the information needed to move this forward. If you still want to pursue this, please reopen with the requested details." The issue is then closed.
+
+### SEARCH_DOCS
+
+**Entry:** Issue labeled `question` has sufficient information to identify what is being asked.
+
+**Action:** Rodgers searches `docs/` for an answer. See plans/question-routing-plan.md for search scope and decision logic.
+
+### DOC_FOUND
+
+**Entry:** Rodgers found documentation that answers the question.
+
+**Action:** Rodgers posts a comment with the doc link. Closes the issue if the answer fully resolves the question; leaves open if follow-up is expected. See plans/question-routing-plan.md §Step 3a.
+
+### DOC_GAP
+
+**Entry:** Rodgers found no documentation answering the question.
+
+**Action:** Rodgers files a `docs` bead and applies `needs-documentation` label. Posts acknowledgment comment on the issue. See plans/question-routing-plan.md §Step 3b.
 
 ### READY-FOR-REVIEW
 
@@ -165,9 +176,15 @@ Rodgers closes the issue. No further action.
 
 - `bug` → creates epic bead + child beads following plans/feature-bug-plan.md
 - `feature` → creates epic bead + child beads following plans/feature-bug-plan.md
-- `question` → should not reach this state (questions are resolved differently)
+- `question` → should not reach this state (questions are resolved via docs workflow)
 
 Rodgers posts a comment linking to the epic bead and applies `in-progress` or a project-status label if configured.
+
+### IN_PROGRESS
+
+**Entry:** Epic bead created, work is underway.
+
+**Exit:** When all child beads are closed and the GitHub issue is resolved, Rodgers closes the issue and marks the epic closed.
 
 ---
 
@@ -196,8 +213,8 @@ Rodgers posts a comment linking to the epic bead and applies `in-progress` or a 
 - Bug/Feature workflow: plans/feature-bug-plan.md
 - Question workflow: plans/question-routing-plan.md
 - Release management: plans/release-management-plan.md
-- Backport: plans/backport-plan.md
-- Triage empties to done: steps in plans/feature-bug-plan.md and plans/question-routing-plan.md
+- Backport: plans/backport-plan.md  
+- Architecture: plans/architecture-plan.md
 
 ---
 
@@ -209,4 +226,4 @@ Rodgers posts a comment linking to the epic bead and applies `in-progress` or a 
 - [ ] CRIT-4: When transitioning to `WILL-NOT-DO`, Rodgers posts a closure comment and closes the GitHub issue within one triage run
 - [ ] CRIT-5: When transitioning to `READY-FOR-WORK`, Rodgers files the epic bead + child beads within one triage run and posts a comment linking to the epic
 - [ ] CRIT-6: An issue with `needs-information` that has had no response for more than 14 days gets a gentle ping. After 28 days total with no response, the issue is closed with a stale notice.
-- [ ] CRIT-7: Rodgers never makes a human gate decision (will-not-do, ready-for-work) on its own — it only observes and acts on the human's label
+- [ ] CRIT-7: Rodgers never makes a human gate decision (`will-not-do`, `ready-for-work`) on its own — it only observes and acts on the human's label applied to the GitHub issue

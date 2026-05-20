@@ -22,39 +22,30 @@ Rodgers is a github-native community relations agent. It runs on a schedule, rea
 
 ## System Components
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  Scheduler (cron / systemd timer)                       │
-│  Triggers rogers on a configurable interval             │
-└────────────────────────┬────────────────────────────────┘
-                         │ runs
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│  Rodgers CLI (Rust)                                      │
-│                                                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐ │
-│  │  Triage      │  │  Question    │  │  Release      │ │
-│  │  Engine      │  │  Router      │  │  Manager      │ │
-│  └──────────────┘  └──────────────┘  └───────────────┘ │
-│                                                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────┐ │
-│  │  Bead        │  │  GitHub      │  │  Backport     │ │
-│  │  Controller  │  │  API Client  │  │  Manager      │ │
-│  └──────────────┘  └──────────────┘  └───────────────┘ │
-└────────────────────────┬────────────────────────────────┘
-                         │
-          ┌──────────────┴──────────────┐
-          ▼                             ▼
-┌─────────────────────┐    ┌─────────────────────────────┐
-│  GitHub API         │    │  Beads Database (dolt)      │
-│                     │    │                             │
-│  · Read issues      │    │  · Open / filed beads       │
-│  · Read discussions │    │  · Epics and child beads    │
-│  · Post comments    │    │  · Status transitions       │
-│  · Update labels    │    │  · Plan references          │
-│  · Manage releases  │    │                             │
-│  · Manage branches  │    │                             │
-└─────────────────────┘    └─────────────────────────────┘
+```mermaid
+graph LR
+    subgraph Scheduler
+        A[Scheduler<br/>cron / systemd timer]
+    end
+
+    subgraph Rodgers CLI
+        B[Triage<br/>Engine] --> C[Bead<br/>Controller]
+        B --> D[GitHub<br/>API Client]
+        E[Question<br/>Router] --> C
+        E --> D
+        F[Release<br/>Manager] --> C
+        F --> D
+        G[Backport<br/>Manager] --> C
+        G --> D
+    end
+
+    A -->|"runs"| B
+    A -->|"runs"| E
+    A -->|"runs"| F
+    A -->|"runs"| G
+
+    D -->|"read/write"| H[GitHub API<br/>Issues, Discussions<br/>Releases, Branches]
+    C -->|"read/write"| I[Beads Database<br/>dolt<br/>Epics, Children<br/>Status]
 ```
 
 ### Component Responsibilities
@@ -78,7 +69,7 @@ When a fix lands on main or a release branch, creates beads to cherry-pick the f
 Reads and writes beads. Creates epic beads for complex work. Files child beads under epics. Closes beads when linked GitHub issues are resolved. Manages the bead-to-GitHub-issue linkage table.
 
 **GitHub API Client**  
-Thin wrapper around reqwest for the GitHub REST API. Handles auth via PAT from env var. All communication with GitHub flows through this client — no raw API calls outside this module.
+Thin wrapper around `reqwest` for the GitHub REST API. Handles auth via PAT from env var. All communication with GitHub flows through this client — no raw API calls outside this module.
 
 ---
 
@@ -92,11 +83,11 @@ Thin wrapper around reqwest for the GitHub REST API. Handles auth via PAT from e
 | `feature` | A feature request, triaged |
 | `question` | A question from the community |
 | `needs-information` | Rodgers has asked for clarification from the requestor |
+| `needs-documentation` | Rodgers has determined the question lacks a documentation answer |
 | `ready-for-review` | Rodgers has determined the issue has enough information; awaiting human decision |
 | `will-not-do` | Human has decided this will not be worked |
 | `ready-for-work` | Human has approved this for implementation |
 | `in-progress` | Work is underway |
-| `done` | Work is complete and verified |
 
 ### Bead States (work-tracking)
 
@@ -110,7 +101,9 @@ Beads follow the standard bd workflow: `open → claimed → closed`, supplement
 | `docs` | Documentation update work |
 | `release` | Release management work |
 | `backport` | Cherry-pick fix to older release branch |
+| `backport-conflict` | Merge conflict on a backport PR requires manual resolution |
 | `triage` | Triage state machine step (interrogative, informational) |
+| `assessment` | Scope evaluation for epic-scale issues |
 
 ---
 
@@ -124,6 +117,7 @@ Relevant config keys:
 - `beads.{remote, database}` — dolt bead storage
 - `triage.{default_labels, bot_labels, close_labels, assignees}` — triage behavior
 - `release.approval_discussion_category` — GitHub Discussion category for release approvals
+- `release.active_branches` — list of active release branches (for backport evaluation)
 
 ---
 
@@ -141,5 +135,5 @@ Relevant config keys:
 - [ ] AC-2: All GitHub state changes (labels, comments, closes) go through the GitHub API client module
 - [ ] AC-3: All work tracking (epics, child beads, triage beads) goes through the Bead Controller
 - [ ] AC-4: Rodgers runs on a configurable schedule and exits after each run with no persistent process
-- [ ] AC-5: Configuration supports env-var overrides for all keys
+- [ ] AC-5: Configuration supports env-var overrides for all keys  
 - [ ] AC-6: No code paths exist that communicate with anyone outside GitHub Issues or Discussions
