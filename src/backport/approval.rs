@@ -432,7 +432,7 @@ async fn monitor_discussion_votes(
 /// - `config`: Release config with voting window / stale threshold
 /// - `is_vote_locked`: If true, vote is locked (PR created)
 /// - `is_discussion_closed`: If true, all votes are stale (ignored)
-fn compute_vote_state(
+pub(crate) fn compute_vote_state(
     votes: &[VoteRecord],
     most_recent: &Option<VoteRecord>,
     elapsed_days: u32,
@@ -679,6 +679,116 @@ pub async fn close_discussion(
 fn now_from_iso(s: &str) -> Result<DateTime<Utc>, RogersError> {
     s.parse::<DateTime<Utc>>()
         .map_err(|e| RogersError::Config(format!("invalid timestamp '{}': {}", s, e)))
+}
+
+// ---------------------------------------------------------------------------
+// CRIT-10: Stale Discussion closure with revisit bead filing
+// ---------------------------------------------------------------------------
+
+/// Result of filing a revisit bead for a stale discussion.
+#[derive(Debug, Clone)]
+pub struct RevisitBeadResult {
+    /// The bead ID that was created.
+    pub bead_id: String,
+    /// Whether the bead was filed successfully.
+    pub success: bool,
+    /// Any errors encountered.
+    pub errors: Vec<String>,
+}
+
+/// File a revisit chore bead for a stale-closed discussion.
+///
+/// This bead tracks that the backport approval discussion was closed due to
+/// inactivity and needs human review.
+///
+/// Per CRIT-10:
+/// - Bead type: chore
+/// - Priority: normal (2)
+/// - Title: "Revisit backport for #{sha_short} to {branch}"
+/// - Notes: discussion closed stale, needs human decision
+/// - Does not proceed with backport
+///
+/// ## Arguments
+/// - `sha_short`: Short commit SHA for the bead title
+/// - `full_sha`: Full commit SHA for the bead description
+/// - `target_branch`: The release branch target
+/// - `pr_number`: Source PR number
+/// - `discussion_number`: The closed discussion number
+/// - `stale_threshold_days`: Days until stale threshold (from config)
+/// - `voting_window_days`: Days in voting window (from config)
+pub async fn file_revisit_bead(
+    sha_short: &str,
+    full_sha: &str,
+    target_branch: &str,
+    pr_number: u64,
+    discussion_number: u64,
+    stale_threshold_days: u32,
+    voting_window_days: u32,
+) -> RevisitBeadResult {
+    let title = format!("Revisit backport for #{sha_short} to {target_branch}");
+
+    let description = format!(
+        "Plan: plans/backport-plan.md §Acceptance Criteria CRIT-10\n\n\
+        Discussion {} was closed as stale (no human response within {} days).\n\
+        The backport for commit {} to {} requires human decision.\n\n\
+        WHAT TO DO\n\
+        Review whether this backport should still proceed. The approval\n\
+        discussion was closed due to inactivity.\n\n\
+        ACCEPTANCE\n\
+        - [ ] Human decides whether to proceed with backport of {} to {}\n\
+        - [ ] If proceeding: create and merge backport PR targeting {}\n\
+        - [ ] If declining: close this bead with explanation\n\n\
+        NOTES\n\
+        - Original approval discussion {} was closed as stale\n\
+        - No human response received within {} days (voting window: {} days + stale threshold: {} days)\n\
+        - Source PR: #{}\n\
+        - Total time before closure: {} days\n\n\
+        PITFALLS\n\
+        - This is a revisit, not an automatic re-approval\n\
+        - Human decision required before proceeding",
+        discussion_number,
+        stale_threshold_days,
+        full_sha,
+        target_branch,
+        sha_short,
+        target_branch,
+        target_branch,
+        discussion_number,
+        stale_threshold_days,
+        voting_window_days,
+        stale_threshold_days - voting_window_days,
+        pr_number,
+        stale_threshold_days,
+    );
+
+    info!(
+        "Filing revisit bead for stale discussion {}, backport {} to {}",
+        discussion_number, sha_short, target_branch
+    );
+
+    let bead_result = crate::backport::manager::submit_revisit_bead(
+        &title, &description, full_sha, target_branch, pr_number, discussion_number,
+    ).await;
+
+    match bead_result {
+        Ok(id) => {
+            info!("Revisit bead filed: {}", id);
+            RevisitBeadResult {
+                bead_id: id,
+                success: true,
+                errors: vec![],
+            }
+        }
+        Err(e) => {
+            let msg = format!("Failed to file revisit bead: {}", e);
+            warn!("{}", msg);
+            RevisitBeadResult {
+                bead_id: String::new(),
+                success: false,
+                errors: vec![msg],
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
