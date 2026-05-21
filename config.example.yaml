@@ -49,5 +49,24 @@ rogation:
   template_dir:                    # per-project override for embedded issue templates (optional)
   security_label: security         # label name Rodgers checks for security patch detection
 
+question_routing:
+  # Keywords/phrases that trigger source code search when found in a question.
+  # Case-insensitive phrase matching. Different projects may want different
+  # terminology. Set to [] to disable code search entirely.
+  code_search_keywords:
+    - "how does"
+    - "what function"
+    - "which module"
+    - "internals"
+    - "implementation"
+    - "source code"
+    - "walk me through"
+    - "flow of"
+    - "under the hood"
+  # Path to documentation directory (relative to repo root).
+  doc_search_path: docs/
+  # Glob pattern for code files to search.
+  code_search_path: "**/*"
+
 log_level: info                   # debug | info | warn | error
 error_channel:                    # Slack channel ID for error notifications
