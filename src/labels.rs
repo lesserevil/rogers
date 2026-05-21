@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Canonical label definitions for Rodgers.
 //! All required labels are defined here so init/doctor share the same source of truth.
 

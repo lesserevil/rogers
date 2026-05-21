@@ -9,7 +9,8 @@
 use super::{CATEGORY_DRIFT, CategoryResult, CategoryStatus, DriftEvent, DriftSeverity};
 use crate::beads::{Bead, BeadsClient};
 use crate::error::Result;
-use crate::github::{GitHubClient, OldGitHubClient};
+use crate::github::GitHubClient;
+use crate::github::client::{issue_state, parse_issue_url};
 
 /// Result of drift check including any detected drift events
 pub struct DriftCheckResult {
@@ -23,8 +24,8 @@ pub struct DriftCheckResult {
 ///
 /// Detects GitHub ↔ beads state divergence.
 pub async fn check_drift(
-    owner: &str,
-    repo: &str,
+    _owner: &str,
+    _repo: &str,
     token: &str,
     api_url: Option<&str>,
     verbose: bool,
@@ -33,8 +34,8 @@ pub async fn check_drift(
 ) -> Result<DriftCheckResult> {
     let mut messages = Vec::new();
 
-    // Create clients for GitHub and beads
-    let github_client = OldGitHubClient::compat_new(token.to_string(), api_url);
+    // Create the beads client (per-issue GitHub clients are built inside the
+    // loop below, since each bead's issue may live in a different repo).
     let beads_client = BeadsClient::new(beads_remote, beads_database);
 
     // Fetch closed beads from the database
@@ -71,18 +72,19 @@ pub async fn check_drift(
         };
 
         // Parse the issue URL to get owner, repo, and issue number
-        let Some((issue_owner, issue_repo, issue_number)) =
-            GitHubClient::parse_issue_url(issue_url)
-        else {
+        let Some((issue_owner, issue_repo, issue_number)) = parse_issue_url(issue_url) else {
             tracing::debug!("Could not parse issue URL: {}", issue_url);
             continue;
         };
 
+        // Build a per-repo client for the target issue (may differ from owner/repo)
+        let mut issue_client = GitHubClient::new(&issue_owner, &issue_repo).with_token(token);
+        if let Some(url) = api_url {
+            issue_client = issue_client.with_api_base(url);
+        }
+
         // Fetch the issue state from GitHub
-        match github_client
-            .get_issue_state(&issue_owner, &issue_repo, issue_number)
-            .await
-        {
+        match issue_state(&issue_client, issue_number).await {
             Ok(Some(state)) => {
                 github_issue_states.insert(issue_url.clone(), state.to_string());
             }

@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
 //! Feature and bug issue handling for Rodgers.
 //!
 //! This module implements the transition logic for bug and feature issues
@@ -446,14 +449,12 @@ fn extract_acceptance_criteria_from_body(body: &str) -> Vec<AcceptanceCriterion>
         }
 
         // Extract checkbox items
-        if extract_checkbox_item(trimmed).is_some() {
-            if let Some(text) = extract_checkbox_item(trimmed) {
-                criteria.push(AcceptanceCriterion {
-                    text,
-                    is_checked: trimmed.contains("[x]"),
-                    source: AcceptanceCriteriaSource::IssueBody,
-                });
-            }
+        if let Some(text) = extract_checkbox_item(trimmed) {
+            criteria.push(AcceptanceCriterion {
+                text,
+                is_checked: trimmed.contains("[x]"),
+                source: AcceptanceCriteriaSource::IssueBody,
+            });
         }
     }
 
@@ -486,14 +487,12 @@ fn extract_acceptance_criteria_from_body(body: &str) -> Vec<AcceptanceCriterion>
     if criteria.is_empty() {
         for line in body.lines() {
             let trimmed = line.trim();
-            if extract_checkbox_item(trimmed).is_some() {
-                if let Some(text) = extract_checkbox_item(trimmed) {
-                    criteria.push(AcceptanceCriterion {
-                        text,
-                        is_checked: trimmed.contains("[x]"),
-                        source: AcceptanceCriteriaSource::IssueBody,
-                    });
-                }
+            if let Some(text) = extract_checkbox_item(trimmed) {
+                criteria.push(AcceptanceCriterion {
+                    text,
+                    is_checked: trimmed.contains("[x]"),
+                    source: AcceptanceCriteriaSource::IssueBody,
+                });
             }
         }
     }
@@ -593,10 +592,10 @@ fn extract_acceptance_criteria_from_comment_body(body: &str) -> Vec<String> {
         }
 
         // Extract checkbox items
-        if in_ac_section || !criteria.is_empty() {
-            if let Some(text) = extract_checkbox_item(trimmed) {
-                criteria.push(text);
-            }
+        if (in_ac_section || !criteria.is_empty())
+            && let Some(text) = extract_checkbox_item(trimmed)
+        {
+            criteria.push(text);
         }
     }
 
@@ -604,13 +603,12 @@ fn extract_acceptance_criteria_from_comment_body(body: &str) -> Vec<String> {
     if criteria.is_empty() {
         for line in body.lines() {
             let trimmed = line.trim();
-            if trimmed.to_uppercase().starts_with("AC-")
+            if (trimmed.to_uppercase().starts_with("AC-")
                 || (trimmed.to_uppercase().starts_with("- [")
-                    && trimmed.to_uppercase().contains("AC-"))
+                    && trimmed.to_uppercase().contains("AC-")))
+                && let Some(text) = extract_checkbox_item(trimmed)
             {
-                if let Some(text) = extract_checkbox_item(trimmed) {
-                    criteria.push(text);
-                }
+                criteria.push(text);
             }
         }
     }

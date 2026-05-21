@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! GitHub API client for issue and comment operations.
 //!
 //! This module provides the interface for interacting with the GitHub API.
@@ -14,23 +16,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, RogersError};
-
-/// GitHub issue state (backward compatibility)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum IssueState {
-    Open,
-    Closed,
-}
-
-impl std::fmt::Display for IssueState {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            IssueState::Open => write!(f, "open"),
-            IssueState::Closed => write!(f, "closed"),
-        }
-    }
-}
 
 /// GitHub API client for Rodgers.
 ///
@@ -88,20 +73,6 @@ impl GitHubClient {
         self
     }
 
-    /// Backward compatibility: Create a GitHub client with token and API URL.
-    ///
-    /// This signature matches the old interface used by doctor module.
-    pub fn compat_new(token: String, api_url: Option<&str>) -> Self {
-        Self {
-            api_base: api_url
-                .map(String::from)
-                .unwrap_or_else(|| "https://api.github.com".to_string()),
-            owner: String::new(),
-            repo: String::new(),
-            token: Some(token),
-        }
-    }
-
     /// Build the API URL for fetching issue comments.
     fn comments_url(&self, issue_number: u64) -> String {
         format!(
@@ -138,105 +109,6 @@ impl GitHubClient {
         Ok(issue)
     }
 
-    // ===== Backward compatibility methods (for doctor module) =====
-
-    /// Backward compatibility: Get the state of a GitHub issue
-    ///
-    /// Returns `Ok(Some(IssueState))` if the issue exists.
-    /// Returns `Ok(None)` if the issue is not found (deleted).
-    /// Returns `Err` on API errors.
-    pub async fn get_issue_state(
-        &self,
-        owner: &str,
-        repo: &str,
-        issue_number: u64,
-    ) -> Result<Option<IssueState>> {
-        let url = format!(
-            "{}/repos/{}/{}/issues/{}",
-            self.api_base, owner, repo, issue_number
-        );
-
-        let response = self.fetch_json_raw(&url).await?;
-
-        let status = response.status();
-        if status.as_u16() == 404 {
-            return Ok(None);
-        }
-
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(RogersError::GitHubStatus {
-                code: status.as_u16(),
-                message: body,
-            });
-        }
-
-        let body: serde_json::Value = response.json().await?;
-        let state_str = body.get("state").and_then(|s| s.as_str()).unwrap_or("open");
-        let state = match state_str {
-            "closed" => IssueState::Closed,
-            _ => IssueState::Open,
-        };
-
-        Ok(Some(state))
-    }
-
-    /// Backward compatibility: Parse a GitHub issue URL and extract owner, repo, and issue number
-    pub fn parse_issue_url(url: &str) -> Option<(String, String, u64)> {
-        let url = url.split('#').next().unwrap_or(url);
-
-        if let Ok(parsed) = url::Url::parse(url) {
-            if parsed.host_str() == Some("github.com") {
-                let segments: Vec<&str> = parsed.path_segments()?.collect();
-                if segments.len() >= 4 && segments[2] == "issues" {
-                    let owner = segments[0].to_string();
-                    let repo = segments[1].to_string();
-                    let num_str = segments[3];
-                    let num_str = num_str.strip_suffix(".git").unwrap_or(num_str);
-                    if let Ok(num) = num_str.parse() {
-                        return Some((owner, repo, num));
-                    }
-                }
-            }
-        }
-
-        let parts: Vec<&str> = url.split('/').filter(|s| !s.is_empty()).collect();
-        if parts.len() >= 4 && parts[2] == "issues" {
-            let owner = parts[1].to_string();
-            let repo = parts[3].to_string();
-            let num_str = parts[4];
-            let num_str = num_str.strip_suffix(".git").unwrap_or(num_str);
-            if let Ok(num) = num_str.parse() {
-                return Some((owner, repo, num));
-            }
-        }
-
-        None
-    }
-
-    /// Backward compatibility: Extract issue number from a GitHub issue URL
-    pub fn extract_issue_number(url: &str) -> Option<u64> {
-        let url = url.split('#').next().unwrap_or(url);
-
-        if let Ok(parsed) = url::Url::parse(url) {
-            if parsed.host_str() == Some("github.com") {
-                let segments: Vec<&str> = parsed.path_segments()?.collect();
-                if segments.len() >= 4 && segments[2] == "issues" {
-                    return segments[3].parse().ok();
-                }
-            }
-        }
-
-        if let Some(last_segment) = url.rsplit('/').next() {
-            if last_segment.starts_with("issues/") {
-                let num_str = last_segment.strip_prefix("issues/")?;
-                return num_str.parse().ok();
-            }
-        }
-
-        None
-    }
-
     /// Generic JSON fetch with auth headers.
     async fn fetch_json<T: for<'de> Deserialize<'de>>(&self, url: &str) -> Result<T> {
         let client = reqwest::Client::new();
@@ -264,67 +136,6 @@ impl GitHubClient {
         let data = response.json::<T>().await?;
         Ok(data)
     }
-
-    /// Raw fetch for backward compatibility (returns response for status checking)
-    async fn fetch_json_raw(&self, url: &str) -> Result<reqwest::Response> {
-        let client = reqwest::Client::new();
-
-        let mut request = client
-            .get(url)
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .header("User-Agent", "RogersDoctor/0.1");
-
-        if let Some(ref token) = self.token {
-            request = request.header("Authorization", format!("Bearer {}", token));
-        }
-
-        let response = request.send().await?;
-        Ok(response)
-    }
-}
-
-/// Backward compatibility: Attempt to close an issue via the GitHub API
-pub async fn close_issue(
-    owner: &str,
-    repo: &str,
-    issue_number: u64,
-    token: &str,
-    api_url: Option<&str>,
-) -> Result<()> {
-    let base_url = api_url
-        .map(String::from)
-        .unwrap_or_else(|| "https://api.github.com".to_string());
-
-    let client = reqwest::Client::new();
-    let url = format!(
-        "{}/repos/{}/{}/issues/{}",
-        base_url, owner, repo, issue_number
-    );
-
-    let response = client
-        .patch(&url)
-        .header("Authorization", format!("Bearer {}", token))
-        .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", "RogersDoctor/0.1")
-        .json(&serde_json::json!({ "state": "closed" }))
-        .send()
-        .await?;
-
-    if !response.status().is_success() {
-        let status = response.status();
-        let body: serde_json::Value = response.json().await.unwrap_or_default();
-        let msg = body
-            .get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("Unknown error");
-        return Err(RogersError::GitHubStatus {
-            code: status.as_u16(),
-            message: msg.to_string(),
-        });
-    }
-
-    Ok(())
 }
 
 /// A GitHub issue comment.
@@ -375,6 +186,116 @@ pub struct GitHubLabel {
     /// Label color
     #[serde(default)]
     pub color: String,
+}
+
+/// GitHub issue state.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum IssueState {
+    Open,
+    Closed,
+}
+
+impl std::fmt::Display for IssueState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IssueState::Open => write!(f, "open"),
+            IssueState::Closed => write!(f, "closed"),
+        }
+    }
+}
+
+/// Fetch the state of a GitHub issue (open/closed) without fetching full data.
+pub async fn issue_state(client: &GitHubClient, issue_number: u64) -> Result<Option<IssueState>> {
+    let url = format!(
+        "{}/repos/{}/{}/issues/{}",
+        client.api_base, client.owner, client.repo, issue_number
+    );
+
+    let http_client = reqwest::Client::new();
+    let mut request = http_client
+        .get(&url)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28");
+
+    if let Some(ref token) = client.token {
+        request = request.header("Authorization", format!("Bearer {}", token));
+    }
+
+    let response = request.send().await?;
+    let status = response.status();
+
+    if status.as_u16() == 404 {
+        return Ok(None);
+    }
+
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(RogersError::GitHubStatus {
+            code: status.as_u16(),
+            message: body,
+        });
+    }
+
+    let issue_body = response.text().await?;
+    let is_closed = issue_body.contains("\"state\":\"closed\"");
+
+    Ok(Some(if is_closed {
+        IssueState::Closed
+    } else {
+        IssueState::Open
+    }))
+}
+
+/// Close a GitHub issue.
+pub async fn close_issue(client: &GitHubClient, issue_number: u64) -> Result<()> {
+    let url = format!(
+        "{}/repos/{}/{}/issues/{}",
+        client.api_base, client.owner, client.repo, issue_number
+    );
+
+    let http_client = reqwest::Client::new();
+    let mut request = http_client
+        .patch(&url)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("Content-Type", "application/json")
+        .body(r#"{"state":"closed"}"#);
+
+    if let Some(ref token) = client.token {
+        request = request.header("Authorization", format!("Bearer {}", token));
+    }
+
+    let response = request.send().await?;
+    let status = response.status();
+
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(RogersError::GitHubStatus {
+            code: status.as_u16(),
+            message: body,
+        });
+    }
+
+    Ok(())
+}
+
+/// Parse an issue URL to extract owner, repo, and issue number.
+pub fn parse_issue_url(url: &str) -> Option<(String, String, u64)> {
+    let parts: Vec<&str> = url.trim_end_matches('/').split('/').collect();
+
+    if parts.len() >= 5
+        && let (Some(&owner), Some(&repo), Some(&issue_str), Some(&"issues")) = (
+            parts.get(parts.len() - 4),
+            parts.get(parts.len() - 3),
+            parts.last(),
+            parts.get(parts.len() - 2),
+        )
+        && let Ok(number) = issue_str.parse::<u64>()
+    {
+        return Some((owner.to_string(), repo.to_string(), number));
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -496,39 +417,5 @@ mod tests {
         let label: GitHubLabel = serde_json::from_str(json).unwrap();
         assert_eq!(label.name, "enhancement");
         assert_eq!(label.color, "84b6eb");
-    }
-
-    // Backward compatibility tests
-    #[test]
-    fn test_parse_issue_url() {
-        let result =
-            GitHubClient::parse_issue_url("https://github.com/test-owner/test-repo/issues/42");
-        assert_eq!(result, Some(("test-owner".into(), "test-repo".into(), 42)));
-    }
-
-    #[test]
-    fn test_parse_issue_url_with_anchor() {
-        let result = GitHubClient::parse_issue_url(
-            "https://github.com/owner/repo/issues/123#issuecomment-456",
-        );
-        assert_eq!(result, Some(("owner".into(), "repo".into(), 123)));
-    }
-
-    #[test]
-    fn test_extract_issue_number() {
-        assert_eq!(
-            GitHubClient::extract_issue_number("https://github.com/owner/repo/issues/123"),
-            Some(123)
-        );
-        assert_eq!(
-            GitHubClient::extract_issue_number("https://github.com/owner/repo/issues/456#comment"),
-            Some(456)
-        );
-    }
-
-    #[test]
-    fn test_issue_state_display() {
-        assert_eq!(IssueState::Open.to_string(), "open");
-        assert_eq!(IssueState::Closed.to_string(), "closed");
     }
 }

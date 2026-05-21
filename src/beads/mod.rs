@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
 //! Beads client for creating tracking beads.
 //!
 //! This module provides the interface for filing epic and child beads

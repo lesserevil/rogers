@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Will-not-do handling for Rodgers.
 //!
 //! This module implements the handling of `will-not-do` decisions made by humans.

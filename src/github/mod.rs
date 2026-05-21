@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
 //! GitHub API client for Rodgers issue and comment operations.
 //!
 //! This module provides the interface for fetching GitHub issue data needed

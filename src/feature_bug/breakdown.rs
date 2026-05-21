@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Epic and child bead breakdown logic.
 //!
 //! This module implements the breakdown analysis defined in plans/feature-bug-plan.md §Bead Breakdown.
@@ -424,7 +426,7 @@ fn extract_ac_logical_units(body: &str) -> Vec<ChildBeadSpec> {
             || trimmed.starts_with("ac-")
         {
             let description = trimmed
-                .trim_start_matches(|c: char| c == '-' || c == '[' || c == ']')
+                .trim_start_matches(|c: char| ['-', '[', ']'].contains(&c))
                 .trim();
 
             if !description.is_empty()

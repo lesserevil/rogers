@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Error types for Rogers.
 
 use thiserror::Error;
@@ -10,7 +12,7 @@ pub enum RogersError {
     #[error("GitHub API error: {0}")]
     GitHub(#[from] reqwest::Error),
 
-#[error("GitHub API returned non-success: code={code} message={message}")]
+    #[error("GitHub API returned non-success: code={code} message={message}")]
     GitHubStatus { code: u16, message: String },
 
     #[error("authentication failed: {0}")]
