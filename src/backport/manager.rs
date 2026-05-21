@@ -328,6 +328,8 @@ pub async fn check_pending_discussions(
             &discussion.discussion_created_at,
             release_config,
             github,
+            false, // is_vote_locked: false for new backport approvals
+            false, // is_discussion_closed: false (will be checked by GitHub)
         )
         .await?;
 
@@ -1369,10 +1371,7 @@ mod tests {
             needs_reminder.is_empty(),
             "Should NOT add to needs_reminder when reminder_sent=true"
         );
-        assert!(
-            result.reminder_sent,
-            "reminder_sent flag should be true"
-        );
+        assert!(result.reminder_sent, "reminder_sent flag should be true");
     }
 
     /// CRIT-9: DiscussionVoteResult.reminder_sent = false means post reminder.
@@ -1409,10 +1408,7 @@ mod tests {
             "Should add to needs_reminder when reminder_sent=false"
         );
         assert_eq!(needs_reminder[0], 42, "Should add discussion number 42");
-        assert!(
-            !result.reminder_sent,
-            "reminder_sent flag should be false"
-        );
+        assert!(!result.reminder_sent, "reminder_sent flag should be false");
     }
 
     /// CRIT-9: Approved state should not trigger any reminder action.
@@ -1462,11 +1458,7 @@ mod tests {
             needs_reminder.is_empty(),
             "Expired discussion should not need reminder"
         );
-        assert_eq!(
-            needs_close.len(),
-            1,
-            "Expired discussion should need close"
-        );
+        assert_eq!(needs_close.len(), 1, "Expired discussion should need close");
     }
 
     /// CRIT-9: Default voting_window_days is 2 per config.

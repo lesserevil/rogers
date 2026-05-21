@@ -7,21 +7,16 @@
 //!
 //! Each detected candidate returns a [`BackportCandidate`] with enough context
 //! to allow the manager to file backport beads for all active release branches.
+//!
+//! Security patch detection is delegated to [`super::security`].
 
 use regex::Regex;
 use std::sync::OnceLock;
 use tracing::{debug, info, warn};
 
+use super::security::{self, SecuritySignal};
 use crate::Config;
 use crate::github::client::{GithubClient, MergedPr};
-
-/// CVE identifier pattern as documented in the plan.
-/// Matches strings like "CVE-2024-12345".
-static CVE_PATTERN: OnceLock<Regex> = OnceLock::new();
-
-fn cve_pattern() -> &'static Regex {
-    CVE_PATTERN.get_or_init(|| Regex::new(r"CVE-\d{4}-\d{4,}").expect("hardcoded regex is valid"))
-}
 
 static BACKPORT_ME_PATTERN: OnceLock<Regex> = OnceLock::new();
 
@@ -143,74 +138,52 @@ async fn classify_pr(
 
 /// Detect if the PR is a security patch.
 ///
-/// Signals checked (any present → security patch):
-/// 1. GH Advisory match (via GitHub Advisories API)
-/// 2. `security` label on the PR or linked issue (configurable label name)
-/// 3. CVE pattern in PR title/body or linked issue body
+/// Delegates to [`super::security::detect_security_signals`] which checks all
+/// three signals: GH Advisory match, security label, and CVE pattern.
 async fn detect_security_patch(
     pr: &MergedPr,
     github: &GithubClient,
     security_label: &str,
 ) -> Result<Option<BackportReason>, crate::RogersError> {
-    // Signal 1: GH Advisory API availability check — presence indicates
-    // a security advisories ecosystem is in use. Full linking requires more
-    // complex GHSA↔PR metadata; we check the advisory list as a lightweight proxy.
-    let _ = github.advisories().await; // intentionally discard — just checking API reachability
+    // Extract linked issue number from PR body for security checks
+    let body = pr.body.as_deref().unwrap_or("");
+    let issue_number =
+        issue_ref_capture(body).and_then(|caps| caps.get(1).and_then(|m| m.as_str().parse().ok()));
 
-    // Signal 2: Check for `security` label on the PR's own labels
-    for label in &pr.labels {
-        if label.name.eq_ignore_ascii_case(security_label) {
-            info!(
-                "PR #{} has security label '{}'; flagging as security patch",
-                pr.number, security_label
-            );
-            return Ok(Some(BackportReason::SecurityPatch));
-        }
-    }
+    // Use the dedicated security module to detect signals
+    let signals = security::detect_security_signals(
+        github,
+        security_label,
+        &pr.title,
+        pr.body.as_deref(),
+        issue_number,
+    )
+    .await?;
 
-    // Signal 3: CVE pattern in PR title or body
-    let title_matches = cve_pattern().is_match(&pr.title);
-    let body_matches = pr.body.as_ref().is_some_and(|b| cve_pattern().is_match(b));
-
-    if title_matches || body_matches {
-        info!(
-            "PR #{} contains CVE pattern (title_match={}, body_match={})",
-            pr.number, title_matches, body_matches
-        );
-        return Ok(Some(BackportReason::SecurityPatch));
-    }
-
-    // Signal 4: Security label and CVE check on the linked issue
-    if let Some(ref body) = pr.body {
-        if let Some(caps) = issue_ref_capture(body) {
-            let issue_num: u64 = caps[1].parse().unwrap_or(0);
-            if issue_num > 0 {
-                // Check security label on the linked issue
-                let issue_labels = github.issue_labels(issue_num).await.unwrap_or_default();
-                for label in &issue_labels {
-                    if label.name.eq_ignore_ascii_case(security_label) {
-                        info!(
-                            "Linked issue #{} has security label '{}'; PR #{} flagged as security patch",
-                            issue_num, security_label, pr.number
-                        );
-                        return Ok(Some(BackportReason::SecurityPatch));
-                    }
+    if !signals.is_empty() {
+        for signal in &signals {
+            match signal {
+                SecuritySignal::GHAdvisory { ghsa_id } => {
+                    info!(
+                        "PR #{} has GH Advisory '{}'; flagging as security patch",
+                        pr.number, ghsa_id
+                    );
                 }
-
-                // Fetch full issue to check CVE pattern in body
-                if let Ok(issue) = github.issue(issue_num).await {
-                    if let Some(ref issue_body) = issue.body {
-                        if cve_pattern().is_match(issue_body) {
-                            info!(
-                                "Linked issue #{} body contains CVE pattern; PR #{} flagged as security patch",
-                                issue_num, pr.number
-                            );
-                            return Ok(Some(BackportReason::SecurityPatch));
-                        }
-                    }
+                SecuritySignal::SecurityLabel { label_name } => {
+                    info!(
+                        "PR #{} has security label '{}'; flagging as security patch",
+                        pr.number, label_name
+                    );
+                }
+                SecuritySignal::CvePattern { cve_id } => {
+                    info!(
+                        "PR #{} contains CVE '{}'; flagging as security patch",
+                        pr.number, cve_id
+                    );
                 }
             }
         }
+        return Ok(Some(BackportReason::SecurityPatch));
     }
 
     Ok(None)
@@ -311,15 +284,6 @@ mod tests {
                 .collect(),
             state: "closed".to_string(),
         }
-    }
-
-    #[test]
-    fn test_cve_pattern() {
-        let re = cve_pattern();
-        assert!(re.is_match("Fixed CVE-2024-12345"));
-        assert!(re.is_match("See also CVE-2023-99999 in the changelog"));
-        assert!(!re.is_match("CVE-24-12345")); // year too short
-        assert!(!re.is_match("CVE-2024-1")); // ID too short
     }
 
     #[test]

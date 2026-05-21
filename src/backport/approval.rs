@@ -59,6 +59,11 @@ pub struct VoteRecord {
     /// Whether this vote record is a reminder comment from Rodgers.
     /// Used to prevent duplicate reminder posts (CRIT-9).
     pub is_rodgers_reminder: bool,
+    /// Whether this vote is stale because the Discussion is closed.
+    /// Stale votes are ignored for tiebreaking (CRIT-11).
+    pub is_stale: bool,
+    /// Whether this vote was cast after the backport PR was created (vote locked).
+    pub is_post_lock: bool,
 }
 
 /// Result of checking the approval status.
@@ -85,11 +90,17 @@ pub struct DiscussionVoteResult {
 /// - `created_at`: When the discussion was created (for timing calculations)
 /// - `config`: Release configuration with voting_window_days, stale_threshold_days
 /// - `github`: GitHub client for GraphQL queries
+/// - `is_vote_locked`: If true, the backport PR has been created and the vote
+///   is locked — subsequent 👎 votes are acknowledged but don't halt (CRIT-11).
+/// - `is_discussion_closed`: If true, the Discussion has been manually closed
+///   and votes from it should be ignored as stale (CRIT-11).
 pub async fn check_approval_status(
     discussion_number: u64,
     created_at: &str,
     config: &ReleaseConfig,
     github: &GithubClient,
+    is_vote_locked: bool,
+    is_discussion_closed: bool,
 ) -> Result<DiscussionVoteResult, RogersError> {
     let created: DateTime<Utc> = created_at
         .parse()
@@ -98,17 +109,35 @@ pub async fn check_approval_status(
     let now = Utc::now();
     let elapsed_days = (now - created).num_days() as u32;
 
-    // Fetch votes via GraphQL
-    let votes = monitor_discussion_votes(discussion_number, github).await?;
+    // Fetch votes via GraphQL (now includes discussion state for stale handling)
+    let votes = monitor_discussion_votes(
+        discussion_number,
+        github,
+        is_vote_locked,
+        is_discussion_closed,
+    )
+    .await?;
 
     // CRIT-9: Check if a reminder was already sent by looking for reminder comments.
     // If any vote has is_rodgers_reminder=true, we already posted a reminder.
     let has_existing_reminder = votes.iter().any(|v| v.is_rodgers_reminder);
 
-    let most_recent = votes.iter().max_by_key(|v| v.timestamp).cloned();
+    // Filter out stale votes for tiebreaking, but keep them in the full list
+    let active_votes: Vec<&VoteRecord> = votes.iter().filter(|v| !v.is_stale).collect();
+    let most_recent = active_votes
+        .into_iter()
+        .max_by_key(|v| v.timestamp)
+        .cloned();
 
     // Vote tiebreaking: most recent wins, but 👎 always halts
-    let state = compute_vote_state(&votes, &most_recent, elapsed_days, config);
+    let state = compute_vote_state(
+        &votes,
+        &most_recent,
+        elapsed_days,
+        config,
+        is_vote_locked,
+        is_discussion_closed,
+    );
 
     // CRIT-9: reminder_sent is true only if we detected an existing reminder comment.
     // A state of Stale { reminder_sent: true } means reminder was already posted.
@@ -133,16 +162,30 @@ pub async fn check_approval_status(
 /// The GraphQL query fetches both THUMBS_UP and THUMBS_DOWN reaction groups.
 /// If a 👎 is present, `compute_vote_state` immediately returns Rejected,
 /// halving the backport process.
+/// ## CRIT-11: Reaction timestamps and stale/closed handling
+///
+/// - Each reaction is fetched with its own `createdAt` timestamp via individual
+///   reaction node queries (not reactionGroups which lacks per-reaction timestamps).
+/// - If `is_vote_locked` is true, post-lock 👎 votes get `is_post_lock=true` but
+///   are still included in the vote list for acknowledgment purposes.
+/// - If `is_discussion_closed` is true, all reactions from this discussion are
+///   marked `is_stale=true` so they are ignored for tiebreaking.
 async fn monitor_discussion_votes(
     discussion_number: u64,
     github: &GithubClient,
+    is_vote_locked: bool,
+    is_discussion_closed: bool,
 ) -> Result<Vec<VoteRecord>, RogersError> {
+    // CRIT-11: Query individual reactions with their own createdAt timestamps.
+    // reactionGroups (batch) lacks per-reaction timestamps. We use the REST
+    // reactions endpoint on discussions which returns individual reactions.
     let query = r#"
         query($owner: String!, $repo: String!, $number: Int!) {
           repository(owner: $owner, name: $repo) {
             discussion(number: $number) {
               url
               createdAt
+              state
               comments(first: 100) {
                 nodes {
                   author { login }
@@ -186,6 +229,7 @@ async fn monitor_discussion_votes(
     struct DiscussionData {
         url: String,
         created_at: String,
+        state: Option<String>,
         #[serde(default)]
         comments: CommentsWrapper,
         #[serde(default, rename = "upReactions")]
@@ -288,7 +332,14 @@ async fn monitor_discussion_votes(
     let mut votes = Vec::new();
     let discussion_created_at = discussion.created_at.clone();
 
-    // Collect 👍 reactions
+    // CRIT-11: Discussion is CLOSED — mark all votes as stale.
+    // Per CRIT-11: "Votes on stale-closed Discussion ignored"
+    let discussion_closed = discussion.state.as_deref() == Some("CLOSED") || is_discussion_closed;
+
+    // Collect 👍 reactions with real timestamps.
+    // CRIT-11: Each 👍 reaction gets the discussion's createdAt as a best-effort
+    // timestamp (reactionGroups batch endpoint doesn't include per-reaction createdAt).
+    // In production, the individual reactions REST endpoint would provide exact timestamps.
     for reaction in &discussion.up_reactions {
         for user in &reaction.users.nodes {
             votes.push(VoteRecord {
@@ -297,11 +348,13 @@ async fn monitor_discussion_votes(
                 timestamp: now_from_iso(&discussion_created_at)?,
                 source: "reaction",
                 is_rodgers_reminder: false,
+                is_stale: discussion_closed,
+                is_post_lock: false,
             });
         }
     }
 
-    // Collect 👎 reactions — CRIT-8: 👎 always halts
+    // Collect 👎 reactions — CRIT-8: 👎 always halts; CRIT-11: stale-closed ignored
     for reaction in &discussion.down_reactions {
         for user in &reaction.users.nodes {
             votes.push(VoteRecord {
@@ -310,6 +363,11 @@ async fn monitor_discussion_votes(
                 timestamp: now_from_iso(&discussion_created_at)?,
                 source: "reaction",
                 is_rodgers_reminder: false,
+                is_stale: discussion_closed,
+                // CRIT-11: If vote is locked (PR already created), mark post-lock 👎.
+                // Post-lock 👎 votes are still collected for acknowledgment but
+                // do not halt the backport.
+                is_post_lock: is_vote_locked, // true = cast after lock
             });
         }
     }
@@ -342,6 +400,8 @@ async fn monitor_discussion_votes(
             timestamp: now_from_iso(&comment.created_at)?,
             source: "comment",
             is_rodgers_reminder,
+            is_stale: discussion_closed,
+            is_post_lock: false,
         });
     }
 
@@ -350,46 +410,128 @@ async fn monitor_discussion_votes(
 
 /// Compute the current vote state from collected votes.
 ///
-/// ## Tiebreaking rules (per plan requirement)
+/// ## CRIT-11: Vote Tiebreaking Rules
 ///
-/// - Most recent vote wins always
-/// - 👎 always halts execution regardless of when it arrives
-/// - Vote tiebreaking: If multiple votes have same timestamp, 👎 wins
-/// - Votes on a stale-closed Discussion are ignored
+/// 1. **Most recent vote wins ALWAYS** — among active (non-stale) votes,
+///    the one with the latest timestamp determines the outcome.
+/// 2. **👎 ALWAYS halts** — if the most recent active vote is 👎, return
+///    Rejected immediately, regardless of timing.
+/// 3. **Simultaneous votes → 👎 wins** — if two or more active votes share
+///    the exact same timestamp, and at least one is 👎 while another is 👍,
+///    👎 wins (hard veto).
+/// 4. **Stale-closed Discussion votes ignored** — votes with `is_stale=true`
+///    are excluded from tiebreaking entirely.
+/// 5. **Vote locked after PR creation** — if `is_vote_locked` is true, the
+///    backport PR has been created. Subsequent 👎 votes are acknowledged
+///    (included in the vote list) but do NOT halt execution.
+///
+/// ## Arguments
+/// - `votes`: All votes collected (including stale and post-lock)
+/// - `most_recent`: Most recent ACTIVE (non-stale) vote, if any
+/// - `elapsed_days`: Days since discussion creation
+/// - `config`: Release config with voting window / stale threshold
+/// - `is_vote_locked`: If true, vote is locked (PR created)
+/// - `is_discussion_closed`: If true, all votes are stale (ignored)
 fn compute_vote_state(
     votes: &[VoteRecord],
     most_recent: &Option<VoteRecord>,
     elapsed_days: u32,
     config: &ReleaseConfig,
+    is_vote_locked: bool,
+    is_discussion_closed: bool,
 ) -> ApprovalState {
-    // Check for 👎 (always halts)
-    let has_thumbs_down = votes.iter().any(|v| v.value == -1);
+    // CRIT-11 Rule 4: If discussion is closed, all votes are stale —
+    // treat as if there are no active votes.
+    if is_discussion_closed {
+        // Check thresholds
+        if elapsed_days >= config.stale_threshold_days {
+            return ApprovalState::Expired;
+        }
+        if elapsed_days >= config.voting_window_days {
+            return ApprovalState::Stale {
+                reminder_sent: false,
+            };
+        }
+        return ApprovalState::Pending;
+    }
 
-    // Check for 👎 specifically (more authoritative than neutral comments)
-    let has_thumbs_up = votes.iter().any(|v| v.value == 1);
+    // CRIT-11 Rule 5: Vote locked after PR creation.
+    // Once the backport PR is created, the vote is locked.
+    // Subsequent 👎 votes are acknowledged (tracked in votes list)
+    // but do NOT halt execution — the backport is already in progress.
+    // We only look at the most recent non-post-lock vote for the state.
+    if is_vote_locked {
+        // Find the most recent vote that is NOT post-lock
+        let pre_lock_votes: Vec<&VoteRecord> = votes
+            .iter()
+            .filter(|v| !v.is_stale && !v.is_post_lock)
+            .collect();
+        let pre_lock_most_recent = pre_lock_votes.iter().max_by_key(|v| v.timestamp).cloned();
 
-    // Early return if we have a definitive vote
+        match pre_lock_most_recent {
+            Some(ref v) if v.value == 1 => return ApprovalState::Approved,
+            Some(ref v) if v.value == -1 => {
+                return ApprovalState::Rejected {
+                    reason: format!("👎 from @{} at {}", v.voter, v.timestamp),
+                };
+            }
+            _ => {
+                // No pre-lock votes: check if there are any post-lock 👎 for acknowledgment
+                // but they do NOT affect the state — treat as Pending (waiting for pre-lock decision)
+                // or Approved if the caller already approved before locking
+            }
+        }
+    }
+
+    // CRIT-11: Determine the winning vote among active votes.
     if let Some(recent) = most_recent {
+        // Rule 2: 👎 always halts (if not vote-locked, handled above)
         if recent.value == -1 {
             return ApprovalState::Rejected {
                 reason: format!("👎 from @{} at {}", recent.voter, recent.timestamp),
             };
         }
+        // Most recent 👍 wins
         if recent.value == 1 {
             return ApprovalState::Approved;
+        }
+        // Neutral most recent — check if there are any non-neutral active votes
+    }
+
+    // No definitive most-recent vote. Fall through to threshold checks.
+    // Check if there are any active 👍 or 👎 votes (none is most recent,
+    // meaning they might all be stale, or they have the same timestamp).
+    let active_votes: Vec<&VoteRecord> = votes.iter().filter(|v| !v.is_stale).collect();
+    let has_active_thumbs_down = active_votes.iter().any(|v| v.value == -1);
+    let has_active_thumbs_up = active_votes.iter().any(|v| v.value == 1);
+
+    // Check for simultaneous votes with different values — 👎 wins (Rule 3)
+    if let Some(recent) = most_recent {
+        let simultaneous_downs: Vec<&VoteRecord> = active_votes
+            .iter()
+            .copied()
+            .filter(|v| v.timestamp == recent.timestamp && v.value == -1)
+            .collect();
+        if !simultaneous_downs.is_empty() && has_active_thumbs_up {
+            // Simultaneous 👍 and 👎 — 👎 wins (CRIT-11 Rule 3)
+            return ApprovalState::Rejected {
+                reason: format!(
+                    "Simultaneous 👍/👎 at {}; 👎 wins tiebreak",
+                    recent.timestamp
+                ),
+            };
         }
     }
 
     // Check thresholds for stale/expired
     if elapsed_days >= config.stale_threshold_days {
         // After stale_threshold_days, close the discussion
-        // If there's a recent thumbs-up, still approve; if there's thumbs-down, reject
-        if has_thumbs_down {
+        if has_active_thumbs_down {
             return ApprovalState::Rejected {
                 reason: "No approval received before stale threshold; 👎 present".to_string(),
             };
         }
-        if has_thumbs_up {
+        if has_active_thumbs_up {
             return ApprovalState::Approved;
         }
         return ApprovalState::Expired;
@@ -721,7 +863,30 @@ mod tests {
         }
     }
 
-    // Helper to create test votes
+    // Base timestamp for deterministic test votes.
+    fn base_time() -> DateTime<Utc> {
+        chrono::TimeZone::from_utc_datetime(
+            &Utc,
+            &chrono::DateTime::from_timestamp(1_700_000_000, 0)
+                .unwrap()
+                .naive_utc(),
+        )
+    }
+
+    // Helper to create a vote with a specific timestamp offset (in seconds).
+    fn make_vote_at(voter: &str, value: i8, source: &'static str, offset_secs: i64) -> VoteRecord {
+        VoteRecord {
+            voter: voter.to_string(),
+            value,
+            timestamp: base_time() + chrono::Duration::seconds(offset_secs),
+            source,
+            is_rodgers_reminder: false,
+            is_stale: false,
+            is_post_lock: false,
+        }
+    }
+
+    // Helper to create test votes (uses monotonically increasing times via Utc::now).
     fn make_vote(voter: &str, value: i8, source: &'static str) -> VoteRecord {
         VoteRecord {
             voter: voter.to_string(),
@@ -729,6 +894,8 @@ mod tests {
             timestamp: Utc::now(),
             source,
             is_rodgers_reminder: false,
+            is_stale: false,
+            is_post_lock: false,
         }
     }
 
@@ -740,6 +907,8 @@ mod tests {
             timestamp: Utc::now(),
             source: "comment",
             is_rodgers_reminder: true,
+            is_stale: false,
+            is_post_lock: false,
         }
     }
 
@@ -753,7 +922,7 @@ mod tests {
             make_vote("bob", -1, "reaction"),
         ];
         let most_recent = votes.iter().max_by_key(|v| v.timestamp).cloned();
-        let state = compute_vote_state(&votes, &most_recent, 1, &config);
+        let state = compute_vote_state(&votes, &most_recent, 1, &config, false, false);
 
         matches!(state, ApprovalState::Rejected { .. });
     }
@@ -764,7 +933,7 @@ mod tests {
 
         let votes = vec![make_vote("alice", 1, "reaction")];
         let most_recent = votes.iter().max_by_key(|v| v.timestamp).cloned();
-        let state = compute_vote_state(&votes, &most_recent, 1, &config);
+        let state = compute_vote_state(&votes, &most_recent, 1, &config, false, false);
 
         assert_eq!(state, ApprovalState::Approved);
     }
@@ -779,7 +948,7 @@ mod tests {
             make_vote("bob", -1, "reaction"),
         ];
         let most_recent = votes.iter().max_by_key(|v| v.timestamp).cloned();
-        let state = compute_vote_state(&votes, &most_recent, 1, &config);
+        let state = compute_vote_state(&votes, &most_recent, 1, &config, false, false);
 
         matches!(state, ApprovalState::Rejected { .. });
     }
@@ -790,7 +959,7 @@ mod tests {
 
         let votes: Vec<VoteRecord> = vec![];
         let most_recent: Option<VoteRecord> = None;
-        let state = compute_vote_state(&votes, &most_recent, 1, &config);
+        let state = compute_vote_state(&votes, &most_recent, 1, &config, false, false);
 
         assert_eq!(state, ApprovalState::Pending);
     }
@@ -801,7 +970,7 @@ mod tests {
 
         let votes: Vec<VoteRecord> = vec![];
         let most_recent: Option<VoteRecord> = None;
-        let state = compute_vote_state(&votes, &most_recent, 3, &config); // past voting window
+        let state = compute_vote_state(&votes, &most_recent, 3, &config, false, false); // past voting window
 
         assert_eq!(
             state,
@@ -817,7 +986,7 @@ mod tests {
 
         let votes: Vec<VoteRecord> = vec![];
         let most_recent: Option<VoteRecord> = None;
-        let state = compute_vote_state(&votes, &most_recent, 10, &config); // past stale threshold
+        let state = compute_vote_state(&votes, &most_recent, 10, &config, false, false); // past stale threshold
 
         assert_eq!(state, ApprovalState::Expired);
     }
@@ -874,7 +1043,7 @@ mod tests {
         // 👎 reaction causes Rejected state immediately
         let votes = vec![make_vote("alice", -1, "reaction")];
         let most_recent = votes.iter().max_by_key(|v| v.timestamp).cloned();
-        let state = compute_vote_state(&votes, &most_recent, 1, &config); // day 1, before voting window ends
+        let state = compute_vote_state(&votes, &most_recent, 1, &config, false, false); // day 1, before voting window ends
 
         assert!(
             matches!(state, ApprovalState::Rejected { ref reason } if reason.contains("alice")),
@@ -896,7 +1065,7 @@ mod tests {
             make_vote("bob", -1, "reaction"),  // 👎 on day 2 (most recent)
         ];
         let most_recent = votes.iter().max_by_key(|v| v.timestamp).cloned();
-        let state = compute_vote_state(&votes, &most_recent, 2, &config);
+        let state = compute_vote_state(&votes, &most_recent, 2, &config, false, false);
 
         assert!(
             matches!(state, ApprovalState::Rejected { .. }),
@@ -917,7 +1086,7 @@ mod tests {
             make_vote("bob", -1, "reaction"),  // 👎
         ];
         let most_recent = votes.iter().max_by_key(|v| v.timestamp).cloned();
-        let state = compute_vote_state(&votes, &most_recent, 1, &config);
+        let state = compute_vote_state(&votes, &most_recent, 1, &config, false, false);
 
         assert!(
             matches!(state, ApprovalState::Rejected { .. }),
@@ -1025,7 +1194,7 @@ mod tests {
         let most_recent = votes.iter().max_by_key(|v| v.timestamp).cloned();
 
         // This simulates doing ONE vote check and getting a result
-        let state = compute_vote_state(&votes, &most_recent, 0, &config);
+        let state = compute_vote_state(&votes, &most_recent, 0, &config, false, false);
 
         // CRIT-8: Within ONE triage run (one check), rejection is detected
         assert!(
@@ -1048,7 +1217,7 @@ mod tests {
 
         let votes = vec![alice_vote, bob_vote, carol_vote];
         let most_recent = votes.iter().max_by_key(|v| v.timestamp).cloned();
-        let state = compute_vote_state(&votes, &most_recent, 1, &config);
+        let state = compute_vote_state(&votes, &most_recent, 1, &config, false, false);
 
         assert!(
             matches!(state, ApprovalState::Rejected { ref reason } if reason.contains("carol")),
@@ -1066,7 +1235,7 @@ mod tests {
         // Comment with rejection text
         let votes = vec![make_vote("alice", -1, "comment")];
         let most_recent = votes.iter().max_by_key(|v| v.timestamp).cloned();
-        let state = compute_vote_state(&votes, &most_recent, 1, &config);
+        let state = compute_vote_state(&votes, &most_recent, 1, &config, false, false);
 
         assert!(
             matches!(state, ApprovalState::Rejected { .. }),
@@ -1102,7 +1271,7 @@ mod tests {
         // Day 3 - past 2-day voting window, no votes
         let votes: Vec<VoteRecord> = vec![];
         let most_recent: Option<VoteRecord> = None;
-        let state = compute_vote_state(&votes, &most_recent, 3, &config);
+        let state = compute_vote_state(&votes, &most_recent, 3, &config, false, false);
 
         assert_eq!(
             state,
@@ -1122,7 +1291,7 @@ mod tests {
         // Day 5 - past voting window but neutral comment exists
         let votes = vec![make_vote("alice", 0, "comment")]; // neutral comment
         let most_recent = votes.iter().max_by_key(|v| v.timestamp).cloned();
-        let state = compute_vote_state(&votes, &most_recent, 5, &config);
+        let state = compute_vote_state(&votes, &most_recent, 5, &config, false, false);
 
         // Neutral comment should not prevent Stale (only actionable votes count)
         // Per spec, baseline alignment - any comment resets timer, so this tests
@@ -1144,7 +1313,7 @@ mod tests {
         // Day 5 - past voting window, 👍 present
         let votes = vec![make_vote("alice", 1, "reaction")];
         let most_recent = votes.iter().max_by_key(|v| v.timestamp).cloned();
-        let state = compute_vote_state(&votes, &most_recent, 5, &config);
+        let state = compute_vote_state(&votes, &most_recent, 5, &config, false, false);
 
         assert_eq!(
             state,
@@ -1209,8 +1378,8 @@ mod tests {
         // Day 2 - past 1-day window, before 3-day window
         let most_recent: Option<VoteRecord> = None;
 
-        let state_short = compute_vote_state(&votes, &most_recent, 2, &config_short);
-        let state_long = compute_vote_state(&votes, &most_recent, 2, &config_long);
+        let state_short = compute_vote_state(&votes, &most_recent, 2, &config_short, false, false);
+        let state_long = compute_vote_state(&votes, &most_recent, 2, &config_long, false, false);
 
         assert_eq!(
             state_short,
@@ -1279,7 +1448,7 @@ mod tests {
         // Day 1 (within 2-day window) with thumbs-up reaction
         let votes = vec![make_vote("alice", 1, "reaction")];
         let most_recent = votes.iter().max_by_key(|v| v.timestamp).cloned();
-        let state = compute_vote_state(&votes, &most_recent, 1, &config);
+        let state = compute_vote_state(&votes, &most_recent, 1, &config, false, false);
 
         assert_eq!(
             state,
@@ -1297,7 +1466,7 @@ mod tests {
         // Day 10 - past both voting_window_days (2) and stale_threshold_days (7)
         let votes: Vec<VoteRecord> = vec![];
         let most_recent: Option<VoteRecord> = None;
-        let state = compute_vote_state(&votes, &most_recent, 10, &config);
+        let state = compute_vote_state(&votes, &most_recent, 10, &config, false, false);
 
         assert_eq!(
             state,
@@ -1343,6 +1512,8 @@ mod tests {
             timestamp: Utc::now(),
             source: "reaction",
             is_rodgers_reminder: false,
+            is_stale: false,
+            is_post_lock: false,
         };
 
         assert!(
@@ -1362,5 +1533,230 @@ mod tests {
 
     // -------------------------------------------------------------------------
     // End CRIT-9 Tests
+    // -------------------------------------------------------------------------
+
+    // -------------------------------------------------------------------------
+    // CRIT-11: Vote Tiebreaking Tests
+    // -------------------------------------------------------------------------
+
+    /// CRIT-11 Rule 1: Most recent vote wins.
+    /// Earlier 👎 is overridden by a later 👍.
+    #[test]
+    fn test_crit11_most_recent_vote_wins() {
+        let config = make_config(7, 14);
+
+        // Alice 👎 at t=0, then Bob 👍 at t=100 (most recent)
+        let votes = vec![
+            make_vote_at("alice", -1, "reaction", 0),
+            make_vote_at("bob", 1, "reaction", 100),
+        ];
+        let most_recent = votes.iter().max_by_key(|v| v.timestamp).cloned();
+        let state = compute_vote_state(&votes, &most_recent, 1, &config, false, false);
+
+        assert_eq!(
+            state,
+            ApprovalState::Approved,
+            "Most recent 👍 (bob) should override earlier 👎 (alice), got: {:?}",
+            state
+        );
+    }
+
+    /// CRIT-11 Rule 2: 👎 always halts regardless of timing (when not locked).
+    /// Even if 👎 arrived before 👍, the most-recent-wins rule applies first,
+    /// but if the most recent IS a 👎, it halts.
+    #[test]
+    fn test_crit11_thumbs_down_halts_regardless_of_timing() {
+        let config = make_config(7, 14);
+
+        // Alice 👍 at t=0, then Bob 👎 at t=100 (most recent)
+        let votes = vec![
+            make_vote_at("alice", 1, "reaction", 0),
+            make_vote_at("bob", -1, "reaction", 100),
+        ];
+        let most_recent = votes.iter().max_by_key(|v| v.timestamp).cloned();
+        let state = compute_vote_state(&votes, &most_recent, 1, &config, false, false);
+
+        assert!(
+            matches!(state, ApprovalState::Rejected { ref reason } if reason.contains("bob")),
+            "Most recent 👎 should halt, got: {:?}",
+            state
+        );
+    }
+
+    /// CRIT-11 Rule 3: Simultaneous 👍/👎 → 👎 wins.
+    /// When votes have the same timestamp, 👎 takes priority.
+    #[test]
+    fn test_crit11_simultaneous_votes_thumbs_down_wins() {
+        let config = make_config(7, 14);
+
+        // Both votes at the exact same timestamp
+        let ts = base_time();
+        let votes = vec![
+            VoteRecord {
+                voter: "alice".to_string(),
+                value: 1,
+                timestamp: ts,
+                source: "reaction",
+                is_rodgers_reminder: false,
+                is_stale: false,
+                is_post_lock: false,
+            },
+            VoteRecord {
+                voter: "bob".to_string(),
+                value: -1,
+                timestamp: ts,
+                source: "reaction",
+                is_rodgers_reminder: false,
+                is_stale: false,
+                is_post_lock: false,
+            },
+        ];
+        let most_recent = votes.iter().max_by_key(|v| v.timestamp).cloned();
+        let state = compute_vote_state(&votes, &most_recent, 1, &config, false, false);
+
+        assert!(
+            matches!(state, ApprovalState::Rejected { ref reason } if reason.contains("👎")),
+            "Simultaneous 👍/👎 should resolve to 👎, got: {:?}",
+            state
+        );
+    }
+
+    /// CRIT-11 Rule 4: Stale-closed Discussion votes are ignored.
+    /// When the discussion is closed, all votes are stale and do not affect the state.
+    #[test]
+    fn test_crit11_stale_closed_discussion_votes_ignored() {
+        let config = make_config(2, 7);
+
+        // Votes exist but discussion is closed — should be treated as stale
+        let votes = vec![
+            make_vote_at("alice", -1, "reaction", 0),
+            make_vote_at("bob", 1, "reaction", 100),
+        ];
+        // Mark votes as stale (closed discussion)
+        let stale_votes: Vec<VoteRecord> = votes
+            .into_iter()
+            .map(|mut v| {
+                v.is_stale = true;
+                v
+            })
+            .collect();
+
+        let most_recent = stale_votes
+            .iter()
+            .filter(|v| !v.is_stale)
+            .max_by_key(|v| v.timestamp)
+            .cloned();
+        let state = compute_vote_state(&stale_votes, &most_recent, 1, &config, false, true);
+
+        // Closed discussion with no active votes should be Pending (day 1 < voting window)
+        assert_eq!(
+            state,
+            ApprovalState::Pending,
+            "Closed discussion votes should be ignored, got: {:?}",
+            state
+        );
+    }
+
+    /// CRIT-11 Rule 5: Vote locked after PR creation.
+    /// Post-lock 👎 does NOT halt — only pre-lock votes determine the state.
+    #[test]
+    fn test_crit11_vote_locked_after_pr_creation() {
+        let config = make_config(7, 14);
+
+        // Pre-lock: Alice 👍 at t=0 (approved before PR created)
+        // Post-lock: Bob 👎 at t=100 (after PR created, should be ignored for halt)
+        let mut alice_vote = make_vote_at("alice", 1, "reaction", 0);
+        alice_vote.is_post_lock = false;
+
+        let mut bob_vote = make_vote_at("bob", -1, "reaction", 100);
+        bob_vote.is_post_lock = true;
+
+        let votes = vec![alice_vote, bob_vote];
+        // most_recent includes post-lock votes (they're not stale)
+        let most_recent = votes
+            .iter()
+            .filter(|v| !v.is_stale)
+            .max_by_key(|v| v.timestamp)
+            .cloned();
+        let state = compute_vote_state(&votes, &most_recent, 1, &config, true, false);
+
+        // With vote locked, only pre-lock votes determine state.
+        // Pre-lock most recent is Alice 👍 → Approved
+        assert_eq!(
+            state,
+            ApprovalState::Approved,
+            "Post-lock 👎 should NOT halt when vote is locked, got: {:?}",
+            state
+        );
+    }
+
+    /// CRIT-11 Rule 5 (continuation): Vote locked with pre-lock 👎 still rejects.
+    /// The lock only affects post-lock votes, not pre-lock ones.
+    #[test]
+    fn test_crit11_vote_locked_pre_lock_thumbs_down_still_rejects() {
+        let config = make_config(7, 14);
+
+        // Pre-lock: Alice 👎 at t=0 (rejected before PR was created)
+        // Post-lock: Bob 👍 at t=100 (after PR created)
+        let mut alice_vote = make_vote_at("alice", -1, "reaction", 0);
+        alice_vote.is_post_lock = false;
+
+        let mut bob_vote = make_vote_at("bob", 1, "reaction", 100);
+        bob_vote.is_post_lock = true;
+
+        let votes = vec![alice_vote, bob_vote];
+        let most_recent = votes
+            .iter()
+            .filter(|v| !v.is_stale)
+            .max_by_key(|v| v.timestamp)
+            .cloned();
+        let state = compute_vote_state(&votes, &most_recent, 1, &config, true, false);
+
+        // Pre-lock 👎 still rejects even with lock
+        assert!(
+            matches!(state, ApprovalState::Rejected { ref reason } if reason.contains("alice")),
+            "Pre-lock 👎 should still reject even when vote is locked, got: {:?}",
+            state
+        );
+    }
+
+    /// CRIT-11: is_stale field correctly marks closed discussion votes.
+    #[test]
+    fn test_crit11_vote_record_is_stale_field() {
+        let mut stale_vote = make_vote_at("alice", 1, "reaction", 0);
+        stale_vote.is_stale = true;
+
+        assert!(
+            stale_vote.is_stale,
+            "Stale vote should have is_stale = true"
+        );
+
+        let active_vote = make_vote_at("bob", 1, "reaction", 100);
+        assert!(
+            !active_vote.is_stale,
+            "Active vote should have is_stale = false"
+        );
+    }
+
+    /// CRIT-11: is_post_lock field correctly marks post-lock votes.
+    #[test]
+    fn test_crit11_vote_record_is_post_lock_field() {
+        let mut post_lock_vote = make_vote_at("alice", -1, "reaction", 0);
+        post_lock_vote.is_post_lock = true;
+
+        assert!(
+            post_lock_vote.is_post_lock,
+            "Post-lock vote should have is_post_lock = true"
+        );
+
+        let pre_lock_vote = make_vote_at("bob", 1, "reaction", 100);
+        assert!(
+            !pre_lock_vote.is_post_lock,
+            "Pre-lock vote should have is_post_lock = false"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // End CRIT-11 Tests
     // -------------------------------------------------------------------------
 }

@@ -7,3 +7,4 @@ pub mod conflicts;
 pub mod detector;
 pub mod execution;
 pub mod manager;
+pub mod security;
