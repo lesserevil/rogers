@@ -6,10 +6,11 @@
 //! On each run, Rodgers processes all issues that have changed since
 //! the last run. For each issue:
 //! 1. Read full issue state (labels, comments, body, assignee)
-//! 2. Classify as bug, feature, or other
-//! 3. Run completeness check for bug/feature issues
-//! 4. Apply appropriate transition (ready-for-review or needs-information)
-//! 5. Process will-not-do decisions (post closure comment, close issue)
+//! 2. Classify as bug, feature, or question
+//! 3. Route question issues to question-routing workflow
+//! 4. Run completeness check for bug/feature issues
+//! 5. Apply appropriate transition (ready-for-review or needs-information)
+//! 6. Process will-not-do decisions (post closure comment, close issue)
 //!
 //! All processing happens within ONE triage run - no delays.
 
@@ -20,11 +21,14 @@ use crate::feature_bug::{
     FeatureBugIssue, TransitionSummary, check_bug_completeness, check_feature_completeness,
     execute_breakdown,
 };
+use crate::question_router::{QuestionAction, route_question_issue};
+use crate::triage::router::{route_issue, route_issues};
 use serde::{Deserialize, Serialize};
 
 /// Label constants for triage operations.
 pub const LABEL_BUG: &str = "bug";
 pub const LABEL_FEATURE: &str = "feature";
+pub const LABEL_QUESTION: &str = "question";
 pub const LABEL_READY_FOR_REVIEW: &str = "ready-for-review";
 pub const LABEL_NEEDS_INFORMATION: &str = "needs-information";
 pub const LABEL_WILL_NOT_DO: &str = "will-not-do";
@@ -90,8 +94,10 @@ pub enum TriageAction {
     BreakdownComplete,
     /// Issue is closed or archived
     SkippedClosed,
-    /// Issue is not a bug or feature
+    /// Issue is not a bug, feature, or question
     SkippedNotTriaged,
+    /// Issue is a question - routed to question workflow
+    QuestionRouted,
 }
 
 /// The main triage loop processor.
@@ -113,6 +119,12 @@ pub fn process_issue(issue: &TriageIssue) -> TriageResult {
     // Check if this is a bug or feature issue
     let is_bug = issue.labels.iter().any(|l| l == LABEL_BUG);
     let is_feature = issue.labels.iter().any(|l| l == LABEL_FEATURE);
+
+    // Check if this is a question issue - route to question workflow
+    let is_question = issue.labels.iter().any(|l| l == LABEL_QUESTION);
+    if is_question {
+        return process_question_issue(issue);
+    }
 
     if !is_bug && !is_feature {
         return TriageResult {
@@ -239,9 +251,108 @@ fn run_completeness_check(issue: &TriageIssue, is_bug: bool, is_feature: bool) -
     }
 }
 
+/// Process a question issue through the question-routing workflow.
+///
+/// This function:
+/// 1. Routes the issue through the question router
+/// 2. Applies `rodgers:question` label if not already present
+/// 3. Handles clarification, reclassification, or doc/code routing
+/// 4. All within one triage run
+///
+/// Plan: plans/question-routing-plan.md
+fn process_question_issue(issue: &TriageIssue) -> TriageResult {
+    // First, route through the router to apply labels
+    let route_result = match route_issue(issue) {
+        Ok(r) => r,
+        Err(e) => {
+            return TriageResult {
+                issue_number: issue.number,
+                processed: false,
+                action: TriageAction::SkippedNotTriaged,
+                comment_to_post: Some(format!("Error routing question issue: {e}")),
+                labels_to_add: Vec::new(),
+                labels_to_remove: Vec::new(),
+            };
+        }
+    };
+
+    // If routing indicates question routing is needed, run the question router
+    if route_result.needs_question_routing {
+        let question_result = match route_question_issue(issue) {
+            Ok(r) => r,
+            Err(e) => {
+                return TriageResult {
+                    issue_number: issue.number,
+                    processed: false,
+                    action: TriageAction::SkippedNotTriaged,
+                    comment_to_post: Some(format!("Error routing question: {e}")),
+                    labels_to_add: route_result.labels_to_add.clone(),
+                    labels_to_remove: route_result.labels_to_remove.clone(),
+                };
+            }
+        };
+
+        // Combine routing labels with question router labels
+        let mut combined_labels_to_add = route_result.labels_to_add.clone();
+        for label in question_result.labels_to_add {
+            if !combined_labels_to_add.contains(&label) {
+                combined_labels_to_add.push(label);
+            }
+        }
+
+        let mut combined_labels_to_remove = route_result.labels_to_remove.clone();
+        for label in question_result.labels_to_remove {
+            if !combined_labels_to_remove.contains(&label) {
+                combined_labels_to_remove.push(label);
+            }
+        }
+
+        // Map question action to triage action
+        let action = match question_result.action {
+            QuestionAction::AlreadyHandled => TriageAction::SkippedNotTriaged,
+            QuestionAction::NeedsClarification => TriageAction::AppliedNeedsInformation,
+            QuestionAction::Reclassified => TriageAction::SkippedNotTriaged,
+            _ => TriageAction::QuestionRouted,
+        };
+
+        return TriageResult {
+            issue_number: issue.number,
+            processed: question_result.processed,
+            action,
+            comment_to_post: question_result.comment_to_post,
+            labels_to_add: combined_labels_to_add,
+            labels_to_remove: combined_labels_to_remove,
+        };
+    }
+
+    // Question routing was not needed (already handled)
+    TriageResult {
+        issue_number: issue.number,
+        processed: false,
+        action: TriageAction::SkippedNotTriaged,
+        comment_to_post: None,
+        labels_to_add: route_result.labels_to_add,
+        labels_to_remove: route_result.labels_to_remove,
+    }
+}
+
 /// Batch process multiple issues as part of a single triage run.
 pub fn process_issues_batch(issues: &[TriageIssue]) -> Vec<TriageResult> {
-    issues.iter().map(process_issue).collect()
+    // First, run router on all issues to apply rodgers:question labels
+    let route_results = route_issues(issues);
+
+    // Then process each issue through the main triage pipeline
+    issues
+        .iter()
+        .zip(route_results.iter())
+        .map(|(issue, route_result)| {
+            if route_result.needs_question_routing {
+                process_question_issue(issue)
+            } else {
+                process_issue(issue)
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1675,5 +1786,310 @@ Export fails silently
                 && !comment.to_lowercase().contains("additional info"),
             "Should not use generic phrasing"
         );
+    }
+
+    // =============================================================================
+    // Question routing tests - rogers-af9
+    // CRIT: Route classified question issues to question-routing workflow
+    // =============================================================================
+
+    /// Helper to create a test issue with a custom title
+    fn create_test_issue_with_title(
+        title: &str,
+        labels: Vec<&str>,
+        body: &str,
+        state: IssueState,
+    ) -> TriageIssue {
+        TriageIssue {
+            number: 1,
+            title: title.to_string(),
+            body: body.to_string(),
+            author: "testuser".to_string(),
+            labels: labels.into_iter().map(String::from).collect(),
+            state,
+            url: Some("https://github.com/org/repo/issues/1".to_string()),
+        }
+    }
+
+    // Unit test: Classified question issue gets rodgers:question label
+    #[test]
+    fn test_question_issue_gets_rodgers_question_label() {
+        // When a question issue is processed, rodgers:question label should be applied
+        let issue = create_test_issue(
+            vec!["question"],
+            "How do I configure the database connection?",
+            IssueState::Open,
+        );
+
+        let result = process_issue(&issue);
+
+        // The issue should be processed through the question workflow
+        assert!(result.processed);
+        // Should have rodgers:question label in labels_to_add
+        assert!(
+            result
+                .labels_to_add
+                .contains(&"rodgers:question".to_string()),
+            "Question issue must get rodgers:question label applied immediately"
+        );
+    }
+
+    // Unit test: Question issue routed to question router in same triage run
+    #[test]
+    fn test_question_issue_routed_to_question_router_in_same_run() {
+        // A question issue should be routed to the question router within the same
+        // triage run (single call to process_issue)
+        let issue = create_test_issue_with_title(
+            "How does authentication work",
+            vec!["question"],
+            "how does the authentication module work under the hood",
+            IssueState::Open,
+        );
+
+        // Single call should route through question router
+        let result = process_issue(&issue);
+
+        // Issue is processed (routed to question workflow)
+        assert!(result.processed, "Question issue should be processed");
+        // rodgers:question label applied BEFORE routing (per plan)
+        assert!(
+            result
+                .labels_to_add
+                .contains(&"rodgers:question".to_string()),
+            "rodgers:question label must be applied before routing"
+        );
+        // Question router determines this needs code search routing
+        assert_eq!(
+            result.action,
+            TriageAction::QuestionRouted,
+            "Question should be routed to question workflow"
+        );
+    }
+
+    // Integration test: End-to-end question gets clarification within one triage run
+    #[test]
+    fn test_question_needs_clarification_in_one_run() {
+        // Vague question should get needs-information label and clarification comment
+        // within a single triage run
+        let issue = create_test_issue(vec!["question"], "it doesn't work", IssueState::Open);
+
+        let result = process_issue(&issue);
+
+        // Processed in one run
+        assert!(result.processed, "Should be processed in one run");
+        // Clarification action taken
+        assert_eq!(
+            result.action,
+            TriageAction::AppliedNeedsInformation,
+            "Vague question should get needs-information"
+        );
+        // Needs-information label added
+        assert!(
+            result
+                .labels_to_add
+                .contains(&"needs-information".to_string()),
+            "needs-information label should be applied"
+        );
+        // rodgers:question label also applied
+        assert!(
+            result
+                .labels_to_add
+                .contains(&"rodgers:question".to_string()),
+            "rodgers:question label should be applied"
+        );
+        // Clarification comment generated
+        assert!(
+            result.comment_to_post.is_some(),
+            "Should post clarification request comment"
+        );
+        let comment = result.comment_to_post.as_ref().unwrap();
+        assert!(
+            comment.contains("clarification") || comment.contains("more detail"),
+            "Comment should ask for clarification"
+        );
+    }
+
+    // Integration test: Question reclassified as bug in one triage run
+    #[test]
+    fn test_question_reclassified_as_bug_in_one_run() {
+        // A question that is actually a bug should be reclassified
+        let issue = create_test_issue_with_title(
+            "crash report",
+            vec!["question"],
+            "it crashes when I click the submit button and I get a stack overflow",
+            IssueState::Open,
+        );
+
+        let result = process_issue(&issue);
+
+        assert!(result.processed, "Should be processed in one run");
+        // Reclassified as bug
+        assert!(
+            result.labels_to_add.contains(&"bug".to_string()),
+            "Should add bug label when reclassified"
+        );
+        // Question label removed
+        assert!(
+            result.labels_to_remove.contains(&"question".to_string()),
+            "Should remove question label when reclassified"
+        );
+        // Comment posted
+        assert!(
+            result.comment_to_post.is_some(),
+            "Should post reclassification comment"
+        );
+    }
+
+    // CRIT-6: Non-question issues must NOT enter question workflow
+    #[test]
+    fn test_non_question_issue_not_routed_to_question_workflow() {
+        // Bug issues must not enter the question routing workflow
+        let bug_issue = create_test_issue(vec!["bug"], "Bug report body", IssueState::Open);
+        let result = process_issue(&bug_issue);
+
+        // Bug issue should go through bug workflow, not question
+        assert_ne!(result.action, TriageAction::QuestionRouted);
+        assert!(
+            !result
+                .labels_to_add
+                .contains(&"rodgers:question".to_string())
+        );
+
+        // Feature issues must not enter question routing workflow either
+        let feature_issue =
+            create_test_issue(vec!["feature"], "Feature request body", IssueState::Open);
+        let result = process_issue(&feature_issue);
+
+        assert_ne!(result.action, TriageAction::QuestionRouted);
+        assert!(
+            !result
+                .labels_to_add
+                .contains(&"rodgers:question".to_string())
+        );
+    }
+
+    // Question already handled (has rodgers:question) should be no-op
+    #[test]
+    fn test_question_already_handled_is_noop() {
+        // If rodgers:question is already applied, the issue was already handled
+        let issue = create_test_issue(
+            vec!["question", "rodgers:question"],
+            "How do I configure?",
+            IssueState::Open,
+        );
+
+        let result = process_issue(&issue);
+
+        // Already handled - should not process again
+        assert!(!result.processed);
+        assert_eq!(result.action, TriageAction::SkippedNotTriaged);
+        assert!(result.labels_to_add.is_empty());
+    }
+
+    // Batch test: Question mixed with bug/feature in batch processing
+    #[test]
+    fn test_batch_with_question_routing() {
+        // Mixed batch should correctly route question vs bug/feature
+        let complete_bug = r#"
+## Behavior Observed
+Bug 1
+
+## Behavior Expected
+No bug
+
+## Reproduction Steps
+1. Step
+
+## Environment
+Linux
+"#;
+
+        let issues = vec![
+            create_test_issue_with_title(
+                "How does auth work",
+                vec!["question"],
+                "how does the authentication module work under the hood",
+                IssueState::Open,
+            ),
+            create_test_issue(vec!["bug"], complete_bug, IssueState::Open),
+            create_test_issue(vec!["question"], "it doesn't work", IssueState::Open),
+        ];
+
+        let results = process_issues_batch(&issues);
+        assert_eq!(results.len(), 3);
+
+        // Index 0: Question about implementation → routed to question workflow
+        assert!(results[0].processed);
+        assert_eq!(results[0].action, TriageAction::QuestionRouted);
+        assert!(
+            results[0]
+                .labels_to_add
+                .contains(&"rodgers:question".to_string())
+        );
+
+        // Index 1: Complete bug → ready-for-review
+        assert_eq!(results[1].action, TriageAction::AppliedReadyForReview);
+        assert!(
+            results[1]
+                .labels_to_add
+                .contains(&"ready-for-review".to_string())
+        );
+        // Bug must NOT have rodgers:question
+        assert!(
+            !results[1]
+                .labels_to_add
+                .contains(&"rodgers:question".to_string())
+        );
+
+        // Index 2: Vague question → needs-information
+        assert_eq!(results[2].action, TriageAction::AppliedNeedsInformation);
+        assert!(
+            results[2]
+                .labels_to_add
+                .contains(&"needs-information".to_string())
+        );
+        assert!(
+            results[2]
+                .labels_to_add
+                .contains(&"rodgers:question".to_string())
+        );
+    }
+
+    // Closed question issue should be skipped
+    #[test]
+    fn test_closed_question_issue_skipped() {
+        let issue = create_test_issue(vec!["question"], "How to configure?", IssueState::Closed);
+
+        let result = process_issue(&issue);
+
+        assert!(!result.processed);
+        assert_eq!(result.action, TriageAction::SkippedClosed);
+    }
+
+    // Question issue with rodgers:question already applied via batch
+    #[test]
+    fn test_batch_question_label_applied_before_routing() {
+        // Verify that in batch mode, the rodgers:question label is applied
+        // before the question router processes the issue
+        let issue = create_test_issue_with_title(
+            "How to configure",
+            vec!["question"],
+            "how do I configure the database connection",
+            IssueState::Open,
+        );
+
+        // Single process_issue call
+        let result = process_issue(&issue);
+
+        // rodgers:question must be in labels_to_add (applied before routing)
+        assert!(
+            result
+                .labels_to_add
+                .contains(&"rodgers:question".to_string()),
+            "rodgers:question must be applied BEFORE routing"
+        );
+        // The action should indicate question routing occurred
+        assert_eq!(result.action, TriageAction::QuestionRouted);
+        assert!(result.processed);
     }
 }
