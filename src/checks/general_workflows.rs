@@ -166,7 +166,10 @@ fn parse_branch_values(content_after_colon: &str) -> Vec<String> {
                 if !branch.is_empty() {
                     branches.push(branch.to_string());
                 }
-            } else if !trimmed_line.is_empty() && !trimmed_line.starts_with('#') && !branches.is_empty() {
+            } else if !trimmed_line.is_empty()
+                && !trimmed_line.starts_with('#')
+                && !branches.is_empty()
+            {
                 // Non-list, non-empty, non-comment line after list items — end of list
                 break;
             }
@@ -236,7 +239,9 @@ fn has_matching_pr_trigger(content: &str, trigger_keyword: &str) -> bool {
     // Check if the trigger keyword exists at all.
     let keyword_with_colon = format!("{}:", trigger_keyword);
     let keyword_in_content = content_lower.contains(&keyword_with_colon)
-        || content_lower.lines().any(|line| line.trim() == trigger_keyword);
+        || content_lower
+            .lines()
+            .any(|line| line.trim() == trigger_keyword);
 
     if !keyword_in_content {
         return false;
@@ -376,9 +381,11 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].severity, Severity::Warn);
-        assert!(results[0]
-            .description
-            .contains("No GitHub Actions workflow files found"));
+        assert!(
+            results[0]
+                .description
+                .contains("No GitHub Actions workflow files found")
+        );
         assert_eq!(results[0].fixability, Fixability::Manual);
     }
 
@@ -425,9 +432,11 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].severity, Severity::Warn);
-        assert!(results[0]
-            .description
-            .contains("No CI workflow found for pull requests"));
+        assert!(
+            results[0]
+                .description
+                .contains("No CI workflow found for pull requests")
+        );
         assert!(results[0].description.contains("Release"));
     }
 
@@ -806,9 +815,11 @@ mod tests {
         // PR on feature/staging only, not main/master/develop → Warn
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].severity, Severity::Warn);
-        assert!(results[0]
-            .description
-            .contains("No CI workflow found for pull requests"));
+        assert!(
+            results[0]
+                .description
+                .contains("No CI workflow found for pull requests")
+        );
     }
 
     /// Test: PR trigger with branches-ignore instead of branches → Info.
@@ -925,9 +936,11 @@ mod tests {
         // Should return Warn since only readable file has no PR trigger.
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].severity, Severity::Warn);
-        assert!(results[0]
-            .description
-            .contains("No CI workflow found for pull requests"));
+        assert!(
+            results[0]
+                .description
+                .contains("No CI workflow found for pull requests")
+        );
     }
 
     /// Test: `.yaml` extension workflows are recognized.
@@ -1116,9 +1129,11 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].severity, Severity::Warn);
-        assert!(results[0]
-            .description
-            .contains("No CI workflow found for pull requests"));
+        assert!(
+            results[0]
+                .description
+                .contains("No CI workflow found for pull requests")
+        );
     }
 
     // ─── Unit tests for detection helpers ──────────────────────────────
@@ -1335,7 +1350,8 @@ jobs:
 
     #[test]
     fn test_extract_trigger_section_stops_at_jobs() {
-        let content = "pull_request:\n  branches: [main]\njobs:\n  test:\n    runs-on: ubuntu-latest\n";
+        let content =
+            "pull_request:\n  branches: [main]\njobs:\n  test:\n    runs-on: ubuntu-latest\n";
         let section = extract_trigger_section(&content.to_lowercase(), "pull_request");
         assert!(section.contains("branches"));
         assert!(!section.contains("jobs"));
@@ -1396,18 +1412,27 @@ jobs:
     #[test]
     fn test_has_matching_pr_trigger_push_only() {
         let content = "push:\n  branches: [main]\n";
-        assert!(!has_matching_pr_trigger(&content.to_lowercase(), "pull_request"));
+        assert!(!has_matching_pr_trigger(
+            &content.to_lowercase(),
+            "pull_request"
+        ));
     }
 
     #[test]
     fn test_has_matching_pr_trigger_with_branches() {
         let content = "pull_request:\n  branches: [main]\n";
-        assert!(has_matching_pr_trigger(&content.to_lowercase(), "pull_request"));
+        assert!(has_matching_pr_trigger(
+            &content.to_lowercase(),
+            "pull_request"
+        ));
     }
 
     #[test]
     fn test_has_matching_pr_trigger_with_paths_only() {
         let content = "pull_request:\n  paths:\n    - '*.rs'\n";
-        assert!(has_matching_pr_trigger(&content.to_lowercase(), "pull_request"));
+        assert!(has_matching_pr_trigger(
+            &content.to_lowercase(),
+            "pull_request"
+        ));
     }
 }

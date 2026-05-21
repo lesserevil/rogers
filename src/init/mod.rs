@@ -7,7 +7,7 @@
 pub mod fix;
 pub mod report;
 
-use crate::checks::{CheckResult, Fixability, InitCheck, Severity};
+use crate::checks::{CheckResult, Fixability, InitCheck, ReleaseWorkflowCheck, Severity};
 use crate::error::Result;
 use crate::github::GitHubClient;
 
@@ -99,7 +99,7 @@ pub async fn run_all_checks(
     github: &GitHubClient,
 ) -> Result<Vec<CheckResult>> {
     // Fetch repository to verify connectivity.
-    let repository = github.get_repository(owner, repo).await?;
+    let _repository = github.get_repository(owner, repo).await?;
 
     let mut all_results = Vec::new();
 
@@ -134,6 +134,14 @@ pub async fn run_all_checks(
         println!("[{}] {}", result.severity.as_str(), result.description);
     }
 
+    // Run the release workflow check.
+    let release_workflow_check = ReleaseWorkflowCheck;
+    let release_workflow_results = release_workflow_check.check(github, owner, repo).await?;
+    all_results.extend(release_workflow_results.clone());
+    for result in &release_workflow_results {
+        println!("[{}] {}", result.severity.as_str(), result.description);
+    }
+
     // Run the discussion categories check.
     let discussion_categories_check = crate::checks::DiscussionCategoriesCheck;
     let discussion_categories_results = discussion_categories_check
@@ -146,18 +154,11 @@ pub async fn run_all_checks(
 
     // Run the general workflows check.
     let general_workflows_check = crate::checks::GeneralWorkflowsCheck;
-    let general_workflows_results = general_workflows_check
-        .check(github, owner, repo)
-        .await?;
+    let general_workflows_results = general_workflows_check.check(github, owner, repo).await?;
     all_results.extend(general_workflows_results.clone());
     for result in &general_workflows_results {
         println!("[{}] {}", result.severity.as_str(), result.description);
     }
-
-    println!("Repository: {}/{}", repository.full_name, repository.name);
-    println!("Default branch: {}", repository.default_branch);
-    println!("Has issues: {}", repository.has_issues);
-    println!("Has discussions: {}", repository.has_discussions);
 
     Ok(all_results)
 }

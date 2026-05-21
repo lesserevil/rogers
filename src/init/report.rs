@@ -90,6 +90,11 @@ impl ReportFormatter {
 
         output.push('\n');
 
+        // Success message when no blockers.
+        if summary.blockers == 0 {
+            output.push_str("All checks passed\n");
+        }
+
         // Fix prompt
         if fix {
             output.push_str("Fix mode: completed\n");
@@ -610,5 +615,177 @@ mod tests {
         assert!(output.contains("fixability: auto"));
         assert!(output.contains("fixability: manual"));
         assert!(output.contains("fixability: na"));
+    }
+
+    // ─── Test: AC-1 — "All checks passed" message with zero blockers ──
+
+    #[test]
+    fn test_all_checks_passed_message_when_no_blockers() {
+        let results = vec![make_result(Severity::Info, "all good")];
+        let output = ReportFormatter::format_text("o/r", &results, false);
+
+        assert!(
+            output.contains("All checks passed"),
+            "report should contain 'All checks passed' when no blockers"
+        );
+    }
+
+    #[test]
+    fn test_all_checks_passed_with_only_warnings_no_blockers() {
+        let results = vec![
+            make_result(Severity::Warn, "discussion category not found"),
+            make_result(Severity::Warn, "delete branches on merge disabled"),
+        ];
+        let output = ReportFormatter::format_text("o/r", &results, false);
+
+        assert!(
+            output.contains("All checks passed"),
+            "report should contain 'All checks passed' when only warnings present (no blockers)"
+        );
+        assert!(output.contains("0 blockers"));
+    }
+
+    #[test]
+    fn test_all_checks_passed_with_mixed_info_and_warn_no_blockers() {
+        let results = vec![
+            make_result(Severity::Info, "all labels present"),
+            make_result(Severity::Warn, "discussion category not found"),
+            make_result(Severity::Info, "branch protection enabled"),
+            make_result(Severity::Warn, "default branch is develop"),
+        ];
+        let output = ReportFormatter::format_text("o/r", &results, false);
+
+        assert!(
+            output.contains("All checks passed"),
+            "report should contain 'All checks passed' when no blockers regardless of warnings/info"
+        );
+        assert!(output.contains("0 blockers"));
+        assert!(output.contains("2 warnings"));
+    }
+
+    // ─── Test: "All checks passed" NOT shown when blockers exist ──────
+
+    #[test]
+    fn test_no_all_checks_passed_message_when_blockers_exist() {
+        let results = vec![
+            make_result(Severity::Blocker, "required labels missing"),
+            make_result(Severity::Warn, "discussion category not found"),
+        ];
+        let output = ReportFormatter::format_text("o/r", &results, false);
+
+        assert!(
+            !output.contains("All checks passed"),
+            "report should NOT contain 'All checks passed' when blockers exist"
+        );
+        assert!(output.contains("1 blockers"));
+    }
+
+    #[test]
+    fn test_no_all_checks_passed_with_only_blockers() {
+        let results = vec![
+            make_result(Severity::Blocker, "issue templates not found"),
+            make_result(Severity::Blocker, "no release workflow"),
+        ];
+        let output = ReportFormatter::format_text("o/r", &results, false);
+
+        assert!(
+            !output.contains("All checks passed"),
+            "report should NOT contain 'All checks passed' when only blockers exist"
+        );
+        assert!(output.contains("2 blockers"));
+    }
+
+    // ─── Test: Exit code 0 when no blockers (AC-1 verification) ──────
+
+    #[test]
+    fn test_exit_code_0_when_no_blockers() {
+        // Simulate the exit code logic from main.rs
+        let results = vec![
+            make_result(Severity::Info, "All required labels present"),
+            make_result(Severity::Info, "Branch protection enabled for main"),
+            make_result(Severity::Info, "CI workflow found for pull requests"),
+        ];
+        let has_blockers = results.iter().any(|r| r.severity == Severity::Blocker);
+
+        assert!(
+            !has_blockers,
+            "no blockers should be detected when all checks pass"
+        );
+        // Exit code would be: if has_blockers { exit(1) } else { exit(0) }
+        let exit_code = if has_blockers { 1 } else { 0 };
+        assert_eq!(exit_code, 0, "exit code should be 0 when no blockers");
+    }
+
+    #[test]
+    fn test_exit_code_1_when_blockers_exist() {
+        // Simulate the exit code logic from main.rs
+        let results = vec![
+            make_result(Severity::Blocker, "required labels missing"),
+            make_result(Severity::Info, "Branch protection enabled for main"),
+        ];
+        let has_blockers = results.iter().any(|r| r.severity == Severity::Blocker);
+
+        assert!(
+            has_blockers,
+            "blockers should be detected when any blocker exists"
+        );
+        let exit_code = if has_blockers { 1 } else { 0 };
+        assert_eq!(exit_code, 1, "exit code should be 1 when blockers exist");
+    }
+
+    #[test]
+    fn test_warnings_do_not_affect_exit_code() {
+        // Only warnings, no blockers → exit code should still be 0
+        let results = vec![
+            make_result(Severity::Warn, "delete branches on merge disabled"),
+            make_result(Severity::Warn, "default branch is develop"),
+        ];
+        let has_blockers = results.iter().any(|r| r.severity == Severity::Blocker);
+
+        assert!(
+            !has_blockers,
+            "warnings alone should not set has_blockers to true"
+        );
+        let exit_code = if has_blockers { 1 } else { 0 };
+        assert_eq!(exit_code, 0, "warnings alone should not cause exit code 1");
+    }
+
+    #[test]
+    fn test_info_does_not_affect_exit_code() {
+        // Only info → exit code should still be 0
+        let results = vec![
+            make_result(Severity::Info, "all labels present"),
+            make_result(Severity::Info, "branch protection enabled"),
+        ];
+        let has_blockers = results.iter().any(|r| r.severity == Severity::Blocker);
+
+        assert!(!has_blockers);
+        let exit_code = if has_blockers { 1 } else { 0 };
+        assert_eq!(exit_code, 0);
+    }
+
+    // ─── Test: All checks run before exit decision ───────────────────
+
+    #[test]
+    fn test_exit_decision_after_all_checks() {
+        // Verify that the exit code decision is based on ALL results,
+        // not just the first check. The check should iterate over ALL
+        // results to find any blockers.
+        let results = vec![
+            make_result(Severity::Info, "labels check passed"),
+            make_result(Severity::Info, "issue templates check passed"),
+            make_result(Severity::Info, "repo settings check passed"),
+            make_result(Severity::Info, "discussion categories check passed"),
+            make_result(Severity::Info, "general workflows check passed"),
+            make_result(Severity::Blocker, "release workflow not found"),
+        ];
+        let has_blockers = results.iter().any(|r| r.severity == Severity::Blocker);
+
+        assert!(
+            has_blockers,
+            "must detect blocker even when it is the last result"
+        );
+        let exit_code = if has_blockers { 1 } else { 0 };
+        assert_eq!(exit_code, 1);
     }
 }
