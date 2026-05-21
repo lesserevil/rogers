@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::priority::{assess_priority, llm_assess_priority, Priority, PriorityAssessment};
+use super::priority::{Priority, PriorityAssessment, assess_priority, llm_assess_priority};
 
 /// Label that marks a feature issue routed to the feature-bug workflow.
 pub const LABEL_RODGERS_FEATURE: &str = "rodgers:feature";
@@ -106,9 +106,7 @@ pub fn route_feature(
     }
 
     // Check if already routed
-    let already_routed = existing_labels
-        .iter()
-        .any(|l| l == LABEL_RODGERS_FEATURE);
+    let already_routed = existing_labels.iter().any(|l| l == LABEL_RODGERS_FEATURE);
 
     if already_routed {
         return RouteResult {
@@ -122,9 +120,7 @@ pub fn route_feature(
 
     // Check if ready-for-work is applied (defer to ready-for-work routing)
     // Epic-scale detection happens at ready-for-work, not here
-    let has_ready_for_work = existing_labels
-        .iter()
-        .any(|l| l == "ready-for-work");
+    let has_ready_for_work = existing_labels.iter().any(|l| l == "ready-for-work");
 
     if has_ready_for_work {
         return RouteResult {
@@ -148,7 +144,10 @@ pub fn route_feature(
     // Build labels to add
     let mut labels_to_add = vec![LABEL_RODGERS_FEATURE.to_string()];
     // Add priority label for visibility
-    labels_to_add.push(format!("priority:{}", priority_assessment.priority.label().to_lowercase()));
+    labels_to_add.push(format!(
+        "priority:{}",
+        priority_assessment.priority.label().to_lowercase()
+    ));
 
     let routed_feature = RoutedFeature {
         issue_number,
@@ -170,9 +169,7 @@ pub fn route_feature(
 /// Route a batch of feature issues to the feature-bug workflow.
 ///
 /// Processes each issue independently and returns results for all.
-pub fn route_feature_batch(
-    issues: &[FeatureIssue],
-) -> Vec<RouteResult> {
+pub fn route_feature_batch(issues: &[FeatureIssue]) -> Vec<RouteResult> {
     issues
         .iter()
         .map(|issue| {
@@ -248,7 +245,9 @@ mod tests {
 
         let feature = result.routed_feature.unwrap();
         assert!(
-            feature.labels_to_add.contains(&LABEL_RODGERS_FEATURE.to_string()),
+            feature
+                .labels_to_add
+                .contains(&LABEL_RODGERS_FEATURE.to_string()),
             "Should include rodgers:feature label"
         );
     }
@@ -272,7 +271,9 @@ mod tests {
 
         assert!(result.routed);
         assert!(
-            result.labels_to_add.contains(&LABEL_RODGERS_FEATURE.to_string()),
+            result
+                .labels_to_add
+                .contains(&LABEL_RODGERS_FEATURE.to_string()),
             "Labels to add should include rodgers:feature"
         );
     }
@@ -301,7 +302,11 @@ mod tests {
         assert!(result.routed);
         let feature = result.routed_feature.unwrap();
         assert_eq!(feature.priority.priority, Priority::P1);
-        assert!(feature.labels_to_add.contains(&priority_label(&Priority::P1)));
+        assert!(
+            feature
+                .labels_to_add
+                .contains(&priority_label(&Priority::P1))
+        );
     }
 
     #[test]
@@ -324,7 +329,11 @@ mod tests {
         assert!(result.routed);
         let feature = result.routed_feature.unwrap();
         assert_eq!(feature.priority.priority, Priority::P2);
-        assert!(feature.labels_to_add.contains(&priority_label(&Priority::P2)));
+        assert!(
+            feature
+                .labels_to_add
+                .contains(&priority_label(&Priority::P2))
+        );
     }
 
     #[test]
@@ -347,7 +356,11 @@ mod tests {
         assert!(result.routed);
         let feature = result.routed_feature.unwrap();
         assert_eq!(feature.priority.priority, Priority::P3);
-        assert!(feature.labels_to_add.contains(&priority_label(&Priority::P3)));
+        assert!(
+            feature
+                .labels_to_add
+                .contains(&priority_label(&Priority::P3))
+        );
     }
 
     #[test]
@@ -371,7 +384,11 @@ mod tests {
         let feature = result.routed_feature.unwrap();
         assert_eq!(feature.priority.priority, Priority::P3);
         // "nice to have" maps to P3, not P4
-        assert!(feature.labels_to_add.contains(&priority_label(&Priority::P3)));
+        assert!(
+            feature
+                .labels_to_add
+                .contains(&priority_label(&Priority::P3))
+        );
     }
 
     #[test]
@@ -491,8 +508,14 @@ mod tests {
         // LLM placeholder returns P3, but context includes matched keywords
         assert_eq!(feature.priority.method, "llm");
         assert!(
-            feature.priority.matched_keywords.contains(&"critical".to_string())
-                || feature.priority.matched_keywords.contains(&"urgent".to_string())
+            feature
+                .priority
+                .matched_keywords
+                .contains(&"critical".to_string())
+                || feature
+                    .priority
+                    .matched_keywords
+                    .contains(&"urgent".to_string())
         );
     }
 
@@ -523,11 +546,23 @@ mod tests {
 
         let feature = result.routed_feature.unwrap();
         // Should have rodgers:feature label
-        assert!(feature.labels_to_add.contains(&LABEL_RODGERS_FEATURE.to_string()));
+        assert!(
+            feature
+                .labels_to_add
+                .contains(&LABEL_RODGERS_FEATURE.to_string())
+        );
         // Should have priority label
-        assert!(feature.labels_to_add.iter().any(|l| l.starts_with("priority:")));
+        assert!(
+            feature
+                .labels_to_add
+                .iter()
+                .any(|l| l.starts_with("priority:"))
+        );
         // Should have priority metadata
-        assert!(matches!(feature.priority.priority, Priority::P1 | Priority::P2 | Priority::P3 | Priority::P4));
+        assert!(matches!(
+            feature.priority.priority,
+            Priority::P1 | Priority::P2 | Priority::P3 | Priority::P4
+        ));
     }
 
     #[test]
@@ -554,12 +589,26 @@ mod tests {
         assert_eq!(feature.priority.priority, Priority::P1);
         assert_eq!(feature.priority.method, "keyword");
         assert!(!feature.priority.human_set);
-        assert!(feature.priority.matched_keywords.contains(&"critical".to_string()));
-        assert!(feature.priority.matched_keywords.contains(&"urgent".to_string()));
+        assert!(
+            feature
+                .priority
+                .matched_keywords
+                .contains(&"critical".to_string())
+        );
+        assert!(
+            feature
+                .priority
+                .matched_keywords
+                .contains(&"urgent".to_string())
+        );
         assert_eq!(feature.issue_number, 13);
 
         // Verify labels
-        assert!(feature.labels_to_add.contains(&LABEL_RODGERS_FEATURE.to_string()));
+        assert!(
+            feature
+                .labels_to_add
+                .contains(&LABEL_RODGERS_FEATURE.to_string())
+        );
         assert!(feature.labels_to_add.contains(&"priority:p1".to_string()));
     }
 
@@ -590,12 +639,7 @@ mod tests {
 
     #[test]
     fn test_non_feature_issue_skipped() {
-        let issue = create_test_issue(
-            15,
-            "Bug report",
-            "The app crashes on startup.",
-            vec!["bug"],
-        );
+        let issue = create_test_issue(15, "Bug report", "The app crashes on startup.", vec!["bug"]);
 
         let result = route_feature(
             issue.number,
@@ -667,7 +711,12 @@ mod tests {
             create_test_issue(1, "P1 blocker", "Critical blocker issue", vec!["feature"]),
             create_test_issue(2, "Bug report", "App crashes", vec!["bug"]),
             create_test_issue(3, "P3 feature", "Small improvement", vec!["feature"]),
-            create_test_issue(4, "Already routed", "Already done", vec!["feature", "rodgers:feature"]),
+            create_test_issue(
+                4,
+                "Already routed",
+                "Already done",
+                vec!["feature", "rodgers:feature"],
+            ),
         ];
 
         let results = route_feature_batch(&issues);
@@ -694,9 +743,24 @@ mod tests {
     #[test]
     fn test_batch_routing_with_priorities() {
         let issues = vec![
-            create_test_issue(1, "Urgent fix", "Urgent security patch needed", vec!["feature"]),
-            create_test_issue(2, "Important feature", "Important analytics tool", vec!["feature"]),
-            create_test_issue(3, "Nice to have", "Nice to have improvement", vec!["feature"]),
+            create_test_issue(
+                1,
+                "Urgent fix",
+                "Urgent security patch needed",
+                vec!["feature"],
+            ),
+            create_test_issue(
+                2,
+                "Important feature",
+                "Important analytics tool",
+                vec!["feature"],
+            ),
+            create_test_issue(
+                3,
+                "Nice to have",
+                "Nice to have improvement",
+                vec!["feature"],
+            ),
             create_test_issue(4, "Backlog item", "Low priority cleanup", vec!["feature"]),
         ];
 
@@ -710,10 +774,42 @@ mod tests {
         }
 
         // Verify priorities
-        assert_eq!(results[0].routed_feature.as_ref().unwrap().priority.priority, Priority::P1);
-        assert_eq!(results[1].routed_feature.as_ref().unwrap().priority.priority, Priority::P2);
-        assert_eq!(results[2].routed_feature.as_ref().unwrap().priority.priority, Priority::P3);
-        assert_eq!(results[3].routed_feature.as_ref().unwrap().priority.priority, Priority::P4);
+        assert_eq!(
+            results[0]
+                .routed_feature
+                .as_ref()
+                .unwrap()
+                .priority
+                .priority,
+            Priority::P1
+        );
+        assert_eq!(
+            results[1]
+                .routed_feature
+                .as_ref()
+                .unwrap()
+                .priority
+                .priority,
+            Priority::P2
+        );
+        assert_eq!(
+            results[2]
+                .routed_feature
+                .as_ref()
+                .unwrap()
+                .priority
+                .priority,
+            Priority::P3
+        );
+        assert_eq!(
+            results[3]
+                .routed_feature
+                .as_ref()
+                .unwrap()
+                .priority
+                .priority,
+            Priority::P4
+        );
     }
 
     // =============================================================================
@@ -791,8 +887,17 @@ mod tests {
 
         // Should have exactly: rodgers:feature + priority label
         assert_eq!(result.labels_to_add.len(), 2);
-        assert!(result.labels_to_add.contains(&"rodgers:feature".to_string()));
-        assert!(result.labels_to_add.iter().any(|l| l.starts_with("priority:")));
+        assert!(
+            result
+                .labels_to_add
+                .contains(&"rodgers:feature".to_string())
+        );
+        assert!(
+            result
+                .labels_to_add
+                .iter()
+                .any(|l| l.starts_with("priority:"))
+        );
     }
 
     #[test]

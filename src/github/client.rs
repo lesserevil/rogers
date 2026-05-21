@@ -73,6 +73,26 @@ impl GitHubClient {
         self
     }
 
+    /// Get the GitHub API base URL.
+    pub fn api_base(&self) -> &str {
+        &self.api_base
+    }
+
+    /// Get the repository owner.
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    /// Get the repository name.
+    pub fn repo(&self) -> &str {
+        &self.repo
+    }
+
+    /// Get the authentication token, if set.
+    pub fn token(&self) -> Option<&str> {
+        self.token.as_deref()
+    }
+
     /// Build the API URL for fetching issue comments.
     fn comments_url(&self, issue_number: u64) -> String {
         format!(

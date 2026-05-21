@@ -53,27 +53,13 @@ impl Priority {
 ///
 /// The mapping is case-insensitive and checks for word boundaries
 /// to avoid false positives (e.g., "priority" should not match "high-priority").
-pub const P1_KEYWORDS: &[&str] = &[
-    "blocker",
-    "critical",
-    "urgent",
-];
+pub const P1_KEYWORDS: &[&str] = &["blocker", "critical", "urgent"];
 
-pub const P2_KEYWORDS: &[&str] = &[
-    "important",
-    "high value",
-];
+pub const P2_KEYWORDS: &[&str] = &["important", "high value"];
 
-pub const P3_KEYWORDS: &[&str] = &[
-    "normal",
-    "nice to have",
-    "nice-to-have",
-];
+pub const P3_KEYWORDS: &[&str] = &["normal", "nice to have", "nice-to-have"];
 
-pub const P4_KEYWORDS: &[&str] = &[
-    "low priority",
-    "backlog",
-];
+pub const P4_KEYWORDS: &[&str] = &["low priority", "backlog"];
 
 /// Represents a priority assessment result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,8 +81,16 @@ pub struct PriorityAssessment {
 ///
 /// Human-set priority labels (e.g., "priority:P1") are detected and respected.
 /// If no keywords match, defaults to P3 (normal).
-pub fn assess_priority(issue_title: &str, issue_body: &str, existing_labels: &[String]) -> PriorityAssessment {
-    let combined = format!("{} {}", issue_title.to_lowercase(), issue_body.to_lowercase());
+pub fn assess_priority(
+    issue_title: &str,
+    issue_body: &str,
+    existing_labels: &[String],
+) -> PriorityAssessment {
+    let combined = format!(
+        "{} {}",
+        issue_title.to_lowercase(),
+        issue_body.to_lowercase()
+    );
     let mut matched_keywords: Vec<String> = Vec::new();
     let mut highest_priority = Priority::P3; // Default: normal
 
@@ -169,7 +163,11 @@ pub fn assess_priority(issue_title: &str, issue_body: &str, existing_labels: &[S
 ///
 /// In production, this would call the LLM API. For now, it returns P3
 /// (normal) with method "llm" as a placeholder.
-pub fn llm_assess_priority(_issue_title: &str, _issue_body: &str, matched_keywords: &[String]) -> PriorityAssessment {
+pub fn llm_assess_priority(
+    _issue_title: &str,
+    _issue_body: &str,
+    matched_keywords: &[String],
+) -> PriorityAssessment {
     // Placeholder: In production, this would call the LLM API with a prompt like:
     // "Based on this feature request, what priority should it receive?\n\n\
     // Title: {title}\nBody: {body}\n\n\
@@ -195,7 +193,10 @@ pub fn llm_assess_priority(_issue_title: &str, _issue_body: &str, matched_keywor
 fn has_human_priority_label(labels: &[String]) -> bool {
     labels.iter().any(|l| {
         let lower = l.to_lowercase();
-        matches!(lower.as_str(), "priority:p1" | "priority:p2" | "priority:p3" | "priority:p4")
+        matches!(
+            lower.as_str(),
+            "priority:p1" | "priority:p2" | "priority:p3" | "priority:p4"
+        )
     })
 }
 
@@ -249,10 +250,17 @@ fn contains_keyword(text: &str, keyword: &str) -> bool {
         // Check each position in the text for the keyword
         for i in 0..=text_lower.len().saturating_sub(keyword_lower.len()) {
             if text_lower[i..].starts_with(&keyword_lower) {
-                let before_ok = i == 0 || !text_lower.chars().nth(i - 1).is_some_and(|c| c.is_alphanumeric());
+                let before_ok = i == 0
+                    || !text_lower
+                        .chars()
+                        .nth(i - 1)
+                        .is_some_and(|c| c.is_alphanumeric());
                 let after_pos = i + keyword_lower.len();
                 let after_ok = after_pos >= text_lower.len()
-                    || !text_lower.chars().nth(after_pos).is_some_and(|c| c.is_alphanumeric());
+                    || !text_lower
+                        .chars()
+                        .nth(after_pos)
+                        .is_some_and(|c| c.is_alphanumeric());
 
                 if before_ok && after_ok {
                     return true;
@@ -310,7 +318,11 @@ mod tests {
             &[],
         );
         assert_eq!(assessment.priority, Priority::P1);
-        assert!(assessment.matched_keywords.contains(&"critical".to_string()));
+        assert!(
+            assessment
+                .matched_keywords
+                .contains(&"critical".to_string())
+        );
     }
 
     #[test]
@@ -332,7 +344,11 @@ mod tests {
             &[],
         );
         assert_eq!(assessment.priority, Priority::P2);
-        assert!(assessment.matched_keywords.contains(&"important".to_string()));
+        assert!(
+            assessment
+                .matched_keywords
+                .contains(&"important".to_string())
+        );
     }
 
     #[test]
@@ -343,7 +359,11 @@ mod tests {
             &[],
         );
         assert_eq!(assessment.priority, Priority::P2);
-        assert!(assessment.matched_keywords.contains(&"high value".to_string()));
+        assert!(
+            assessment
+                .matched_keywords
+                .contains(&"high value".to_string())
+        );
     }
 
     #[test]
@@ -365,7 +385,11 @@ mod tests {
             &[],
         );
         assert_eq!(assessment.priority, Priority::P3);
-        assert!(assessment.matched_keywords.contains(&"nice to have".to_string()));
+        assert!(
+            assessment
+                .matched_keywords
+                .contains(&"nice to have".to_string())
+        );
     }
 
     #[test]
@@ -376,7 +400,11 @@ mod tests {
             &[],
         );
         assert_eq!(assessment.priority, Priority::P4);
-        assert!(assessment.matched_keywords.contains(&"low priority".to_string()));
+        assert!(
+            assessment
+                .matched_keywords
+                .contains(&"low priority".to_string())
+        );
     }
 
     #[test]
@@ -429,7 +457,11 @@ mod tests {
             &[],
         );
         assert_eq!(assessment.priority, Priority::P1);
-        assert!(assessment.matched_keywords.contains(&"critical".to_string()));
+        assert!(
+            assessment
+                .matched_keywords
+                .contains(&"critical".to_string())
+        );
         assert!(assessment.matched_keywords.contains(&"urgent".to_string()));
     }
 
@@ -497,11 +529,7 @@ mod tests {
     #[test]
     fn test_llm_preserves_matched_keywords() {
         let keywords = vec!["urgent".to_string(), "important".to_string()];
-        let assessment = llm_assess_priority(
-            "Ambiguous",
-            "Body text",
-            &keywords,
-        );
+        let assessment = llm_assess_priority("Ambiguous", "Body text", &keywords);
         assert_eq!(assessment.matched_keywords, keywords);
     }
 
@@ -537,11 +565,7 @@ mod tests {
 
     #[test]
     fn test_priority_assessment_keyword_method() {
-        let assessment = assess_priority(
-            "Urgent fix",
-            "This urgent fix is needed",
-            &[],
-        );
+        let assessment = assess_priority("Urgent fix", "This urgent fix is needed", &[]);
         assert_eq!(assessment.method, "keyword");
         assert!(!assessment.human_set);
     }
@@ -571,7 +595,11 @@ mod tests {
 
         assert_eq!(assessment.priority, Priority::P2);
         assert_eq!(assessment.method, "keyword");
-        assert!(assessment.matched_keywords.contains(&"important".to_string()));
+        assert!(
+            assessment
+                .matched_keywords
+                .contains(&"important".to_string())
+        );
     }
 
     #[test]
@@ -597,7 +625,11 @@ mod tests {
 
         assert_eq!(assessment.priority, Priority::P1);
         // Should contain all matched keywords
-        assert!(assessment.matched_keywords.contains(&"critical".to_string()));
+        assert!(
+            assessment
+                .matched_keywords
+                .contains(&"critical".to_string())
+        );
         assert!(assessment.matched_keywords.contains(&"urgent".to_string()));
         // "important" should NOT be included since P1 takes precedence
     }
