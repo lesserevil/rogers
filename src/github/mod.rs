@@ -1,17 +1,14 @@
-#![allow(dead_code)]
-#![allow(unused_imports)]
-
-//! GitHub API client for Rodgers issue and comment operations.
+//! GitHub API client module.
 //!
-//! This module provides the interface for fetching GitHub issue data needed
-//! for epic bead creation. Specifically, it fetches issue comments to extract
-//! acceptance criteria that may have been added by Rodgers or by humans.
+//! Provides a thin wrapper around reqwest for GitHub REST API and GraphQL operations.
+//! Handles authentication, rate limiting, and error handling consistently.
 
+pub mod auth;
 pub mod client;
+pub mod models;
+pub mod rate_limit;
 
-pub use client::{
-    GitHubClient, GitHubComment, GitHubIssue, GitHubLabel, GitHubUser, IssueState, close_issue,
-};
-
-/// Backward compatibility alias
-pub type OldGitHubClient = GitHubClient;
+pub use auth::{AuthError, GitHubAuth};
+pub use client::GitHubClient;
+pub use models::*;
+pub use rate_limit::{RateLimitHandler, DEFAULT_WARNING_THRESHOLD};

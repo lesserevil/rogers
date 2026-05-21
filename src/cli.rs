@@ -61,6 +61,7 @@ pub enum Commands {
 }
 
 impl Cli {
+    /// Parse CLI arguments. Exits with help/version info if --help or --version given.
     pub fn parse() -> Self {
         <Self as clap::Parser>::parse()
     }
