@@ -6,7 +6,7 @@
 
 pub mod fix;
 
-use crate::checks::{Fixability, InitCheck, Severity};
+use crate::checks::{CheckResult, Fixability, InitCheck, Severity};
 use crate::error::Result;
 use crate::github::GitHubClient;
 
@@ -39,24 +39,24 @@ pub async fn run_init(
 
     // Run the required labels check.
     let labels_check = crate::checks::LabelsCheck;
-    let labels_result = labels_check.check(github, owner, repo).await?;
-    println!(
-        "[{}] {}",
-        labels_result.severity.as_str(),
-        labels_result.description
-    );
+    let labels_results = labels_check.check(github, owner, repo).await?;
+    if let Some(first) = labels_results.first() {
+        println!("[{}] {}", first.severity.as_str(), first.description);
 
-    // Report fixability for auto-fixable findings.
-    if labels_result.fixability == Fixability::Auto
-        && let Some(ref instructions) = labels_result.fix_instructions
-    {
-        for line in instructions.lines() {
-            println!("{}", line);
+        // Report fixability for auto-fixable findings.
+        if first.fixability == Fixability::Auto
+            && let Some(ref instructions) = first.fix_instructions
+        {
+            for line in instructions.lines() {
+                println!("{}", line);
+            }
         }
     }
 
     let mut label_fix = None;
-    let has_blockers = labels_result.severity == Severity::Blocker;
+    let has_blockers = labels_results
+        .iter()
+        .any(|r| r.severity == Severity::Blocker);
 
     if fix && has_blockers {
         let result = crate::init::fix::ensure_labels(github, owner, repo).await?;
@@ -73,4 +73,59 @@ pub async fn run_init(
         has_blockers,
         label_fix,
     })
+}
+
+/// Runs all init audit checks for a repository and prints the results.
+///
+/// # Arguments
+/// * `owner` — Repository owner
+/// * `repo` — Repository name
+/// * `github` — GitHub API client
+pub async fn run_all_checks(
+    owner: &str,
+    repo: &str,
+    github: &GitHubClient,
+) -> Result<Vec<CheckResult>> {
+    // Fetch repository to verify connectivity.
+    let repository = github.get_repository(owner, repo).await?;
+
+    let mut all_results = Vec::new();
+
+    // Run the required labels check.
+    let labels_check = crate::checks::LabelsCheck;
+    let labels_results = labels_check.check(github, owner, repo).await?;
+    all_results.extend(labels_results.clone());
+    for result in &labels_results {
+        println!("[{}] {}", result.severity.as_str(), result.description);
+        if result.fixability == Fixability::Auto
+            && let Some(ref instructions) = result.fix_instructions
+        {
+            for line in instructions.lines() {
+                println!("{}", line);
+            }
+        }
+    }
+
+    // Run the issue templates check.
+    let issue_templates_check = crate::checks::IssueTemplatesCheck;
+    let issue_templates_results = issue_templates_check.check(github, owner, repo).await?;
+    all_results.extend(issue_templates_results.clone());
+    for result in &issue_templates_results {
+        println!("[{}] {}", result.severity.as_str(), result.description);
+    }
+
+    // Run the repo settings check.
+    let repo_settings_check = crate::checks::RepoSettingsCheck;
+    let repo_settings_results = repo_settings_check.check(github, owner, repo).await?;
+    all_results.extend(repo_settings_results.clone());
+    for result in &repo_settings_results {
+        println!("[{}] {}", result.severity.as_str(), result.description);
+    }
+
+    println!("Repository: {}/{}", repository.full_name, repository.name);
+    println!("Default branch: {}", repository.default_branch);
+    println!("Has issues: {}", repository.has_issues);
+    println!("Has discussions: {}", repository.has_discussions);
+
+    Ok(all_results)
 }

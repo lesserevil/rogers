@@ -20,7 +20,12 @@ impl InitCheck for LabelsCheck {
         "required_labels"
     }
 
-    async fn check(&self, github: &GitHubClient, owner: &str, repo: &str) -> Result<CheckResult> {
+    async fn check(
+        &self,
+        github: &GitHubClient,
+        owner: &str,
+        repo: &str,
+    ) -> Result<Vec<CheckResult>> {
         // Fetch all existing labels (handles pagination internally).
         let existing = github.list_labels(owner, repo).await?;
 
@@ -38,7 +43,7 @@ impl InitCheck for LabelsCheck {
         if missing.is_empty() {
             // All required labels are present → Info.
             let present: Vec<&str> = RODGERS_REQUIRED_LABELS.iter().map(|l| l.name).collect();
-            Ok(CheckResult {
+            Ok(vec![CheckResult {
                 severity: Severity::Info,
                 description: format!(
                     "All {} required labels present: {}",
@@ -47,10 +52,10 @@ impl InitCheck for LabelsCheck {
                 ),
                 fixability: Fixability::NotApplicable,
                 fix_instructions: None,
-            })
+            }])
         } else {
             // Some labels are missing → Blocker with auto-fix.
-            Ok(CheckResult {
+            Ok(vec![CheckResult {
                 severity: Severity::Blocker,
                 description: format!("Required labels missing: {}", missing.join(", ")),
                 fixability: Fixability::Auto,
@@ -58,7 +63,7 @@ impl InitCheck for LabelsCheck {
                     "Running with `--fix` will create the following labels via the GitHub API:\n  {}",
                     missing.join("\n  ")
                 )),
-            })
+            }])
         }
     }
 }
@@ -100,14 +105,15 @@ mod tests {
 
         let client = make_client(&server);
         let check = LabelsCheck;
-        let result = check
+        let results = check
             .check(&client, "test-owner", "test-repo")
             .await
             .unwrap();
 
-        assert_eq!(result.severity, Severity::Info);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].severity, Severity::Info);
         assert!(
-            result
+            results[0]
                 .description
                 .contains("All")
                 .then(|| true)
@@ -115,13 +121,13 @@ mod tests {
         );
         for label in RODGERS_REQUIRED_LABELS.iter() {
             assert!(
-                result.description.contains(label.name),
+                results[0].description.contains(label.name),
                 "description should contain label name '{}'",
                 label.name
             );
         }
-        assert_eq!(result.fixability, Fixability::NotApplicable);
-        assert!(result.fix_instructions.is_none());
+        assert_eq!(results[0].fixability, Fixability::NotApplicable);
+        assert!(results[0].fix_instructions.is_none());
     }
 
     /// Test: some labels missing → Blocker with fix instructions.
@@ -157,16 +163,17 @@ mod tests {
 
         let client = make_client(&server);
         let check = LabelsCheck;
-        let result = check
+        let results = check
             .check(&client, "test-owner", "test-repo")
             .await
             .unwrap();
 
-        assert_eq!(result.severity, Severity::Blocker);
-        assert!(result.description.contains("missing"));
-        assert_eq!(result.fixability, Fixability::Auto);
-        assert!(result.fix_instructions.is_some());
-        let fix_instructions = result.fix_instructions.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].severity, Severity::Blocker);
+        assert!(results[0].description.contains("missing"));
+        assert_eq!(results[0].fixability, Fixability::Auto);
+        assert!(results[0].fix_instructions.is_some());
+        let fix_instructions = results[0].fix_instructions.as_ref().unwrap().clone();
         assert!(fix_instructions.contains("--fix"));
     }
 
@@ -183,21 +190,22 @@ mod tests {
 
         let client = make_client(&server);
         let check = LabelsCheck;
-        let result = check
+        let results = check
             .check(&client, "test-owner", "test-repo")
             .await
             .unwrap();
 
-        assert_eq!(result.severity, Severity::Blocker);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].severity, Severity::Blocker);
         for label in RODGERS_REQUIRED_LABELS.iter() {
             assert!(
-                result.description.contains(label.name),
+                results[0].description.contains(label.name),
                 "missing description should list label '{}'",
                 label.name
             );
         }
-        assert_eq!(result.fixability, Fixability::Auto);
-        assert!(result.fix_instructions.is_some());
+        assert_eq!(results[0].fixability, Fixability::Auto);
+        assert!(results[0].fix_instructions.is_some());
     }
 
     /// Test: case-insensitive label matching.
@@ -236,14 +244,15 @@ mod tests {
 
         let client = make_client(&server);
         let check = LabelsCheck;
-        let result = check
+        let results = check
             .check(&client, "test-owner", "test-repo")
             .await
             .unwrap();
 
         // Even with different casing, all labels should be found → Info.
-        assert_eq!(result.severity, Severity::Info);
-        assert!(result.fixability == Fixability::NotApplicable);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].severity, Severity::Info);
+        assert!(results[0].fixability == Fixability::NotApplicable);
     }
 
     /// Test: empty label name handling — shouldn't crash.
@@ -259,13 +268,14 @@ mod tests {
 
         let client = make_client(&server);
         let check = LabelsCheck;
-        let result = check
+        let results = check
             .check(&client, "test-owner", "test-repo")
             .await
             .unwrap();
 
-        assert_eq!(result.severity, Severity::Blocker);
-        assert_eq!(result.fixability, Fixability::Auto);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].severity, Severity::Blocker);
+        assert_eq!(results[0].fixability, Fixability::Auto);
     }
 
     /// Test: check name returns correct string.
@@ -298,12 +308,12 @@ mod tests {
 
         let client = make_client(&server);
         let check = LabelsCheck;
-        let result = check
+        let results = check
             .check(&client, "test-owner", "test-repo")
             .await
             .unwrap();
 
-        let fix_instructions = result.fix_instructions.unwrap();
+        let fix_instructions = results[0].fix_instructions.clone().unwrap();
         // Verify that "feature" (a missing label) appears in the fix instructions
         assert!(fix_instructions.contains("feature"));
         assert!(fix_instructions.contains("question"));

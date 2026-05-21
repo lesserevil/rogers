@@ -39,6 +39,8 @@ pub struct Repository {
     pub updated_at: String,
     pub pushed_at: String,
     pub visibility: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete_branch_on_merge: Option<bool>,
 }
 
 /// A GitHub label (response shape).
@@ -265,10 +267,15 @@ impl GitHubClient {
     }
 
     /// Set the default git ref (branch/tag/SHA) for requests.
-    #[allow(dead_code)]
     pub fn with_default_ref(mut self, ref_name: &str) -> Self {
         self.default_ref = ref_name.to_string();
         self
+    }
+
+    /// Get the default git ref.
+    #[allow(dead_code)]
+    pub fn default_ref(&self) -> &str {
+        &self.default_ref
     }
 
     /// Rebuild the client with a new token (e.g., from CLI flag vs env var).

@@ -2,9 +2,13 @@
 
 mod issue_templates;
 mod labels;
+mod repo_settings;
+mod release_workflow;
 
 pub use issue_templates::IssueTemplatesCheck;
 pub use labels::LabelsCheck;
+pub use repo_settings::RepoSettingsCheck;
+pub use release_workflow::ReleaseWorkflowCheck;
 
 use serde::{Deserialize, Serialize};
 
@@ -86,15 +90,18 @@ impl CheckResult {
 }
 
 /// Trait that all init audit checks must implement.
+///
+/// Checks may return multiple results — for example, a repository
+/// settings check produces one result per individual setting.
 #[allow(async_fn_in_trait)]
 pub trait InitCheck {
-    /// Run the check and return the result.
+    /// Run the check and return the results.
     async fn check(
         &self,
         github: &crate::github::GitHubClient,
         owner: &str,
         repo: &str,
-    ) -> crate::error::Result<CheckResult>;
+    ) -> crate::error::Result<Vec<CheckResult>>;
 
     /// Human-readable name of this check.
     fn name(&self) -> &'static str;
