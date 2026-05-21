@@ -3,6 +3,7 @@
 //! This library provides the core functionality for Rodgers,
 //! including question routing, documentation search, and code search.
 
+pub mod beads;
 pub mod error;
 pub mod labels;
 

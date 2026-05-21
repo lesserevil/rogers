@@ -4,6 +4,7 @@
 //! for question routing and code explanation.
 
 pub mod prompts;
+pub mod validator;
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

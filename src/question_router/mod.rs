@@ -15,8 +15,12 @@
 //! - All code files (when question is about implementation details)
 
 pub mod code_search;
+pub mod doc_gap;
+pub mod validator;
 
 use crate::llm;
+
+pub use validator::{AnswerSource, QuestionRouterValidator, ValidationOutcome, VerifiedAnswer};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
