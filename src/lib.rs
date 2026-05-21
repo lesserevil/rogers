@@ -22,6 +22,7 @@
 
 pub mod backport;
 pub mod beads;
+pub mod config;
 pub mod error;
 pub mod feature_bug;
 pub mod github;

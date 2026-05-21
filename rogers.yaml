@@ -1,0 +1,5 @@
+
+release:
+  active_branches:
+    - release/1.x
+  stale_threshold_days: 10

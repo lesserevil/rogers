@@ -1,0 +1,8 @@
+
+github:
+  owner: test
+  repo: test
+release:
+  voting_window_days: 2
+tegory: "Announcements"
+  voting_window_days: 2
