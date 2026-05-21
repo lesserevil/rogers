@@ -1,8 +1,10 @@
 //! Init audit checks — reusable check trait and common result types.
 
 mod issue_templates;
+mod labels;
 
 pub use issue_templates::IssueTemplatesCheck;
+pub use labels::LabelsCheck;
 
 use serde::{Deserialize, Serialize};
 
