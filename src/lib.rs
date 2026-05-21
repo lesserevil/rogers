@@ -16,4 +16,5 @@ pub mod feature_bug;
 pub mod github;
 pub mod labels;
 pub mod llm;
+pub mod release;
 pub mod triage;
