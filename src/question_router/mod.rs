@@ -7,8 +7,12 @@
 //! Plan: plans/question-routing-plan.md §Question Router Decision Tree
 
 pub mod code_search;
+pub mod completeness;
 pub mod doc_gap;
 pub mod doc_search;
 pub mod router;
 
+pub use completeness::{
+    QuestionCompletenessResult, check_question_completeness, QUESTION_REQUIRED_FIELDS,
+};
 pub use router::QuestionRouter;

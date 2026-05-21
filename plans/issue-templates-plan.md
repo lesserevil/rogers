@@ -232,4 +232,4 @@ templates:
 - [ ] CRIT-4: Rodgers never reformats an issue without the requestor's explicit approval
 - [ ] CRIT-5: When a requestor approves a reformat, Rodgers posts the reformatted content as a comment for requestor review before applying it
 - [ ] CRIT-6: All default template fields map to a completeness requirement in plans/feature-bug-plan.md or plans/question-routing-plan.md
-- [ ] CRIT-7: A bug report with all required template fields populated transitions to `ready-for-review` without requesting additional information
+- [x] CRIT-7: A bug report with all required template fields populated transitions to `ready-for-review` without requesting additional information — implemented in `src/feature_bug/completeness.rs` and `src/feature_bug/triage_loop.rs`

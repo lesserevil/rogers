@@ -9,531 +9,854 @@
 //! ## Bug Report Requirements
 //!
 //! A bug report is complete when all of the following are present:
-//! 1. **Behavior observed** — A description of what happened
-//! 2. **Behavior expected** — A description of what was expected
-//! 3. **Reproduction steps** — Steps to reproduce (or N/A with justification)
-//! 4. **Environment** — OS, version, hardware context
+//! 1. Environment - OS, version, relevant context
+//! 2. Steps to Reproduce - reproducible steps (or justified N/A)
+//! 3. Expected Behavior - what should have happened
+//! 4. Actual Behavior - what actually happened
 //!
 //! ## Feature Request Requirements
 //!
 //! A feature request is complete when all of the following are present:
-//! 1. **Use case** — Why this feature is needed
-//! 2. **Proposed behavior** — How the feature should work
-//! 3. **Acceptance criteria** — Testable, enumerated list
+//! 1. Use Case - why this feature is needed
+//! 2. Proposed Behavior - how the feature should work
+//! 3. Acceptance Criteria - testable, enumerated list
 
 use serde::{Deserialize, Serialize};
 
-/// Required fields for a complete bug report.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BugCompletenessRequirements {
-    /// Behavior observed - what happened that is wrong
-    pub behavior_observed: bool,
-    /// Behavior expected - what should have happened
-    pub behavior_expected: bool,
-    /// Reproduction steps - or N/A with justification
-    pub reproduction_steps: bool,
-    /// Environment - OS, version, context
-    pub environment: bool,
-}
+use crate::templates::mapping::{
+    CanonicalField, extract_section_content, is_section_populated, map_heading_to_field,
+};
 
-/// Required fields for a complete feature request.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FeatureCompletenessRequirements {
-    /// Use case - why this feature is needed
-    pub use_case: bool,
-    /// Proposed behavior - how the feature should work
-    pub proposed_behavior: bool,
-    /// Acceptance criteria - testable, enumerated list
-    pub acceptance_criteria: bool,
-}
-
-/// Result of a completeness check operation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompletenessCheckResult {
-    /// Whether the issue is complete
+/// Result of a completeness check.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompletenessResult {
+    /// Whether the issue is complete.
     pub is_complete: bool,
-    /// Missing bug fields (empty if not a bug or not missing)
-    pub missing_bug_fields: Vec<String>,
-    /// Missing feature fields (empty if not a feature or not missing)
-    pub missing_feature_fields: Vec<String>,
-    /// Specific request message for missing fields
-    pub request_message: String,
+    /// Which specific fields are missing (if any).
+    pub missing_fields: Vec<CanonicalField>,
 }
 
-impl CompletenessCheckResult {
-    /// Create a result for a complete bug report.
-    pub fn complete_bug() -> Self {
+impl CompletenessResult {
+    /// Create a complete result (no missing fields).
+    pub fn complete() -> Self {
         Self {
             is_complete: true,
-            missing_bug_fields: Vec::new(),
-            missing_feature_fields: Vec::new(),
-            request_message: String::new(),
+            missing_fields: Vec::new(),
         }
     }
 
-    /// Create a result for a complete feature request.
-    pub fn complete_feature() -> Self {
-        Self {
-            is_complete: true,
-            missing_bug_fields: Vec::new(),
-            missing_feature_fields: Vec::new(),
-            request_message: String::new(),
-        }
-    }
-
-    /// Create a result for an incomplete bug report.
-    pub fn incomplete_bug(missing_fields: Vec<String>) -> Self {
-        let request_message = format_bug_request_message(&missing_fields);
+    /// Create an incomplete result with the given missing fields.
+    pub fn incomplete(fields: Vec<CanonicalField>) -> Self {
         Self {
             is_complete: false,
-            missing_bug_fields: missing_fields,
-            missing_feature_fields: Vec::new(),
-            request_message,
+            missing_fields: fields,
         }
     }
 
-    /// Create a result for an incomplete feature request.
-    pub fn incomplete_feature(missing_fields: Vec<String>) -> Self {
-        let request_message = format_feature_request_message(&missing_fields);
-        Self {
-            is_complete: false,
-            missing_bug_fields: Vec::new(),
-            missing_feature_fields: missing_fields,
-            request_message,
+    /// Check if there are any missing fields.
+    pub fn has_missing_fields(&self) -> bool {
+        !self.missing_fields.is_empty()
+    }
+
+    /// Generate a comment requesting the missing fields.
+    pub fn to_request_comment(&self) -> Option<String> {
+        if self.is_complete {
+            return None;
         }
+
+        let mut lines = vec![
+            "Hi! To help us move forward, we need a bit more information:".to_string(),
+        ];
+        lines.push("".to_string());
+
+        for field in &self.missing_fields {
+            lines.push(format!(
+                "- **{}**: Please provide this information",
+                field.display_name()
+            ));
+        }
+
+        lines.push("".to_string());
+        lines.push(
+            "Once this is added, we'll be able to review your submission. Thanks!"
+                .to_string(),
+        );
+
+        Some(lines.join("\n"))
     }
 }
 
-/// Format a request message for missing bug fields.
-fn format_bug_request_message(missing_fields: &[String]) -> String {
-    let mut msg = String::from(
-        "I'd be happy to help investigate this bug! To move forward, could you provide the following information?\n\n",
-    );
+// ======================== Bug Completeness ========================
 
-    for field in missing_fields {
-        match field.as_str() {
-            "behavior_observed" => {
-                msg.push_str("- **Behavior observed**: What happened that seems wrong to you?\n");
-            }
-            "behavior_expected" => {
-                msg.push_str("- **Behavior expected**: What did you expect to happen instead?\n");
-            }
-            "reproduction_steps" => {
-                msg.push_str("- **Reproduction steps**: How can we reproduce this issue? (Or N/A if the bug cannot be reliably reproduced, with an explanation of why)\n");
-            }
-            "environment" => {
-                msg.push_str(
-                    "- **Environment**: What OS, version, and relevant context are you using?\n",
-                );
+/// Required fields for bug completeness.
+///
+/// All four fields must be present and populated for a bug to be ready for review.
+const BUG_REQUIRED_FIELDS: &[CanonicalField] = &[
+    CanonicalField::Environment,
+    CanonicalField::StepsToReproduce,
+    CanonicalField::ExpectedBehavior,
+    CanonicalField::ActualBehavior,
+];
+
+/// Check if a bug report is complete.
+///
+/// Scans the issue body for template sections (using standard headings)
+/// and verifies each required field is present and populated.
+///
+/// ## Edge Cases Handled
+///
+/// - Empty section content → treated as missing
+/// - "N/A" without explanation → treated as missing
+/// - "N/A: <explanation>" → valid (justified)
+/// - Placeholder text like "[example]" → treated as missing
+///
+/// # Arguments
+///
+/// * `body` - The issue body text to check
+///
+/// # Returns
+///
+/// A `CompletenessResult` indicating completeness and any missing fields
+pub fn check_bug_completeness(body: &str) -> CompletenessResult {
+    if body.is_empty() {
+        return CompletenessResult::incomplete(BUG_REQUIRED_FIELDS.to_vec());
+    }
+
+    let mut missing_fields = Vec::new();
+
+    for field in BUG_REQUIRED_FIELDS {
+        let heading = field.heading();
+        let content = extract_section_content(body, heading);
+
+        match content {
+            Some(text) if is_section_populated(&text) => {
+                // Field is present and populated
             }
             _ => {
-                msg.push_str(&format!(
-                    "- **{}**: Please provide this information.\n",
-                    field
-                ));
+                missing_fields.push(*field);
             }
         }
     }
 
-    msg.push_str("\nThanks for taking the time to share these details — they help us understand and reproduce the issue.");
-    msg
+    if missing_fields.is_empty() {
+        CompletenessResult::complete()
+    } else {
+        CompletenessResult::incomplete(missing_fields)
+    }
 }
 
-/// Format a request message for missing feature fields.
-fn format_feature_request_message(missing_fields: &[String]) -> String {
-    let mut msg = String::from(
-        "Thanks for your feature suggestion! To help us evaluate and implement this, could you provide the following?\n\n",
-    );
+/// Check if a bug report is complete using semantic field mapping.
+///
+/// This variant uses the full semantic mapping (including custom template
+/// field names like "System" → Environment, "What Happened" → Actual Behavior).
+///
+/// # Arguments
+///
+/// * `body` - The issue body text to check
+///
+/// # Returns
+///
+/// A `CompletenessResult` indicating completeness and any missing fields
+pub fn check_bug_completeness_semantic(body: &str) -> CompletenessResult {
+    if body.is_empty() {
+        return CompletenessResult::incomplete(BUG_REQUIRED_FIELDS.to_vec());
+    }
 
-    for field in missing_fields {
-        match field.as_str() {
-            "use_case" => {
-                msg.push_str(
-                    "- **Use case**: Why do you need this feature? What problem are you solving?\n",
-                );
-            }
-            "proposed_behavior" => {
-                msg.push_str(
-                    "- **Proposed behavior**: How should this feature work once implemented?\n",
-                );
-            }
-            "acceptance_criteria" => {
-                msg.push_str("- **Acceptance criteria**: How would you verify this feature works correctly? (Please provide a testable, enumerated list of criteria)\n");
+    let mut missing_fields = Vec::new();
+
+    for field in BUG_REQUIRED_FIELDS {
+        let heading = field.heading();
+        let content = extract_section_content(body, heading);
+
+        // If standard heading not found, try semantic mapping
+        let content = if content.is_none() {
+            find_semantic_field_content(body, field)
+        } else {
+            content
+        };
+
+        match content {
+            Some(text) if is_section_populated(&text) => {
+                // Field is present and populated
             }
             _ => {
-                msg.push_str(&format!(
-                    "- **{}**: Please provide this information.\n",
-                    field
-                ));
+                missing_fields.push(*field);
             }
         }
     }
 
-    msg.push_str("\nThanks for helping us understand your needs!");
-    msg
-}
-
-/// Validates that a bug report has all required fields present.
-///
-/// Uses light semantic analysis to detect presence of required fields.
-/// This is a baseline implementation that can be enhanced with LLM-based
-/// extraction in the future.
-pub fn check_bug_completeness(body: &str) -> CompletenessCheckResult {
-    let body_lower = body.to_lowercase();
-
-    let behavior_observed = has_bug_section(
-        &body_lower,
-        &[
-            "behavior observed",
-            "what happened",
-            "actual behavior",
-            "current behavior",
-            "the issue",
-        ],
-    );
-
-    let behavior_expected = has_bug_section(
-        &body_lower,
-        &[
-            "behavior expected",
-            "expected result",
-            "expected behavior",
-            "what should happen",
-            "what i expected",
-            "what i thought",
-        ],
-    );
-
-    let reproduction_steps = has_reproduction_steps(&body_lower);
-    let environment = has_bug_section(
-        &body_lower,
-        &[
-            "environment",
-            "system info",
-            "system details",
-            "version",
-            "os:",
-            "node:",
-            "platform",
-            "browser:",
-        ],
-    );
-
-    let mut missing = Vec::new();
-
-    if !behavior_observed {
-        missing.push("behavior_observed".to_string());
-    }
-    if !behavior_expected {
-        missing.push("behavior_expected".to_string());
-    }
-    if !reproduction_steps {
-        missing.push("reproduction_steps".to_string());
-    }
-    if !environment {
-        missing.push("environment".to_string());
-    }
-
-    if missing.is_empty() {
-        CompletenessCheckResult::complete_bug()
+    if missing_fields.is_empty() {
+        CompletenessResult::complete()
     } else {
-        CompletenessCheckResult::incomplete_bug(missing)
+        CompletenessResult::incomplete(missing_fields)
     }
 }
 
-/// Validates that a feature request has all required fields present.
-pub fn check_feature_completeness(body: &str) -> CompletenessCheckResult {
-    let body_lower = body.to_lowercase();
-
-    let use_case = has_feature_section(
-        &body_lower,
-        &["use case", "user story", "why", "motivation", "background"],
-    );
-
-    let proposed_behavior = has_feature_section(
-        &body_lower,
-        &[
-            "proposed behavior",
-            "how it should work",
-            "how it works",
-            "expected behavior",
-            "what should happen",
-            "implementation",
-            "solution",
-        ],
-    );
-
-    let acceptance_criteria = has_acceptance_criteria(&body_lower);
-
-    let mut missing = Vec::new();
-
-    if !use_case {
-        missing.push("use_case".to_string());
-    }
-    if !proposed_behavior {
-        missing.push("proposed_behavior".to_string());
-    }
-    if !acceptance_criteria {
-        missing.push("acceptance_criteria".to_string());
-    }
-
-    if missing.is_empty() {
-        CompletenessCheckResult::complete_feature()
-    } else {
-        CompletenessCheckResult::incomplete_feature(missing)
-    }
-}
-
-/// Check for bug report sections using header patterns.
+/// Find content for a canonical field using semantic matching.
 ///
-/// This checks for markdown headers that indicate a section is present.
-/// The check looks for patterns like "## Section Name" in the body.
-fn has_bug_section(body: &str, patterns: &[&str]) -> bool {
-    // First, check for explicit markdown headers
-    for pattern in patterns {
-        // Check for ## pattern headers
-        if body.contains(&format!("## {}", pattern)) {
-            return true;
-        }
-        // Check for ### pattern headers
-        if body.contains(&format!("### {}", pattern)) {
-            return true;
-        }
-    }
+/// Searches the body for any section that semantically matches the given field.
+/// Returns the content if found, None otherwise.
+fn find_semantic_field_content(body: &str, field: &CanonicalField) -> Option<String> {
+    let sections: Vec<&str> = body.split("\n## ").collect();
 
-    // For environment/species checks, also look for environment-style lines
-    // This helps catch without explicit headers if there's a clear environment section
-    let has_env_line = patterns.iter().any(|p| {
-        p.contains(":") && (p.contains("os:") || p.contains("node:") || p.contains("version"))
-    });
+    for section in &sections[1..] {
+        let heading = section.lines().next().unwrap_or("");
 
-    if has_env_line {
-        // Check for environment-like bullet lists
-        let lines: Vec<&str> = body.lines().collect();
-        for line in &lines {
-            let line_trimmed = line.trim();
-            if line_trimmed.starts_with("- ")
-                && (line_trimmed.to_lowercase().contains("os:")
-                    || line_trimmed.to_lowercase().contains("version:")
-                    || line_trimmed.to_lowercase().contains("browser:")
-                    || line_trimmed.to_lowercase().contains("node:"))
-            {
-                return true;
+        if let Some(canonical) = map_heading_to_field(heading) {
+            if canonical == *field {
+                let content = &section[heading.len()..];
+                return if is_section_populated(content.trim()) {
+                    Some(content.trim().to_string())
+                } else {
+                    None
+                };
             }
         }
     }
 
-    false
+    None
 }
 
-/// Check for feature request sections using header patterns.
-fn has_feature_section(body: &str, patterns: &[&str]) -> bool {
-    for pattern in patterns {
-        // Check for ## pattern headers
-        if body.contains(&format!("## {}", pattern)) {
-            return true;
-        }
-        // Check for ### pattern headers
-        if body.contains(&format!("### {}", pattern)) {
-            return true;
-        }
-    }
-    false
-}
+// ======================== Feature Completeness ========================
 
-/// Checks for presence of reproduction steps.
+/// Required fields for feature request completeness.
 ///
-/// Reproduction steps are detected by looking for:
-/// - ## Reproduction Steps or ## Steps section
-/// - Numbered steps or bullet points (1., 2., 3., -, *)
-/// - Step keywords like "step", "reproduce", "reproduction"
-/// - Or "N/A" with a following explanation
-fn has_reproduction_steps(body: &str) -> bool {
-    // Check for explicit header
-    if body.contains("## reproduction")
-        || body.contains("## steps")
-        || body.contains("## how to")
-        || body.contains("### reproduction")
-        || body.contains("### steps")
-        || body.contains("### how to")
-    {
-        return true;
-    }
+/// All three fields must be present and populated for a feature request
+/// to be ready for review.
+const FEATURE_REQUIRED_FIELDS: &[CanonicalField] = &[
+    CanonicalField::UseCase,
+    CanonicalField::ProposedBehavior,
+    CanonicalField::AcceptanceCriteria,
+];
 
-    // Check for N/A with justification for non-reproducible bugs
-    if body.contains("n/a") || body.contains("not applicable") {
-        return true;
-    }
-
-    // Check for numbered step patterns (need numbered list, not just "1.")
-    let has_numbered_steps = (body.contains("1.") && body.len() > 100)
-        || body.contains("1)")
-        || body.contains("step 1")
-        || body.contains("step one");
-
-    // Check for step keywords
-    let has_step_keyword = body.contains("steps to reproduce")
-        || body.contains("reproduction steps")
-        || body.contains("how to reproduce");
-
-    // Check for bullet lists with clear action items
-    let has_bullet_steps = (body.contains("- ") && body.len() > 100)
-        && (body.contains("- open")
-            || body.contains("- fill")
-            || body.contains("- click")
-            || body.contains("- select")
-            || body.contains("- go to")
-            || body.contains("- type"));
-
-    has_numbered_steps || has_bullet_steps || has_step_keyword
-}
-
-/// Checks for acceptance criteria.
+/// Check if a feature request is complete.
 ///
-/// Acceptance criteria are detected by:
-/// - Explicit "acceptance criteria" or "acceptance criteria:" section
-/// - Checkbox patterns ([ ], [x], - [ ])
-/// - Numbered criteria (AC-1:, AC-2:, etc.)
-fn has_acceptance_criteria(body: &str) -> bool {
-    // Check for explicit header
-    if body.contains("## acceptance")
-        || body.contains("## verification")
-        || body.contains("## criteria")
-        || body.contains("## how to test")
-        || body.contains("### acceptance")
-    {
-        return true;
+/// Scans the issue body for template sections (using standard headings)
+/// and verifies each required field is present and populated.
+///
+/// # Arguments
+///
+/// * `body` - The issue body text to check
+///
+/// # Returns
+///
+/// A `CompletenessResult` indicating completeness and any missing fields
+pub fn check_feature_completeness(body: &str) -> CompletenessResult {
+    if body.is_empty() {
+        return CompletenessResult::incomplete(FEATURE_REQUIRED_FIELDS.to_vec());
     }
 
-    // Check for checkbox patterns
-    if body.contains("[ ]") || body.contains("[x]") || body.contains("[- ]") {
-        return true;
+    let mut missing_fields = Vec::new();
+
+    for field in FEATURE_REQUIRED_FIELDS {
+        let heading = field.heading();
+        let content = extract_section_content(body, heading);
+
+        match content {
+            Some(text) if is_section_populated(&text) => {
+                // Field is present and populated
+            }
+            _ => {
+                missing_fields.push(*field);
+            }
+        }
     }
 
-    // Check for AC-* patterns
-    if body.contains("ac-") || body.contains("ac1:") || body.contains("ac2:") {
-        return true;
+    if missing_fields.is_empty() {
+        CompletenessResult::complete()
+    } else {
+        CompletenessResult::incomplete(missing_fields)
     }
-
-    false
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    // === Bug Completeness Tests ===
+
     #[test]
-    fn test_complete_bug() {
+    fn test_complete_bug_report_all_fields_present() {
         let body = r#"
-## Behavior Observed
-The application crashes when clicking the button.
+## Bug Summary
+App crashes on submit
 
-## Behavior Expected
-The application should display a confirmation dialog.
+## Environment
+- OS: Ubuntu 22.04
+- Version: 1.0.0
 
-## Reproduction Steps
+## Steps to Reproduce
 1. Open the application
-2. Click the submit button
-3. Observe the crash
+2. Navigate to the settings page
+3. Click the submit button
+4. Application crashes
 
-## Environment
-- OS: macOS 13.0
-- Version: 1.2.3
+## Expected Behavior
+The form should save and show a success message
+
+## Actual Behavior
+The application crashes with a NullPointerException
 "#;
+
         let result = check_bug_completeness(body);
-        assert!(result.is_complete, "Bug with all fields should be complete");
-        assert!(result.missing_bug_fields.is_empty());
+        assert!(result.is_complete);
+        assert!(result.missing_fields.is_empty());
     }
 
     #[test]
-    fn test_complete_bug_with_na_reproduction() {
+    fn test_complete_bug_report_semantic_fields() {
         let body = r#"
-## Behavior Observed
-The application crashes randomly.
+## Bug Summary
+App crashes
 
-## Behavior Expected
-The application should not crash.
+## System
+- OS: Windows 11
 
 ## Reproduction Steps
-N/A - This is a race condition that cannot be reliably reproduced.
+1. Open app
 
+## Expected
+Should not crash
+
+## What Happened
+It crashes
+"#;
+
+        let result = check_bug_completeness_semantic(body);
+        assert!(result.is_complete);
+        assert!(result.missing_fields.is_empty());
+    }
+
+    #[test]
+    fn test_complete_bug_report_ready_for_review_no_comment() {
+        let body = r#"
 ## Environment
-- OS: Linux Ubuntu 22.04
-- Version: 2.0.0
+Ubuntu 22.04
+
+## Steps to Reproduce
+1. Open app
+
+## Expected Behavior
+Should work
+
+## Actual Behavior
+Crashes
 "#;
+
         let result = check_bug_completeness(body);
-        assert!(
-            result.is_complete,
-            "Bug with N/A reproduction should be complete"
-        );
-        assert!(result.missing_bug_fields.is_empty());
+        assert!(result.is_complete);
+        assert!(result.to_request_comment().is_none());
+    }
+
+    // === Bug Missing Fields Tests ===
+
+    #[test]
+    fn test_missing_environment_field() {
+        let body = r#"
+## Steps to Reproduce
+1. Open app
+
+## Expected Behavior
+Should work
+
+## Actual Behavior
+Crashes
+"#;
+
+        let result = check_bug_completeness(body);
+        assert!(!result.is_complete);
+        assert!(result.missing_fields.contains(&CanonicalField::Environment));
     }
 
     #[test]
-    fn test_incomplete_bug() {
+    fn test_missing_steps_to_reproduce() {
         let body = r#"
-## What Happened
-The button doesn't work.
+## Environment
+Ubuntu 22.04
 
-There should be some way to make this work.
+## Expected Behavior
+Should work
+
+## Actual Behavior
+Crashes
 "#;
+
         let result = check_bug_completeness(body);
-        assert!(
-            !result.is_complete,
-            "Bug missing expected, reproduction, and environment should be incomplete"
-        );
-        assert!(!result.missing_bug_fields.is_empty());
+        assert!(!result.is_complete);
         assert!(
             result
-                .missing_bug_fields
-                .contains(&"behavior_expected".to_string())
-        );
-        assert!(
-            result
-                .missing_bug_fields
-                .contains(&"reproduction_steps".to_string())
-        );
-        assert!(
-            result
-                .missing_bug_fields
-                .contains(&"environment".to_string())
+                .missing_fields
+                .contains(&CanonicalField::StepsToReproduce)
         );
     }
 
     #[test]
-    fn test_complete_bug_with_alternate_headers() {
+    fn test_missing_expected_behavior() {
         let body = r#"
-## What Happened
-The application gives an error
+## Environment
+Ubuntu 22.04
 
-## Expected Result
-The application should succeed
+## Steps to Reproduce
+1. Open app
+
+## Actual Behavior
+Crashes
+"#;
+
+        let result = check_bug_completeness(body);
+        assert!(!result.is_complete);
+        assert!(
+            result
+                .missing_fields
+                .contains(&CanonicalField::ExpectedBehavior)
+        );
+    }
+
+    #[test]
+    fn test_missing_actual_behavior() {
+        let body = r#"
+## Environment
+Ubuntu 22.04
+
+## Steps to Reproduce
+1. Open app
+
+## Expected Behavior
+Should work
+"#;
+
+        let result = check_bug_completeness(body);
+        assert!(!result.is_complete);
+        assert!(
+            result
+                .missing_fields
+                .contains(&CanonicalField::ActualBehavior)
+        );
+    }
+
+    #[test]
+    fn test_missing_multiple_fields() {
+        let body = r#"
+## Environment
+Ubuntu 22.04
+
+## Steps to Reproduce
+1. Open app
+"#;
+
+        let result = check_bug_completeness(body);
+        assert!(!result.is_complete);
+        assert_eq!(result.missing_fields.len(), 2);
+        assert!(
+            result
+                .missing_fields
+                .contains(&CanonicalField::ExpectedBehavior)
+        );
+        assert!(
+            result
+                .missing_fields
+                .contains(&CanonicalField::ActualBehavior)
+        );
+    }
+
+    #[test]
+    fn test_missing_all_fields() {
+        let body = "App doesn't work";
+
+        let result = check_bug_completeness(body);
+        assert!(!result.is_complete);
+        assert_eq!(result.missing_fields.len(), 4);
+    }
+
+    // === Bug Empty Field Tests ===
+
+    #[test]
+    fn test_empty_environment_field() {
+        let body = r#"
+## Environment
+
+## Steps to Reproduce
+1. Open app
+
+## Expected Behavior
+Should work
+
+## Actual Behavior
+Crashes
+"#;
+
+        let result = check_bug_completeness(body);
+        assert!(!result.is_complete);
+        assert!(result.missing_fields.contains(&CanonicalField::Environment));
+    }
+
+    #[test]
+    fn test_whitespace_only_field() {
+        let body = r#"
+## Environment
+   
+## Steps to Reproduce
+1. Open app
+
+## Expected Behavior
+Should work
+
+## Actual Behavior
+Crashes
+"#;
+
+        let result = check_bug_completeness(body);
+        assert!(!result.is_complete);
+        assert!(result.missing_fields.contains(&CanonicalField::Environment));
+    }
+
+    #[test]
+    fn test_placeholder_content_treated_as_missing() {
+        let body = r#"
+## Environment
+[type here]
+
+## Steps to Reproduce
+1. Open app
+
+## Expected Behavior
+[fill in]
+
+## Actual Behavior
+Crashes
+"#;
+
+        let result = check_bug_completeness(body);
+        assert!(!result.is_complete);
+        assert!(result.missing_fields.contains(&CanonicalField::Environment));
+        assert!(
+            result
+                .missing_fields
+                .contains(&CanonicalField::ExpectedBehavior)
+        );
+    }
+
+    #[test]
+    fn test_na_alone_treated_as_missing() {
+        let body = r#"
+## Environment
+Ubuntu 22.04
+
+## Steps to Reproduce
+N/A
+
+## Expected Behavior
+Should work
+
+## Actual Behavior
+Crashes
+"#;
+
+        let result = check_bug_completeness(body);
+        assert!(!result.is_complete);
+        assert!(
+            result
+                .missing_fields
+                .contains(&CanonicalField::StepsToReproduce)
+        );
+    }
+
+    #[test]
+    fn test_na_with_explanation_is_valid() {
+        let body = r#"
+## Environment
+Ubuntu 22.04
+
+## Steps to Reproduce
+N/A: The bug is a crash on startup, cannot reproduce
+
+## Expected Behavior
+Should work
+
+## Actual Behavior
+Crashes
+"#;
+
+        let result = check_bug_completeness(body);
+        assert!(result.is_complete);
+    }
+
+    #[test]
+    fn test_empty_body_all_fields_missing() {
+        let result = check_bug_completeness("");
+        assert!(!result.is_complete);
+        assert_eq!(result.missing_fields.len(), 4);
+    }
+
+    #[test]
+    fn test_request_comment_for_missing_fields() {
+        let body = r#"
+## Environment
+Ubuntu 22.04
+"#;
+
+        let result = check_bug_completeness(body);
+        let comment = result.to_request_comment();
+        assert!(comment.is_some());
+
+        let comment = comment.unwrap();
+        assert!(comment.contains("Steps to Reproduce"));
+        assert!(comment.contains("Expected Behavior"));
+        assert!(comment.contains("Actual Behavior"));
+    }
+
+    #[test]
+    fn test_no_request_comment_when_complete() {
+        let body = r#"
+## Environment
+Ubuntu 22.04
+
+## Steps to Reproduce
+1. Open app
+
+## Expected Behavior
+Should work
+
+## Actual Behavior
+Crashes
+"#;
+
+        let result = check_bug_completeness(body);
+        assert!(result.to_request_comment().is_none());
+    }
+
+    #[test]
+    fn test_completeness_result_methods() {
+        let complete = CompletenessResult::complete();
+        assert!(complete.is_complete);
+        assert!(!complete.has_missing_fields());
+
+        let incomplete = CompletenessResult::incomplete(vec![CanonicalField::Environment]);
+        assert!(!incomplete.is_complete);
+        assert!(incomplete.has_missing_fields());
+    }
+
+    // === Bug Semantic Mapping Tests ===
+
+    #[test]
+    fn test_semantic_mapping_custom_environment_field() {
+        let body = r#"
+## System
+- OS: macOS 14
+
+## Steps to Reproduce
+1. Open app
+
+## Expected Behavior
+Should work
+
+## Actual Behavior
+Crashes
+"#;
+
+        let result = check_bug_completeness_semantic(body);
+        assert!(result.is_complete);
+    }
+
+    #[test]
+    fn test_semantic_mapping_custom_actual_behavior_field() {
+        let body = r#"
+## Environment
+Ubuntu 22.04
+
+## Steps to Reproduce
+1. Open app
+
+## Expected Behavior
+Should work
+
+## What Happened
+The app freezes
+"#;
+
+        let result = check_bug_completeness_semantic(body);
+        assert!(result.is_complete);
+    }
+
+    #[test]
+    fn test_semantic_mapping_custom_steps_field() {
+        let body = r#"
+## Environment
+Ubuntu 22.04
 
 ## How to Reproduce
-1. Open the app
-2. Login
-3. Submit form
+1. Open app
 
-## System Details
-- OS: Windows 11
-- Version: 2.0.0
-- Browser: Chrome
+## Expected Behavior
+Should work
+
+## Actual Behavior
+Crashes
 "#;
+
+        let result = check_bug_completeness_semantic(body);
+        assert!(result.is_complete);
+    }
+
+    // === Bug Integration: All 4 fields → ready-for-review ===
+
+    #[test]
+    fn test_bug_with_all_4_fields_ready_for_review() {
+        let body = r#"
+## Bug Summary
+Network request fails with 500 error
+
+## Environment
+- OS: Ubuntu 22.04
+- Version: 2.1.0
+- Browser: Chrome 120
+
+## Steps to Reproduce
+1. Log in to the dashboard
+2. Navigate to the reports page
+3. Click "Export CSV"
+4. See 500 error
+
+## Expected Behavior
+The CSV should download successfully
+
+## Actual Behavior
+A 500 Internal Server Error appears
+"#;
+
         let result = check_bug_completeness(body);
+
         assert!(
             result.is_complete,
-            "Bug with alternate headers should be complete"
+            "Bug report with all 4 fields should be complete"
+        );
+        assert!(
+            result.missing_fields.is_empty(),
+            "No fields should be missing"
+        );
+        assert!(
+            result.to_request_comment().is_none(),
+            "Should NOT post a needs-information comment when complete"
+        );
+        assert_eq!(result.missing_fields.len(), 0);
+    }
+
+    // === Bug Missing individual field → needs-information ===
+
+    #[test]
+    fn test_missing_environment_needs_info_for_environment_only() {
+        let body = r#"
+## Steps to Reproduce
+1. Open app
+
+## Expected Behavior
+Should work
+
+## Actual Behavior
+Crashes
+"#;
+
+        let result = check_bug_completeness(body);
+        assert!(!result.is_complete);
+        assert_eq!(result.missing_fields.len(), 1);
+        assert!(result.missing_fields.contains(&CanonicalField::Environment));
+        assert!(
+            !result
+                .missing_fields
+                .contains(&CanonicalField::StepsToReproduce)
+        );
+        assert!(
+            !result
+                .missing_fields
+                .contains(&CanonicalField::ExpectedBehavior)
+        );
+        assert!(
+            !result
+                .missing_fields
+                .contains(&CanonicalField::ActualBehavior)
         );
     }
 
     #[test]
-    fn test_complete_feature() {
+    fn test_missing_steps_needs_info_for_steps_only() {
+        let body = r#"
+## Environment
+Ubuntu 22.04
+
+## Expected Behavior
+Should work
+
+## Actual Behavior
+Crashes
+"#;
+
+        let result = check_bug_completeness(body);
+        assert!(!result.is_complete);
+        assert_eq!(result.missing_fields.len(), 1);
+        assert!(
+            result
+                .missing_fields
+                .contains(&CanonicalField::StepsToReproduce)
+        );
+    }
+
+    #[test]
+    fn test_missing_expected_needs_info_for_expected_only() {
+        let body = r#"
+## Environment
+Ubuntu 22.04
+
+## Steps to Reproduce
+1. Open app
+
+## Actual Behavior
+Crashes
+"#;
+
+        let result = check_bug_completeness(body);
+        assert!(!result.is_complete);
+        assert_eq!(result.missing_fields.len(), 1);
+        assert!(
+            result
+                .missing_fields
+                .contains(&CanonicalField::ExpectedBehavior)
+        );
+    }
+
+    #[test]
+    fn test_missing_actual_needs_info_for_actual_only() {
+        let body = r#"
+## Environment
+Ubuntu 22.04
+
+## Steps to Reproduce
+1. Open app
+
+## Expected Behavior
+Should work
+"#;
+
+        let result = check_bug_completeness(body);
+        assert!(!result.is_complete);
+        assert_eq!(result.missing_fields.len(), 1);
+        assert!(
+            result
+                .missing_fields
+                .contains(&CanonicalField::ActualBehavior)
+        );
+    }
+
+    // === Feature Completeness Tests ===
+
+    #[test]
+    fn test_complete_feature_request_all_fields_present() {
         let body = r#"
 ## Use Case
 As a user, I want to export my data to CSV so I can analyze it in Excel.
 
 ## Proposed Behavior
-When clicking the export button, the system should generate a CSV file with all visible data and prompt the user to download it.
+When clicking the export button, the system should generate a CSV file with
+all visible data and prompt the user to download it.
 
 ## Acceptance Criteria
 - [ ] Export button appears in the toolbar
@@ -541,315 +864,151 @@ When clicking the export button, the system should generate a CSV file with all 
 - [ ] The CSV contains all visible columns
 - [ ] User is prompted to download the file
 "#;
+
         let result = check_feature_completeness(body);
-        assert!(
-            result.is_complete,
-            "Feature with all fields should be complete"
-        );
-        assert!(result.missing_feature_fields.is_empty());
+        assert!(result.is_complete);
+        assert!(result.missing_fields.is_empty());
     }
 
     #[test]
-    fn test_complete_feature_with_user_story() {
+    fn test_feature_missing_use_case() {
         let body = r#"
-## User Story
-As a developer, I want API keys to be rotated automatically so I don't have to do it manually.
+## Proposed Behavior
+An export button should generate a CSV file.
 
-## What Should Happen
-The system should generate new API keys monthly and notify users.
-
-## How to Test
-- [ ] New keys are generated each month
-- [ ] Users receive notification
-- [ ] Old keys are invalidated after grace period
-- [ ] Existing integrations continue to work during transition
+## Acceptance Criteria
+- [ ] Export button works
 "#;
+
         let result = check_feature_completeness(body);
-        assert!(
-            result.is_complete,
-            "Feature with User Story should be complete"
-        );
-        assert!(result.missing_feature_fields.is_empty());
-    }
-
-    #[test]
-    fn test_incomplete_feature() {
-        let body = r#"
-## Why
-I need a way to do something nice.
-"#;
-        let result = check_feature_completeness(body);
-        // "Why" alone is not enough - there should be either Use Case header or
-        // a substantial use case section
-        assert!(
-            !result.is_complete,
-            "Feature missing proposed behavior and acceptance criteria should be incomplete"
-        );
-        assert!(!result.missing_feature_fields.is_empty());
-        assert!(
-            result
-                .missing_feature_fields
-                .contains(&"proposed_behavior".to_string())
-        );
-        assert!(
-            result
-                .missing_feature_fields
-                .contains(&"acceptance_criteria".to_string())
-        );
-    }
-
-    #[test]
-    fn test_complete_bug_with_bullet_reproduction() {
-        let body = r#"
-## What Happened
-The form submitted twice.
-
-## Expected Result
-The form should only submit once.
-
-## Steps to Reproduce
-- Open the form
-- Fill in the fields
-- Click submit button
-
-## Environment
-- Browser: Chrome 120
-- OS: Windows 11
-"#;
-        let result = check_bug_completeness(body);
-        assert!(
-            result.is_complete,
-            "Bug with all fields via alt headers should be complete"
-        );
-    }
-
-    #[test]
-    fn test_complete_feature_with_checkboxes() {
-        let body = r#"
-## Why I Need This
-I want to track my tasks better.
-
-## How It Should Work
-A kanban board view with drag-and-drop cards.
-
-## Verification Criteria
-- [x] User can see a board view
-- [ ] User can drag cards between columns
-- [ ] Changes persist after reload
-"#;
-        let result = check_feature_completeness(body);
-        assert!(
-            result.is_complete,
-            "Feature with all fields via alt headers should be complete"
-        );
-    }
-
-    #[test]
-    fn test_request_message_includes_all_missing_fields() {
-        let body = "Just a title"; // Will miss all fields
-        let result = check_bug_completeness(body);
         assert!(!result.is_complete);
-        assert!(result.request_message.contains("Behavior observed"));
-        assert!(result.request_message.contains("Behavior expected"));
-        assert!(result.request_message.contains("Reproduction steps"));
-        assert!(result.request_message.contains("Environment"));
-    }
-
-    // Issue verification tests - specific missing field requests
-
-    #[test]
-    fn test_bug_missing_environment_only_requests_environment() {
-        // Bug with all fields except environment
-        let body = r#"
-## What Happened
-Something wrong happened
-
-## Behavior Expected
-Something right should happen
-
-## Steps to Reproduce
-1. Do X
-2. Observe result
-
-No environment details provided.
-"#;
-        let result = check_bug_completeness(body);
-        assert!(!result.is_complete);
+        assert!(result.missing_fields.contains(&CanonicalField::UseCase));
         assert!(
-            result
-                .missing_bug_fields
-                .contains(&"environment".to_string())
+            !result
+                .missing_fields
+                .contains(&CanonicalField::ProposedBehavior)
         );
-        assert!(result.missing_bug_fields.len() == 1);
-        // Request message should mention environment only
-        assert!(result.request_message.contains("Environment"));
-        assert!(!result.request_message.contains("Reproduction"));
-        assert!(!result.request_message.contains("Behavior observed"));
+        assert!(
+            !result
+                .missing_fields
+                .contains(&CanonicalField::AcceptanceCriteria)
+        );
     }
 
     #[test]
-    fn test_bug_missing_steps_and_expected_requests_both() {
-        // Bug missing reproduction_steps and behavior_expected
-        let body = r#"
-## What Happened
-The form submitted twice instead of once
-"#;
-        let result = check_bug_completeness(body);
-        assert!(!result.is_complete);
-        assert!(
-            result
-                .missing_bug_fields
-                .contains(&"behavior_expected".to_string())
-        );
-        assert!(
-            result
-                .missing_bug_fields
-                .contains(&"reproduction_steps".to_string())
-        );
-        assert!(result.missing_bug_fields.len() >= 2);
-        // Request message should mention both
-        assert!(result.request_message.contains("Behavior expected"));
-        assert!(result.request_message.contains("Reproduction steps"));
-    }
-
-    #[test]
-    fn test_feature_missing_acceptance_criteria_only_requests_that() {
-        // Feature with use_case and proposed_behavior but missing acceptance_criteria
+    fn test_feature_missing_proposed_behavior() {
         let body = r#"
 ## Use Case
-I need to track tasks better
+I need a way to export data.
+
+## Acceptance Criteria
+- [ ] Export button works
+"#;
+
+        let result = check_feature_completeness(body);
+        assert!(!result.is_complete);
+        assert!(
+            result
+                .missing_fields
+                .contains(&CanonicalField::ProposedBehavior)
+        );
+    }
+
+    #[test]
+    fn test_feature_missing_acceptance_criteria() {
+        let body = r#"
+## Use Case
+I need to export data to CSV.
 
 ## Proposed Behavior
-A kanban board with drag and drop
-
-No acceptance criteria provided.
+A button should generate and download the file.
 "#;
+
         let result = check_feature_completeness(body);
         assert!(!result.is_complete);
         assert!(
             result
-                .missing_feature_fields
-                .contains(&"acceptance_criteria".to_string())
+                .missing_fields
+                .contains(&CanonicalField::AcceptanceCriteria)
         );
-        assert!(result.missing_feature_fields.len() == 1);
-        // Request message should mention acceptance criteria only
-        assert!(result.request_message.contains("Acceptance criteria"));
-        assert!(!result.request_message.contains("Use case"));
-        assert!(!result.request_message.contains("Proposed behavior"));
     }
 
     #[test]
-    fn test_no_generic_please_provide_more_details() {
-        let body = "Just a title";
-        let result = check_bug_completeness(body);
+    fn test_feature_missing_all_fields() {
+        let body = "I have an idea";
+
+        let result = check_feature_completeness(body);
         assert!(!result.is_complete);
-        // Should NOT contain generic phrases
-        assert!(
-            !result
-                .request_message
-                .to_lowercase()
-                .contains("more detail")
-        );
-        assert!(
-            !result
-                .request_message
-                .to_lowercase()
-                .contains("need more info")
-        );
-        assert!(
-            !result
-                .request_message
-                .to_lowercase()
-                .contains("additional info")
-        );
-        // Should contain specific field requests
-        assert!(result.request_message.contains("Behavior observed"));
-        assert!(result.request_message.contains("Behavior expected"));
-        assert!(result.request_message.contains("Reproduction steps"));
-        assert!(result.request_message.contains("Environment"));
+        assert_eq!(result.missing_fields.len(), 3);
     }
 
     #[test]
-    fn test_needs_information_label_would_be_applied() {
-        // This test verifies the completeness check returns the correct data
-        // for needs-information label application
+    fn test_feature_empty_use_case() {
         let body = r#"
-## Behavior Observed
-Something wrong
+## Use Case
+
+## Proposed Behavior
+Something cool.
+
+## Acceptance Criteria
+- [ ] It works
 "#;
-        let result = check_bug_completeness(body);
+
+        let result = check_feature_completeness(body);
         assert!(!result.is_complete);
-        // The missing fields list can be used to apply needs-information label
-        assert!(!result.missing_bug_fields.is_empty());
-        // The request message specifically identifies what's needed
-        assert!(!result.request_message.is_empty());
+        assert!(result.missing_fields.contains(&CanonicalField::UseCase));
     }
 
     #[test]
-    fn test_bug_completeness_result_usable_for_transition() {
-        // Verify the CompletenessCheckResult can be used with TransitionSummary
-        use crate::feature_bug::FeatureBugIssue;
-        use crate::feature_bug::TransitionSummary;
+    fn test_feature_placeholder_treated_as_missing() {
+        let body = r#"
+## Use Case
+[type here]
 
-        let incomplete_body = r#"
-## What Happened
-The button clicked but nothing happened
+## Proposed Behavior
+[fill in]
 
-## Environment
-Windows 10, Chrome 120
+## Acceptance Criteria
+- [ ] TODO
 "#;
-        let result = check_bug_completeness(incomplete_body);
+
+        let result = check_feature_completeness(body);
         assert!(!result.is_complete);
-
-        let issue = FeatureBugIssue {
-            number: 42,
-            title: "Test bug".to_string(),
-            body: incomplete_body.to_string(),
-            author: "testuser".to_string(),
-            is_bug: true,
-            is_feature: false,
-        };
-
-        // Using the result with bug_needs_information transition
-        let transition = TransitionSummary::bug_needs_information(&issue, &result.request_message);
-        assert!(transition.applied_needs_information);
+        assert!(result.missing_fields.contains(&CanonicalField::UseCase));
         assert!(
-            transition
-                .labels_to_add
-                .contains(&"needs-information".to_string())
+            result
+                .missing_fields
+                .contains(&CanonicalField::ProposedBehavior)
         );
     }
 
     #[test]
-    fn test_feature_completeness_result_usable_for_transition() {
-        // Verify the CompletenessCheckResult can be used with TransitionSummary
-        use crate::feature_bug::FeatureBugIssue;
-        use crate::feature_bug::TransitionSummary;
-
-        let incomplete_body = r#"
+    fn test_feature_with_all_3_fields_ready_for_review() {
+        let body = r#"
 ## Use Case
-I want to export my data to CSV
+I want to track tasks across multiple projects.
+
+## Proposed Behavior
+A unified task list that aggregates tasks from all connected projects.
+
+## Acceptance Criteria
+- [ ] Tasks from all projects appear in unified list
+- [ ] Filtering by project is supported
+- [ ] Changes sync in real-time
 "#;
-        let result = check_feature_completeness(incomplete_body);
-        assert!(!result.is_complete);
 
-        let issue = FeatureBugIssue {
-            number: 43,
-            title: "Test feature".to_string(),
-            body: incomplete_body.to_string(),
-            author: "testuser".to_string(),
-            is_bug: false,
-            is_feature: true,
-        };
-
-        // Using the result with feature_needs_information transition
-        let transition =
-            TransitionSummary::feature_needs_information(&issue, &result.request_message);
-        assert!(transition.applied_needs_information);
+        let result = check_feature_completeness(body);
         assert!(
-            transition
-                .labels_to_add
-                .contains(&"needs-information".to_string())
+            result.is_complete,
+            "Feature with all 3 fields should be complete"
+        );
+        assert!(
+            result.missing_fields.is_empty(),
+            "No fields should be missing"
+        );
+        assert!(
+            result.to_request_comment().is_none(),
+            "No request comment when complete"
         );
     }
 }

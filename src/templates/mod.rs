@@ -10,6 +10,7 @@
 pub mod conformance;
 pub mod defaults;
 pub mod discovery;
+pub mod mapping;
 pub mod reformat;
 
 pub use conformance::{
