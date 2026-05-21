@@ -2,7 +2,8 @@
 //!
 //! This module provides the release management system that detects
 //! release candidacy, creates proposal discussions, and executes
-//! releases with human approval.
+//! releases with human approval. It also includes changelog generation
+//! from PR data using conventional commits.
 //!
 //! ## Overview
 //!
@@ -15,11 +16,16 @@
 //! 6. Posts a notification and closes the discussion
 //! 7. Handles stale proposals (reminder → close + revisit bead)
 
+pub mod changelog;
 pub mod detector;
 pub mod execution;
 pub mod manager;
 pub mod proposal;
 
+pub use changelog::{
+    ChangelogConfig, ConventionalCommitType, GroupedPRs, ParsedCommit, PullRequest,
+    generate_markdown, generate_release_notes, group_prs_by_type, parse_conventional_commit,
+};
 pub use detector::{
     Blocker, BlockerReason, CandidacyResult, LastRelease, ReleaseCandidate, ReleaseSource,
 };
