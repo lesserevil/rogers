@@ -237,7 +237,11 @@ fn run_completeness_check(issue: &TriageIssue, is_bug: bool, is_feature: bool) -
     let (is_complete, transition, route_labels) = if is_bug {
         let result = check_bug_completeness(&issue.body);
         if result.is_complete {
-            (true, TransitionSummary::bug_ready_for_review(&fb_issue), Vec::new())
+            (
+                true,
+                TransitionSummary::bug_ready_for_review(&fb_issue),
+                Vec::new(),
+            )
         } else {
             (
                 false,
