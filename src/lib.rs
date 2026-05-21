@@ -11,9 +11,12 @@
 //! - `triage` - Triage loop processing
 
 pub mod beads;
+pub mod checks;
+pub mod cli;
 pub mod error;
 pub mod feature_bug;
 pub mod github;
+pub mod init;
 pub mod labels;
 pub mod llm;
 pub mod triage;
