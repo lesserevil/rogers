@@ -18,7 +18,12 @@ impl InitCheck for IssueTemplatesCheck {
         "issue_templates"
     }
 
-    async fn check(&self, github: &GitHubClient, owner: &str, repo: &str) -> Result<CheckResult> {
+    async fn check(
+        &self,
+        github: &GitHubClient,
+        owner: &str,
+        repo: &str,
+    ) -> Result<Vec<CheckResult>> {
         let directory_path = ".github/ISSUE_TEMPLATE";
 
         // Try to list the directory contents via the GitHub Contents API.
@@ -28,7 +33,7 @@ impl InitCheck for IssueTemplatesCheck {
                 // If the error is a 404, the directory doesn't exist → Blocker.
                 let is_404 = matches!(&e, RogersError::GitHubStatus { code, .. } if *code == 404);
                 if is_404 {
-                    return Ok(CheckResult {
+                    return Ok(vec![CheckResult {
                         severity: Severity::Blocker,
                         description: format!(
                             "`.github/ISSUE_TEMPLATE/` directory not found in {}/{}",
@@ -40,7 +45,7 @@ impl InitCheck for IssueTemplatesCheck {
                              https://github.com/{}/{}/new/main/.github/ISSUE_TEMPLATE/",
                             owner, repo
                         )),
-                    });
+                    }]);
                 }
                 // For other errors, propagate them.
                 Err(e)
@@ -67,7 +72,7 @@ impl InitCheck for IssueTemplatesCheck {
 
                 if template_files.is_empty() {
                     // Directory exists but has no template files → Warn.
-                    return Ok(CheckResult {
+                    return Ok(vec![CheckResult {
                         severity: Severity::Warn,
                         description: format!(
                             "`.github/ISSUE_TEMPLATE/` directory exists in {}/{} \
@@ -80,7 +85,7 @@ impl InitCheck for IssueTemplatesCheck {
                              https://github.com/{}/{}/new/main/.github/ISSUE_TEMPLATE/",
                             owner, repo
                         )),
-                    });
+                    }]);
                 }
 
                 // Templates found → Info.
@@ -89,7 +94,7 @@ impl InitCheck for IssueTemplatesCheck {
                     .filter_map(|item| item.get("name").and_then(|n| n.as_str()))
                     .map(String::from)
                     .collect();
-                Ok(CheckResult {
+                Ok(vec![CheckResult {
                     severity: Severity::Info,
                     description: format!(
                         "Found {} issue template(s) in {}/{}: {}",
@@ -100,7 +105,7 @@ impl InitCheck for IssueTemplatesCheck {
                     ),
                     fixability: Fixability::NotApplicable,
                     fix_instructions: None,
-                })
+                }])
             }
         }
     }
@@ -116,6 +121,7 @@ mod tests {
         GitHubClient::new("").with_base_url(&server.uri())
     }
 
+    /// Test: no directory returns blocker.
     #[tokio::test]
     async fn test_no_directory_returns_blocker() {
         let server = MockServer::start().await;
@@ -132,17 +138,19 @@ mod tests {
 
         let client = make_client(&server);
         let check = IssueTemplatesCheck;
-        let result = check
+        let results = check
             .check(&client, "test-owner", "test-repo")
             .await
             .unwrap();
 
-        assert_eq!(result.severity, Severity::Blocker);
-        assert!(result.description.contains("not found"));
-        assert_eq!(result.fixability, Fixability::Manual);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].severity, Severity::Blocker);
+        assert!(results[0].description.contains("not found"));
+        assert_eq!(results[0].fixability, Fixability::Manual);
         assert!(
-            result
+            results[0]
                 .fix_instructions
+                .as_deref()
                 .unwrap()
                 .contains("github.com/test-owner/test-repo")
         );
@@ -162,15 +170,16 @@ mod tests {
 
         let client = make_client(&server);
         let check = IssueTemplatesCheck;
-        let result = check
+        let results = check
             .check(&client, "test-owner", "test-repo")
             .await
             .unwrap();
 
-        assert_eq!(result.severity, Severity::Warn);
-        assert!(result.description.contains("no `.yml`"));
-        assert_eq!(result.fixability, Fixability::Manual);
-        assert!(result.fix_instructions.is_some());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].severity, Severity::Warn);
+        assert!(results[0].description.contains("no `.yml`"));
+        assert_eq!(results[0].fixability, Fixability::Manual);
+        assert!(results[0].fix_instructions.is_some());
     }
 
     #[tokio::test]
@@ -203,14 +212,15 @@ mod tests {
 
         let client = make_client(&server);
         let check = IssueTemplatesCheck;
-        let result = check
+        let results = check
             .check(&client, "test-owner", "test-repo")
             .await
             .unwrap();
 
         // config.yml is a .yml file, so it should find templates → Info
-        assert_eq!(result.severity, Severity::Info);
-        assert!(result.description.contains("1 issue template"));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].severity, Severity::Info);
+        assert!(results[0].description.contains("1 issue template"));
     }
 
     #[tokio::test]
@@ -243,13 +253,14 @@ mod tests {
 
         let client = make_client(&server);
         let check = IssueTemplatesCheck;
-        let result = check
+        let results = check
             .check(&client, "test-owner", "test-repo")
             .await
             .unwrap();
 
-        assert_eq!(result.severity, Severity::Warn);
-        assert!(result.description.contains("no `.yml`"));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].severity, Severity::Warn);
+        assert!(results[0].description.contains("no `.yml`"));
     }
 
     #[tokio::test]
@@ -281,16 +292,17 @@ mod tests {
 
         let client = make_client(&server);
         let check = IssueTemplatesCheck;
-        let result = check
+        let results = check
             .check(&client, "test-owner", "test-repo")
             .await
             .unwrap();
 
-        assert_eq!(result.severity, Severity::Info);
-        assert!(result.description.contains("2 issue template(s)"));
-        assert!(result.description.contains("bug_report.yml"));
-        assert!(result.description.contains("feature_request.md"));
-        assert_eq!(result.fixability, Fixability::NotApplicable);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].severity, Severity::Info);
+        assert!(results[0].description.contains("2 issue template(s)"));
+        assert!(results[0].description.contains("bug_report.yml"));
+        assert!(results[0].description.contains("feature_request.md"));
+        assert_eq!(results[0].fixability, Fixability::NotApplicable);
     }
 
     #[tokio::test]
@@ -315,13 +327,14 @@ mod tests {
 
         let client = make_client(&server);
         let check = IssueTemplatesCheck;
-        let result = check
+        let results = check
             .check(&client, "test-owner", "test-repo")
             .await
             .unwrap();
 
-        assert_eq!(result.severity, Severity::Info);
-        assert!(result.description.contains("template.yaml"));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].severity, Severity::Info);
+        assert!(results[0].description.contains("template.yaml"));
     }
 
     #[tokio::test]
@@ -354,13 +367,14 @@ mod tests {
 
         let client = make_client(&server);
         let check = IssueTemplatesCheck;
-        let result = check
+        let results = check
             .check(&client, "test-owner", "test-repo")
             .await
             .unwrap();
 
-        assert_eq!(result.severity, Severity::Warn);
-        assert!(result.description.contains("no `.yml`"));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].severity, Severity::Warn);
+        assert!(results[0].description.contains("no `.yml`"));
     }
 
     #[tokio::test]
@@ -406,15 +420,16 @@ mod tests {
 
         let client = make_client(&server);
         let check = IssueTemplatesCheck;
-        let result = check
+        let results = check
             .check(&client, "test-owner", "test-repo")
             .await
             .unwrap();
 
-        assert_eq!(result.severity, Severity::Info);
-        assert!(result.description.contains("2 issue template(s)"));
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].severity, Severity::Info);
+        assert!(results[0].description.contains("2 issue template(s)"));
         // Should NOT include .markdownlint.json or screenshots directory
-        assert!(result.description.contains("bug_report.yml"));
-        assert!(result.description.contains("feature_request.md"));
+        assert!(results[0].description.contains("bug_report.yml"));
+        assert!(results[0].description.contains("feature_request.md"));
     }
 }
