@@ -155,6 +155,7 @@ pub struct EpicScaleResult {
 /// This is an interface - actual HTTP calls go through the CLI which
 /// wraps the beads CLI (bd). In this implementation we generate the
 /// command structures that would be used by the actual client.
+#[derive(Clone)]
 pub struct BeadClient;
 
 impl BeadClient {

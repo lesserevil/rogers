@@ -30,6 +30,11 @@ pub const LABEL_NEEDS_INFORMATION: &str = "needs-information";
 pub const LABEL_WILL_NOT_DO: &str = "will-not-do";
 pub const LABEL_READY_FOR_WORK: &str = "ready-for-work";
 
+/// Backport label — when applied to a closed issue, triggers backport workflow.
+pub const LABEL_BACKPORT_ME: &str = "backport-me";
+/// Security label — auto-triggers backport at highest priority.
+pub const LABEL_SECURITY: &str = "security";
+
 /// Represents a GitHub issue with all relevant metadata for triage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TriageIssue {
@@ -92,6 +97,8 @@ pub enum TriageAction {
     SkippedClosed,
     /// Issue is not a bug or feature
     SkippedNotTriaged,
+    /// Backport-me label detected on closed issue - backport workflow triggered
+    BackportDetected,
 }
 
 /// The main triage loop processor.
@@ -242,6 +249,113 @@ fn run_completeness_check(issue: &TriageIssue, is_bug: bool, is_feature: bool) -
 /// Batch process multiple issues as part of a single triage run.
 pub fn process_issues_batch(issues: &[TriageIssue]) -> Vec<TriageResult> {
     issues.iter().map(process_issue).collect()
+}
+
+/// Check closed issues for backport triggers during triage.
+///
+/// On each triage run, Rodgers scans closed issues for the `backport-me`
+/// label (or `security` label) and triggers the backport workflow.
+/// Security patches are auto-backported (priority 1); backport-me is
+/// a manual request (priority 2).
+///
+/// This integrates with `BackportManager` from the backport module.
+///
+/// # Arguments
+/// * `issues` - Issues to check (typically closed/merged from triage)
+///
+/// # Returns
+/// List of issues that triggered backport detection, with priority and comment.
+pub fn check_backport_triggers(issues: &[TriageIssue]) -> Vec<BackportTriggerInfo> {
+    issues
+        .iter()
+        .filter(|issue| issue.state == IssueState::Closed)
+        .filter(|issue| {
+            issue
+                .labels
+                .iter()
+                .any(|l| l == LABEL_BACKPORT_ME || l == LABEL_SECURITY)
+        })
+        .map(|issue| {
+            let priority = if issue.labels.iter().any(|l| l == LABEL_SECURITY) {
+                1
+            } else {
+                2
+            };
+
+            let has_cve = issue.title.to_lowercase().contains("cve-");
+            let has_ghsa = issue.title.to_lowercase().contains("ghsa-");
+
+            let comment = format!(
+                "## Backport Detected
+
+This closed issue has been flagged for backport{}{}:
+
+- Priority: {}",
+                if priority == 1 {
+                    " (security - auto)"
+                } else {
+                    ""
+                },
+                if has_cve {
+                    ", CVE detected in title"
+                } else if has_ghsa {
+                    ", GHSA reference in title"
+                } else {
+                    ""
+                },
+                if priority == 1 {
+                    "1 (security - highest)"
+                } else {
+                    "2 (manual request via backport-me label)"
+                }
+            );
+
+            BackportTriggerInfo {
+                issue_number: issue.number,
+                issue_title: issue.title.clone(),
+                priority,
+                is_security: priority == 1,
+                has_cve_reference: has_cve,
+                has_ghsa_reference: has_ghsa,
+                comment_to_post: Some(comment),
+                detected_via_label: issue.labels.iter().any(|l| l == LABEL_BACKPORT_ME),
+            }
+        })
+        .collect()
+}
+
+/// Information about a backport trigger detected during triage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackportTriggerInfo {
+    /// GitHub issue number
+    pub issue_number: u64,
+    /// Issue title
+    pub issue_title: String,
+    /// Priority (1=security, 2=manual)
+    pub priority: u8,
+    /// Whether this is a security patch
+    pub is_security: bool,
+    /// Whether the title contains a CVE reference
+    pub has_cve_reference: bool,
+    /// Whether the title contains a GHSA reference
+    pub has_ghsa_reference: bool,
+    /// Comment to post on the original issue
+    pub comment_to_post: Option<String>,
+    /// Whether detected via backport-me label (true) or security/CVE/ghsa (false)
+    pub detected_via_label: bool,
+}
+
+impl BackportTriggerInfo {
+    /// Check if this trigger should be auto-backported.
+    ///
+    /// Security patches are always auto-backport candidates.
+    /// Other issues need the backport-me label.
+    pub fn should_backport(&self) -> bool {
+        self.is_security
+            || self.has_cve_reference
+            || self.has_ghsa_reference
+            || self.detected_via_label
+    }
 }
 
 #[cfg(test)]
@@ -1675,5 +1789,299 @@ Export fails silently
                 && !comment.to_lowercase().contains("additional info"),
             "Should not use generic phrasing"
         );
+    }
+
+    // =============================================================================
+    // Backport triage tests
+    // =============================================================================
+
+    #[test]
+    fn test_check_backport_triggers_detects_backport_me() {
+        let issues = vec![
+            TriageIssue {
+                number: 42,
+                title: "Fix memory leak".to_string(),
+                body: "Body".to_string(),
+                author: "user".to_string(),
+                labels: vec!["bug".to_string(), "backport-me".to_string()],
+                state: IssueState::Closed,
+                url: None,
+            },
+            TriageIssue {
+                number: 43,
+                title: "Add feature".to_string(),
+                body: "Body".to_string(),
+                author: "user".to_string(),
+                labels: vec!["feature".to_string()],
+                state: IssueState::Closed,
+                url: None,
+            },
+        ];
+
+        let triggers = check_backport_triggers(&issues);
+
+        assert_eq!(triggers.len(), 1);
+        assert_eq!(triggers[0].issue_number, 42);
+        assert_eq!(triggers[0].priority, 2);
+        assert!(!triggers[0].is_security);
+        assert!(triggers[0].detected_via_label);
+        assert!(triggers[0].should_backport());
+        assert!(triggers[0].comment_to_post.is_some());
+    }
+
+    #[test]
+    fn test_check_backport_triggers_detects_security() {
+        let issues = vec![TriageIssue {
+            number: 100,
+            title: "Fix security vulnerability".to_string(),
+            body: "Body".to_string(),
+            author: "user".to_string(),
+            labels: vec!["bug".to_string(), "security".to_string()],
+            state: IssueState::Closed,
+            url: None,
+        }];
+
+        let triggers = check_backport_triggers(&issues);
+
+        assert_eq!(triggers.len(), 1);
+        assert_eq!(triggers[0].issue_number, 100);
+        assert_eq!(triggers[0].priority, 1);
+        assert!(triggers[0].is_security);
+        assert!(triggers[0].should_backport());
+    }
+
+    #[test]
+    fn test_check_backport_triggers_skips_open_issues() {
+        let issues = vec![TriageIssue {
+            number: 42,
+            title: "Fix memory leak".to_string(),
+            body: "Body".to_string(),
+            author: "user".to_string(),
+            labels: vec!["backport-me".to_string()],
+            state: IssueState::Open,
+            url: None,
+        }];
+
+        let triggers = check_backport_triggers(&issues);
+
+        // Open issues should not trigger backport detection
+        assert!(triggers.is_empty());
+    }
+
+    #[test]
+    fn test_check_backport_triggers_skips_no_label() {
+        let issues = vec![TriageIssue {
+            number: 42,
+            title: "Fix memory leak".to_string(),
+            body: "Body".to_string(),
+            author: "user".to_string(),
+            labels: vec!["bug".to_string()],
+            state: IssueState::Closed,
+            url: None,
+        }];
+
+        let triggers = check_backport_triggers(&issues);
+
+        assert!(triggers.is_empty());
+    }
+
+    #[test]
+    fn test_check_backport_triggers_detects_cve_in_title() {
+        let issues = vec![TriageIssue {
+            number: 200,
+            title: "Fix CVE-2024-9999 authentication bypass".to_string(),
+            body: "Body".to_string(),
+            author: "user".to_string(),
+            labels: vec!["bug".to_string(), "backport-me".to_string()],
+            state: IssueState::Closed,
+            url: None,
+        }];
+
+        let triggers = check_backport_triggers(&issues);
+
+        assert_eq!(triggers.len(), 1);
+        assert!(triggers[0].has_cve_reference);
+        assert!(triggers[0].should_backport());
+    }
+
+    #[test]
+    fn test_check_backport_triggers_detects_ghsa_in_title() {
+        let issues = vec![TriageIssue {
+            number: 201,
+            title: "Fix GHSA-abc1-def2-ghi3 advisory".to_string(),
+            body: "Body".to_string(),
+            author: "user".to_string(),
+            labels: vec!["bug".to_string(), "backport-me".to_string()],
+            state: IssueState::Closed,
+            url: None,
+        }];
+
+        let triggers = check_backport_triggers(&issues);
+
+        assert_eq!(triggers.len(), 1);
+        assert!(triggers[0].has_ghsa_reference);
+        assert!(triggers[0].should_backport());
+    }
+
+    #[test]
+    fn test_check_backport_triggers_multiple_issues() {
+        let issues = vec![
+            TriageIssue {
+                number: 42,
+                title: "Fix leak".to_string(),
+                body: "Body".to_string(),
+                author: "user".to_string(),
+                labels: vec!["backport-me".to_string()],
+                state: IssueState::Closed,
+                url: None,
+            },
+            TriageIssue {
+                number: 43,
+                title: "Add feature".to_string(),
+                body: "Body".to_string(),
+                author: "user".to_string(),
+                labels: vec!["feature".to_string()],
+                state: IssueState::Closed,
+                url: None,
+            },
+            TriageIssue {
+                number: 44,
+                title: "Security fix".to_string(),
+                body: "Body".to_string(),
+                author: "user".to_string(),
+                labels: vec!["security".to_string()],
+                state: IssueState::Closed,
+                url: None,
+            },
+        ];
+
+        let triggers = check_backport_triggers(&issues);
+
+        // Should detect both backport-me and security issues
+        assert_eq!(triggers.len(), 2);
+
+        let numbers: Vec<u64> = triggers.iter().map(|t| t.issue_number).collect();
+        assert!(numbers.contains(&42));
+        assert!(numbers.contains(&44));
+    }
+
+    #[test]
+    fn test_backport_trigger_info_should_backport_security() {
+        let info = BackportTriggerInfo {
+            issue_number: 1,
+            issue_title: "Security fix".to_string(),
+            priority: 1,
+            is_security: true,
+            has_cve_reference: false,
+            has_ghsa_reference: false,
+            comment_to_post: None,
+            detected_via_label: false,
+        };
+
+        assert!(info.should_backport());
+    }
+
+    #[test]
+    fn test_backport_trigger_info_should_backport_cve() {
+        let info = BackportTriggerInfo {
+            issue_number: 1,
+            issue_title: "CVE fix".to_string(),
+            priority: 1,
+            is_security: true,
+            has_cve_reference: true,
+            has_ghsa_reference: false,
+            comment_to_post: None,
+            detected_via_label: false,
+        };
+
+        assert!(info.should_backport());
+    }
+
+    #[test]
+    fn test_backport_trigger_info_should_backport_label() {
+        let info = BackportTriggerInfo {
+            issue_number: 1,
+            issue_title: "Bug fix".to_string(),
+            priority: 2,
+            is_security: false,
+            has_cve_reference: false,
+            has_ghsa_reference: false,
+            comment_to_post: None,
+            detected_via_label: true,
+        };
+
+        assert!(info.should_backport());
+    }
+
+    #[test]
+    fn test_backport_trigger_info_no_backport() {
+        let info = BackportTriggerInfo {
+            issue_number: 1,
+            issue_title: "Feature".to_string(),
+            priority: 2,
+            is_security: false,
+            has_cve_reference: false,
+            has_ghsa_reference: false,
+            comment_to_post: None,
+            detected_via_label: false,
+        };
+
+        assert!(!info.should_backport());
+    }
+
+    #[test]
+    fn test_backport_label_constant() {
+        assert_eq!(LABEL_BACKPORT_ME, "backport-me");
+    }
+
+    #[test]
+    fn test_security_label_constant() {
+        assert_eq!(LABEL_SECURITY, "security");
+    }
+
+    #[test]
+    fn test_check_backport_triggers_empty_list() {
+        let issues: Vec<TriageIssue> = vec![];
+        let triggers = check_backport_triggers(&issues);
+        assert!(triggers.is_empty());
+    }
+
+    #[test]
+    fn test_check_backport_triggers_comment_contains_priority() {
+        let issues = vec![TriageIssue {
+            number: 42,
+            title: "Fix memory leak".to_string(),
+            body: "Body".to_string(),
+            author: "user".to_string(),
+            labels: vec!["backport-me".to_string()],
+            state: IssueState::Closed,
+            url: None,
+        }];
+
+        let triggers = check_backport_triggers(&issues);
+
+        let comment = triggers[0].comment_to_post.as_ref().unwrap();
+        assert!(comment.contains("## Backport Detected"));
+        assert!(comment.contains("backport"));
+        assert!(comment.contains("Priority"));
+    }
+
+    #[test]
+    fn test_check_backport_triggers_security_comment_contains_auto() {
+        let issues = vec![TriageIssue {
+            number: 100,
+            title: "Fix security vulnerability".to_string(),
+            body: "Body".to_string(),
+            author: "user".to_string(),
+            labels: vec!["security".to_string()],
+            state: IssueState::Closed,
+            url: None,
+        }];
+
+        let triggers = check_backport_triggers(&issues);
+
+        let comment = triggers[0].comment_to_post.as_ref().unwrap();
+        assert!(comment.contains("(security - auto)"));
+        assert!(comment.contains("1 (security - highest)"));
     }
 }
