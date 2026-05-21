@@ -31,6 +31,11 @@ pub const RODGERS_REQUIRED_LABELS: &[LabelDefinition] = &[
         description: "A question from the community",
     },
     LabelDefinition {
+        name: "docs",
+        color: "0075ca",
+        description: "Documentation or template work routed to issue-templates workflow",
+    },
+    LabelDefinition {
         name: "needs-information",
         color: "PaleGreen",
         description: "Rodgers has asked for clarification from the requestor",
@@ -70,6 +75,7 @@ pub const RODGERS_RESERVED_LABELS: &[&str] = &[
     "bug",
     "feature",
     "question",
+    "docs",
     "needs-information",
     "needs-documentation",
     "ready-for-review",

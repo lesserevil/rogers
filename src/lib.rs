@@ -14,6 +14,8 @@ pub mod beads;
 pub mod error;
 pub mod feature_bug;
 pub mod github;
+pub mod issue_templates;
 pub mod labels;
 pub mod llm;
+pub mod question_router;
 pub mod triage;

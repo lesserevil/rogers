@@ -92,6 +92,20 @@ pub enum TriageAction {
     SkippedClosed,
     /// Issue is not a bug or feature
     SkippedNotTriaged,
+    /// Issue routed to question-routing workflow
+    RoutedToQuestionWorkflow,
+    /// Question answered from documentation
+    QuestionAnsweredDoc,
+    /// Question answered from source code
+    QuestionAnsweredCode,
+    /// Doc-gap bead filed for unanswered question
+    QuestionDocGapFiled,
+    /// Question needs clarification before routing
+    QuestionNeedsClarification,
+    /// Question reclassified as bug or feature
+    QuestionReclassified,
+    /// Issue routed to issue-templates workflow (docs/template work)
+    RoutedToIssueTemplates,
 }
 
 /// The main triage loop processor.
@@ -108,6 +122,11 @@ pub fn process_issue(issue: &TriageIssue) -> TriageResult {
             labels_to_add: Vec::new(),
             labels_to_remove: Vec::new(),
         };
+    }
+
+    // Route questions to the question-routing workflow (CRIT-3)
+    if let Some(routed) = crate::triage::router::route_issue(issue) {
+        return routed;
     }
 
     // Check if this is a bug or feature issue
