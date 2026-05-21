@@ -32,6 +32,9 @@ pub enum RogersError {
 
     #[error("YAML parsing error: {0}")]
     Yaml(#[from] serde_yaml::Error),
+
+    #[error("JSON serialization error: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
 impl RogersError {
@@ -42,8 +45,35 @@ impl RogersError {
             RogersError::Auth(_) | RogersError::RepoNotFound => 3,
             RogersError::Beads(_) => 1,
             RogersError::Plan(_) => 1,
-            RogersError::Io(_) => 2,
-            RogersError::Yaml(_) => 2,
+            RogersError::Io(_) | RogersError::Yaml(_) | RogersError::Json(_) => 2,
+        }
+    }
+}
+
+impl Clone for RogersError {
+    fn clone(&self) -> Self {
+        match self {
+            RogersError::Config(msg) => RogersError::Config(msg.clone()),
+            RogersError::GitHub(_) => {
+                // Network errors aren't directly cloneable; wrap in GitHubStatus
+                RogersError::GitHubStatus {
+                    code: 0,
+                    message: "GitHub network error (clone fallback)".to_string(),
+                }
+            }
+            RogersError::GitHubStatus { code, message } => RogersError::GitHubStatus {
+                code: *code,
+                message: message.clone(),
+            },
+            RogersError::Auth(msg) => RogersError::Auth(msg.clone()),
+            RogersError::Beads(msg) => RogersError::Beads(msg.clone()),
+            RogersError::Plan(msg) => RogersError::Plan(msg.clone()),
+            RogersError::RepoNotFound => RogersError::RepoNotFound,
+            RogersError::Io(_) => {
+                RogersError::Io(std::io::Error::other("IO error (clone fallback)"))
+            }
+            RogersError::Yaml(_) => RogersError::Config("YAML error (clone fallback)".to_string()),
+            RogersError::Json(_) => RogersError::Config("JSON error (clone fallback)".to_string()),
         }
     }
 }

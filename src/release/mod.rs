@@ -1,43 +1,30 @@
-//! Release notes generation from PR titles and labels.
+//! Release management module.
 //!
-//! This module provides functionality for generating changelog/release notes
-//! from PR data using conventional commits. It is the core engine for
-//! CRIT-3 of the release management plan.
+//! This module handles the full release lifecycle: changelog generation,
+//! GitHub Release creation via the API, and post-release notifications.
 //!
-//! ## Architecture
+//! ## Modules
+//!
+//! - `changelog` — Changelog generation from PR data using conventional commits.
+//! - `github_release` — GitHub Release API integration for creating and updating releases.
+//!
+//! ## Release Flow
 //!
 //! ```mermaid
 //! flowchart LR
-//!     A[PR Data] --> B[Parse Commit Type]
-//!     B --> C[Group by Type]
-//!     C --> D[Generate Markdown]
-//!     D --> E[GitHub Release Notes]
+//!     A[PR Data] --> B[Generate Changelog]
+//!     B --> C[Create Release Config]
+//!     C --> D[Create/Update GitHub Release]
+//!     D --> E[Post Discussion Notification]
 //! ```
-//!
-//! ## Usage
-//!
-//! ```
-//! use rogers::release::{
-//!     changelog::{PullRequest, ChangelogConfig, generate_release_notes},
-//! };
-//!
-//! let prs = vec![
-//!     PullRequest::new("myorg", "myrepo", 1, "feat: add user login"),
-//!     PullRequest::new("myorg", "myrepo", 2, "fix: resolve crash"),
-//! ];
-//!
-//! let config = ChangelogConfig::new("myorg", "myrepo", "v1.0.0");
-//! let notes = generate_release_notes(&prs, &config);
-//! ```
-//!
-//! ## Conventional Commit Support
-//!
-//! Recognized types: `feat`, `fix`, `chore`, `docs`, `refactor`, `perf`, `test`
-//! PRs without a recognized prefix are categorized as `chore`.
 
 pub mod changelog;
+pub mod github_release;
 
 pub use changelog::{
     ChangelogConfig, ConventionalCommitType, GroupedPRs, ParsedCommit, PullRequest,
     generate_markdown, generate_release_notes, group_prs_by_type, parse_conventional_commit,
+};
+pub use github_release::{
+    ReleaseClient, ReleaseConfig, ReleaseInfo, build_release_config, release_notification_comment,
 };
