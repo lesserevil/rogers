@@ -2,13 +2,13 @@
 
 mod issue_templates;
 mod labels;
-mod repo_settings;
 mod release_workflow;
+mod repo_settings;
 
 pub use issue_templates::IssueTemplatesCheck;
 pub use labels::LabelsCheck;
-pub use repo_settings::RepoSettingsCheck;
 pub use release_workflow::ReleaseWorkflowCheck;
+pub use repo_settings::RepoSettingsCheck;
 
 use serde::{Deserialize, Serialize};
 

@@ -39,7 +39,12 @@ impl InitCheck for ReleaseWorkflowCheck {
         "release_workflow"
     }
 
-    async fn check(&self, github: &GitHubClient, owner: &str, repo: &str) -> Result<Vec<CheckResult>> {
+    async fn check(
+        &self,
+        github: &GitHubClient,
+        owner: &str,
+        repo: &str,
+    ) -> Result<Vec<CheckResult>> {
         // Step 1: List all workflows via the GitHub Actions API.
         let workflows = github.list_workflows(owner, repo).await?;
 
@@ -123,11 +128,7 @@ impl InitCheck for ReleaseWorkflowCheck {
                 }
                 Err(e) => {
                     // If we can't read a workflow file, log a warning but continue.
-                    tracing::warn!(
-                        "Failed to read workflow '{}': {}",
-                        workflow.path,
-                        e
-                    );
+                    tracing::warn!("Failed to read workflow '{}': {}", workflow.path, e);
                 }
             }
         }
@@ -143,20 +144,23 @@ impl InitCheck for ReleaseWorkflowCheck {
                 desc.push_str(&format!(
                     "\n\nFound {} workflow(s) but none trigger on release tags: {}",
                     workflow_files.len(),
-                    workflow_files.iter().map(|w| w.name.as_str()).collect::<Vec<_>>().join(", ")
+                    workflow_files
+                        .iter()
+                        .map(|w| w.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ));
             }
             Ok(vec![CheckResult {
                 severity: Severity::Blocker,
                 description: desc,
                 fixability: Fixability::Manual,
-                fix_instructions: Some(format!(
+                fix_instructions: Some(
                     "Add a release workflow to your repository. Rodgers recommends creating a \
                      file at `.github/workflows/release.yml` with a `push` trigger on tag patterns \
                      (v*, *.*.*, release-*) and an artifact upload step.\n\n\
                      See: https://docs.github.com/en/actions/use-cases-and-examples/publishing-packages/publishing-nodejs-packages\n\
-                     "
-                )),
+                    ".to_string()),
             }])
         } else if !has_artifact_upload {
             // Release workflow exists but no artifact upload → Warn.
@@ -177,21 +181,22 @@ impl InitCheck for ReleaseWorkflowCheck {
                 severity: Severity::Warn,
                 description: desc,
                 fixability: Fixability::Manual,
-                fix_instructions: Some(format!(
+                fix_instructions: Some(
                     "Add an artifact upload step to your release workflow. Common approaches:\n\n\
                      1. Use `actions/upload-artifact@v4` to upload build outputs\n\
                      2. Use `gh release upload` in a job step to attach files to the release\n\
                      3. Use `docker push` to publish container images\n\
                      4. Use `aws s3 cp` to upload artifacts to S3\n\n\
                      See: https://docs.github.com/en/actions/use-cases-and-examples/publishing-packages/publishing-nodejs-packages\n\
-                     "
-                )),
+                    ".to_string()),
             }])
         } else {
             // Complete release workflow with artifacts → Info.
             let mut desc = format!(
                 "Release workflow found with artifact uploads in {}/{}: {}",
-                owner, repo, release_workflow_names.join(", ")
+                owner,
+                repo,
+                release_workflow_names.join(", ")
             );
             if !non_release_names.is_empty() {
                 desc.push_str(&format!(
@@ -270,15 +275,9 @@ fn has_matching_tag_pattern(after_tags: &str) -> bool {
     for pattern in RELEASE_TAG_PATTERNS {
         // Use simple substring search since YAML tag patterns are globs.
         // e.g., the file will contain `- 'v*'` or `- v*`
-        let pattern_str = format!("{}", pattern);
-        if chunk.contains(&pattern_str) {
+        if chunk.contains(pattern) {
             return true;
         }
-    }
-
-    // Also check for generic wildcards that indicate tag-based release.
-    if chunk.contains("'*'") || chunk.contains("'*'") || chunk.contains("'*") || chunk.contains("*'") {
-        return true;
     }
 
     false
@@ -292,13 +291,7 @@ fn has_release_dispatch(content: &str) -> bool {
     }
 
     // Check if there are release-related inputs (e.g., `release_version`, `target`, etc.).
-    let release_input_patterns = [
-        "release",
-        "version",
-        "target",
-        "tag",
-        "publish",
-    ];
+    let release_input_patterns = ["release", "version", "publish"];
 
     // Get the chunk after `workflow_dispatch` and check for release inputs.
     let dispatch_idx = content.find("workflow_dispatch").unwrap();
@@ -308,12 +301,20 @@ fn has_release_dispatch(content: &str) -> bool {
     if let Some(inputs_idx) = after_dispatch.find("inputs:") {
         let after_inputs = &after_dispatch[inputs_idx..];
         for pattern in &release_input_patterns {
-            if after_inputs.contains(pattern) {
+            if after_inputs.contains(&format!("{}:", pattern))
+                || after_inputs.contains(&format!("- {}", pattern))
+            {
                 return true;
             }
         }
-        // Even without specific input names, workflow_dispatch itself indicates manual release capability.
-        // However, we require at least one release-related input to be a "release" workflow.
+        // Also check for `target` as a key (not substring of staging etc.)
+        if after_inputs.contains("target:") || after_inputs.contains("- target") {
+            return true;
+        }
+        // Also check for `tag` as a key
+        if after_inputs.contains("tag:") || after_inputs.contains("- tag") {
+            return true;
+        }
     }
 
     false
@@ -364,8 +365,7 @@ mod tests {
 
             if i + 1 < bytes.len() {
                 result.push(
-                    encode_table[((b1 & 0x0F) << 2) as usize + ((b2 >> 6) & 0x03) as usize]
-                        as char,
+                    encode_table[((b1 & 0x0F) << 2) as usize + ((b2 >> 6) & 0x03) as usize] as char,
                 );
             } else {
                 result.push('=');
@@ -408,16 +408,15 @@ mod tests {
 
         let client = make_client(&server);
         let check = ReleaseWorkflowCheck;
-        let results = check
-            .check(&client, OWNER, REPO)
-            .await
-            .unwrap();
+        let results = check.check(&client, OWNER, REPO).await.unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].severity, Severity::Blocker);
-        assert!(results[0]
-            .description
-            .contains("No GitHub Actions workflow files found"));
+        assert!(
+            results[0]
+                .description
+                .contains("No GitHub Actions workflow files found")
+        );
         assert_eq!(results[0].fixability, Fixability::Manual);
         assert!(results[0].fix_instructions.is_some());
     }
@@ -461,10 +460,7 @@ mod tests {
 
         let client = make_client(&server);
         let check = ReleaseWorkflowCheck;
-        let results = check
-            .check(&client, OWNER, REPO)
-            .await
-            .unwrap();
+        let results = check.check(&client, OWNER, REPO).await.unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].severity, Severity::Blocker);
@@ -513,10 +509,7 @@ mod tests {
 
         let client = make_client(&server);
         let check = ReleaseWorkflowCheck;
-        let results = check
-            .check(&client, OWNER, REPO)
-            .await
-            .unwrap();
+        let results = check.check(&client, OWNER, REPO).await.unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].severity, Severity::Warn);
@@ -566,10 +559,7 @@ mod tests {
 
         let client = make_client(&server);
         let check = ReleaseWorkflowCheck;
-        let results = check
-            .check(&client, OWNER, REPO)
-            .await
-            .unwrap();
+        let results = check.check(&client, OWNER, REPO).await.unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].severity, Severity::Info);
@@ -644,10 +634,7 @@ mod tests {
 
         let client = make_client(&server);
         let check = ReleaseWorkflowCheck;
-        let results = check
-            .check(&client, OWNER, REPO)
-            .await
-            .unwrap();
+        let results = check.check(&client, OWNER, REPO).await.unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].severity, Severity::Info);
@@ -694,10 +681,7 @@ mod tests {
 
         let client = make_client(&server);
         let check = ReleaseWorkflowCheck;
-        let results = check
-            .check(&client, OWNER, REPO)
-            .await
-            .unwrap();
+        let results = check.check(&client, OWNER, REPO).await.unwrap();
 
         assert_eq!(results[0].severity, Severity::Info);
     }
@@ -741,10 +725,7 @@ mod tests {
 
         let client = make_client(&server);
         let check = ReleaseWorkflowCheck;
-        let results = check
-            .check(&client, OWNER, REPO)
-            .await
-            .unwrap();
+        let results = check.check(&client, OWNER, REPO).await.unwrap();
 
         assert_eq!(results[0].severity, Severity::Info);
     }
@@ -788,10 +769,7 @@ mod tests {
 
         let client = make_client(&server);
         let check = ReleaseWorkflowCheck;
-        let results = check
-            .check(&client, OWNER, REPO)
-            .await
-            .unwrap();
+        let results = check.check(&client, OWNER, REPO).await.unwrap();
 
         assert_eq!(results[0].severity, Severity::Info);
         assert!(results[0].description.to_lowercase().contains("artifact"));
@@ -836,10 +814,7 @@ mod tests {
 
         let client = make_client(&server);
         let check = ReleaseWorkflowCheck;
-        let results = check
-            .check(&client, OWNER, REPO)
-            .await
-            .unwrap();
+        let results = check.check(&client, OWNER, REPO).await.unwrap();
 
         assert_eq!(results[0].severity, Severity::Info);
     }
@@ -883,10 +858,7 @@ mod tests {
 
         let client = make_client(&server);
         let check = ReleaseWorkflowCheck;
-        let results = check
-            .check(&client, OWNER, REPO)
-            .await
-            .unwrap();
+        let results = check.check(&client, OWNER, REPO).await.unwrap();
 
         assert_eq!(results[0].severity, Severity::Info);
     }
@@ -930,10 +902,7 @@ mod tests {
 
         let client = make_client(&server);
         let check = ReleaseWorkflowCheck;
-        let results = check
-            .check(&client, OWNER, REPO)
-            .await
-            .unwrap();
+        let results = check.check(&client, OWNER, REPO).await.unwrap();
 
         assert_eq!(results[0].severity, Severity::Blocker);
         assert!(results[0].description.contains("No release-capable"));
@@ -978,10 +947,7 @@ mod tests {
 
         let client = make_client(&server);
         let check = ReleaseWorkflowCheck;
-        let results = check
-            .check(&client, OWNER, REPO)
-            .await
-            .unwrap();
+        let results = check.check(&client, OWNER, REPO).await.unwrap();
 
         assert_eq!(results[0].severity, Severity::Info);
         assert!(results[0].description.contains("Manual Release"));
@@ -1026,10 +992,7 @@ mod tests {
 
         let client = make_client(&server);
         let check = ReleaseWorkflowCheck;
-        let results = check
-            .check(&client, OWNER, REPO)
-            .await
-            .unwrap();
+        let results = check.check(&client, OWNER, REPO).await.unwrap();
 
         // workflow_dispatch without release keywords → not release-capable.
         assert_eq!(results[0].severity, Severity::Blocker);
@@ -1074,10 +1037,7 @@ mod tests {
 
         let client = make_client(&server);
         let check = ReleaseWorkflowCheck;
-        let results = check
-            .check(&client, OWNER, REPO)
-            .await
-            .unwrap();
+        let results = check.check(&client, OWNER, REPO).await.unwrap();
 
         assert_eq!(results[0].severity, Severity::Info);
     }
@@ -1121,10 +1081,7 @@ mod tests {
 
         let client = make_client(&server);
         let check = ReleaseWorkflowCheck;
-        let results = check
-            .check(&client, OWNER, REPO)
-            .await
-            .unwrap();
+        let results = check.check(&client, OWNER, REPO).await.unwrap();
 
         assert_eq!(results[0].severity, Severity::Blocker);
     }
@@ -1198,10 +1155,7 @@ mod tests {
 
         let client = make_client(&server);
         let check = ReleaseWorkflowCheck;
-        let results = check
-            .check(&client, OWNER, REPO)
-            .await
-            .unwrap();
+        let results = check.check(&client, OWNER, REPO).await.unwrap();
 
         // Should return Blocker since the only release workflow was unreadable.
         assert_eq!(results.len(), 1);
@@ -1248,10 +1202,7 @@ mod tests {
 
         let client = make_client(&server);
         let check = ReleaseWorkflowCheck;
-        let results = check
-            .check(&client, OWNER, REPO)
-            .await
-            .unwrap();
+        let results = check.check(&client, OWNER, REPO).await.unwrap();
 
         assert_eq!(results[0].severity, Severity::Info);
     }
