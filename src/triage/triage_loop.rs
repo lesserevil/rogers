@@ -146,6 +146,7 @@ pub fn process_issue(issue: &TriageIssue) -> TriageResult {
         return process_question_issue(issue);
     }
 
+
     // Check if this is a bug or feature issue
     let is_bug = issue.labels.iter().any(|l| l == LABEL_BUG);
     let is_feature = issue.labels.iter().any(|l| l == LABEL_FEATURE);
@@ -2531,5 +2532,4 @@ Linux
             result.labels_to_add.contains(&LABEL_TRIAGED.to_string()),
             "Question issue must get rodgers:triaged label for idempotency"
         );
-    }
-}
+    }}
