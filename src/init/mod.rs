@@ -6,12 +6,15 @@
 
 pub mod fix;
 
+use crate::checks::{Fixability, InitCheck, Severity};
 use crate::error::Result;
 use crate::github::GitHubClient;
 
 /// Result of running `rogers init` with optional --fix.
 #[derive(Debug, Clone)]
 pub struct InitResult {
+    /// Whether any blocker-level findings were reported.
+    pub has_blockers: bool,
     /// Labels created or skipped by the fix operation.
     pub label_fix: Option<crate::init::fix::FixResult>,
 }
@@ -34,8 +37,28 @@ pub async fn run_init(
     // Fetch repository to verify connectivity.
     let repository = github.get_repository(owner, repo).await?;
 
+    // Run the required labels check.
+    let labels_check = crate::checks::LabelsCheck;
+    let labels_result = labels_check.check(github, owner, repo).await?;
+    println!(
+        "[{}] {}",
+        labels_result.severity.as_str(),
+        labels_result.description
+    );
+
+    // Report fixability for auto-fixable findings.
+    if labels_result.fixability == Fixability::Auto
+        && let Some(ref instructions) = labels_result.fix_instructions
+    {
+        for line in instructions.lines() {
+            println!("{}", line);
+        }
+    }
+
     let mut label_fix = None;
-    if fix {
+    let has_blockers = labels_result.severity == Severity::Blocker;
+
+    if fix && has_blockers {
         let result = crate::init::fix::ensure_labels(github, owner, repo).await?;
         crate::init::fix::print_fix_report(&result);
         label_fix = Some(result);
@@ -46,5 +69,8 @@ pub async fn run_init(
     println!("Has issues: {}", repository.has_issues);
     println!("Has discussions: {}", repository.has_discussions);
 
-    Ok(InitResult { label_fix })
+    Ok(InitResult {
+        has_blockers,
+        label_fix,
+    })
 }

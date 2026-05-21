@@ -89,22 +89,6 @@ mod tests {
         GitHubClient::new("").with_base_url(&server.uri())
     }
 
-    /// Sets up a catch-all POST mock that always returns a successful label creation.
-    async fn setup_create_label_post(server: &MockServer) {
-        Mock::given(method("POST"))
-            .and(path("/repos/test-owner/test-repo/labels"))
-            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
-                "id": 1,
-                "name": "created-label",
-                "color": "cccccc",
-                "default": false,
-                "description": "Created by test",
-                "url": "https://api.github.com/repos/test/test/labels/created-label",
-            })))
-            .mount(server)
-            .await;
-    }
-
     /// Test: all labels missing → all created.
     #[tokio::test]
     async fn test_all_labels_created_when_missing() {
@@ -117,7 +101,23 @@ mod tests {
             .mount(&server)
             .await;
 
-        setup_create_label_post(&server);
+        // Setup dynamic POST mock that returns the label name from the request body.
+        for label_def in RODGERS_REQUIRED_LABELS {
+            let name = label_def.name.to_string();
+            let response = serde_json::json!({
+                "id": name.len() as u64 * 100,
+                "name": &name,
+                "color": label_def.color,
+                "default": false,
+                "description": label_def.description,
+                "url": format!("https://api.github.com/repos/test/test/labels/{}", name)
+            });
+            Mock::given(method("POST"))
+                .and(path("/repos/test-owner/test-repo/labels"))
+                .respond_with(ResponseTemplate::new(201).set_body_json(response))
+                .mount(&server)
+                .await;
+        }
 
         let client = make_client(&server);
         let result = ensure_labels(&client, "test-owner", "test-repo")
@@ -185,7 +185,25 @@ mod tests {
             .mount(&server)
             .await;
 
-        setup_create_label_post(&server);
+        // Setup POST mock for the missing labels
+        for label_def in RODGERS_REQUIRED_LABELS {
+            if label_def.name != "bug" {
+                let name = label_def.name.to_string();
+                let response = serde_json::json!({
+                    "id": name.len() as u64 * 100,
+                    "name": &name,
+                    "color": label_def.color,
+                    "default": false,
+                    "description": label_def.description,
+                    "url": format!("https://api.github.com/repos/test/test/labels/{}", name)
+                });
+                Mock::given(method("POST"))
+                    .and(path("/repos/test-owner/test-repo/labels"))
+                    .respond_with(ResponseTemplate::new(201).set_body_json(response))
+                    .mount(&server)
+                    .await;
+            }
+        }
 
         let client = make_client(&server);
         let result = ensure_labels(&client, "test-owner", "test-repo")
@@ -201,24 +219,38 @@ mod tests {
     /// Test: idempotent — running twice with no changes in between gives same result.
     #[tokio::test]
     async fn test_idempotent_second_run_skips_all() {
-        let server = MockServer::start().await;
-
-        // First run: no labels exist, all created
+        // First run: no labels exist.
+        let server1 = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/repos/test-owner/test-repo/labels"))
             .respond_with(ResponseTemplate::new(200).set_body_json(Vec::<serde_json::Value>::new()))
-            .mount(&server)
+            .mount(&server1)
             .await;
-
-        setup_create_label_post(&server);
-
-        let client = make_client(&server);
-        let result1 = ensure_labels(&client, "test-owner", "test-repo")
+        for label_def in RODGERS_REQUIRED_LABELS {
+            let name = label_def.name.to_string();
+            let response = serde_json::json!({
+                "id": name.len() as u64 * 100,
+                "name": &name,
+                "color": label_def.color,
+                "default": false,
+                "description": label_def.description,
+                "url": format!("https://api.github.com/repos/test/test/labels/{}", name)
+            });
+            Mock::given(method("POST"))
+                .and(path("/repos/test-owner/test-repo/labels"))
+                .respond_with(ResponseTemplate::new(201).set_body_json(response))
+                .mount(&server1)
+                .await;
+        }
+        let client1 = make_client(&server1);
+        let result1 = ensure_labels(&client1, "test-owner", "test-repo")
             .await
             .unwrap();
         assert_eq!(result1.created.len(), RODGERS_REQUIRED_LABELS.len());
+        assert_eq!(result1.skipped.len(), 0);
 
-        // Second run: all labels now exist (simulated by returning the created labels)
+        // Second run: all labels now exist.
+        let server2 = MockServer::start().await;
         let labels: Vec<Label> = RODGERS_REQUIRED_LABELS
             .iter()
             .map(|l| Label {
@@ -233,10 +265,11 @@ mod tests {
         Mock::given(method("GET"))
             .and(path("/repos/test-owner/test-repo/labels"))
             .respond_with(ResponseTemplate::new(200).set_body_json(&labels))
-            .mount(&server)
+            .mount(&server2)
             .await;
 
-        let result2 = ensure_labels(&client, "test-owner", "test-repo")
+        let client2 = make_client(&server2);
+        let result2 = ensure_labels(&client2, "test-owner", "test-repo")
             .await
             .unwrap();
         assert_eq!(result2.created.len(), 0);
@@ -255,7 +288,23 @@ mod tests {
             .mount(&server)
             .await;
 
-        setup_create_label_post(&server);
+        // Setup POST mocks
+        for label_def in RODGERS_REQUIRED_LABELS {
+            let name = label_def.name.to_string();
+            let response = serde_json::json!({
+                "id": name.len() as u64 * 100,
+                "name": &name,
+                "color": label_def.color,
+                "default": false,
+                "description": label_def.description,
+                "url": format!("https://api.github.com/repos/test/test/labels/{}", name)
+            });
+            Mock::given(method("POST"))
+                .and(path("/repos/test-owner/test-repo/labels"))
+                .respond_with(ResponseTemplate::new(201).set_body_json(response))
+                .mount(&server)
+                .await;
+        }
 
         let client = make_client(&server);
         let result = ensure_labels(&client, "test-owner", "test-repo")

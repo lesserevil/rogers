@@ -565,9 +565,10 @@ impl GitHubClient {
             description: Some(definition.description.to_string()),
         };
 
+        let url = format!("{}/repos/{}/{}/labels", self.base_url, owner, repo);
         let resp = self
             .client
-            .post(format!("/repos/{}/{}/labels", owner, repo))
+            .post(url)
             .bearer_auth(&self.token)
             .json(&request)
             .send()
