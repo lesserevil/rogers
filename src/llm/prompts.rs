@@ -308,6 +308,7 @@ FORMAT as JSON array:
 Respond with ONLY the JSON array.
 "#;
 
+/// Result from LLM field extraction for bug reports.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BugFieldExtraction {
     /// Whether behavior observed is present
