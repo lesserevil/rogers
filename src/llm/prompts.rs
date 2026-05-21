@@ -1131,4 +1131,65 @@ mod tests {
         assert!(ISSUE_CLASSIFICATION_PROMPT.contains("MISSING"));
         assert!(ISSUE_CLASSIFICATION_PROMPT.contains("documentation"));
     }
+
+    // =============================================================================
+    // Issue Classification Prompt Tests (CRIT-2)
+    // =============================================================================
+
+    #[test]
+    fn test_classification_prompt_includes_all_categories() {
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Bug"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Feature"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Question"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Docs"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Chore"));
+    }
+
+    #[test]
+    fn test_classification_prompt_includes_placeholders() {
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("{existing_labels}"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("{title}"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("{body}"));
+    }
+
+    #[test]
+    fn test_classification_prompt_requires_json_output() {
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("JSON"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("issue_type"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("confidence"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("rationale"));
+    }
+
+    #[test]
+    fn test_classification_prompt_confidence_levels() {
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("High"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Medium"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Low"));
+    }
+
+    #[test]
+    fn test_classification_prompt_defaults_to_question() {
+        // When in doubt, should default to Question
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Question"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("in doubt") || ISSUE_CLASSIFICATION_PROMPT.contains("default"));
+    }
+
+    #[test]
+    fn test_classification_prompt_classifies_bugs_as_broken() {
+        // Bug classification rule: describes something broken
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("BROKEN"));
+    }
+
+    #[test]
+    fn test_classification_prompt_classifies_features_as_new_functionality() {
+        // Feature classification rule: request for new functionality
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("NEW functionality"));
+    }
+
+    #[test]
+    fn test_classification_prompt_classifies_docs_as_missing_docs() {
+        // Docs classification rule: missing or wrong documentation
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("MISSING"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("documentation"));
+    }
 }
