@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Error types for Rogers.
 
 use thiserror::Error;

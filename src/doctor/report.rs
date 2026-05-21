@@ -2,10 +2,7 @@
 //!
 //! Formats doctor check results into human-readable or JSON output.
 
-use super::{
-    CATEGORY_AUTH, CATEGORY_BEADS, CATEGORY_CONFIG, CATEGORY_DRIFT, CATEGORY_PLANS, CATEGORY_REPO,
-    CategoryResult, CategoryStatus, DoctorResult,
-};
+use super::{CategoryResult, CategoryStatus, DoctorResult};
 use chrono::Utc;
 use serde::Serialize;
 
@@ -175,7 +172,10 @@ struct Summary {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{CategoryResult, CategoryStatus, DoctorResult};
+    use super::super::{
+        CATEGORY_AUTH, CATEGORY_BEADS, CATEGORY_CONFIG, CATEGORY_DRIFT, CATEGORY_PLANS,
+        CATEGORY_REPO, CategoryResult, CategoryStatus, DoctorResult,
+    };
     use super::*;
 
     #[test]

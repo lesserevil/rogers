@@ -13,7 +13,6 @@ pub mod fix;
 pub mod report;
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Category name identifiers
 pub const CATEGORY_CONFIG: &str = "config";
@@ -34,6 +33,7 @@ pub const ALL_CATEGORIES: &[&str] = &[
 ];
 
 /// Categories that should fail-fast (run first, stop on failure)
+#[allow(dead_code)]
 pub const FAIL_FAST_CATEGORIES: &[&str] = &[CATEGORY_CONFIG, CATEGORY_AUTH];
 
 /// Result status for a single category check
@@ -77,6 +77,7 @@ pub struct CategoryResult {
 
 impl CategoryResult {
     /// Create a passing result
+    #[allow(dead_code)]
     pub fn pass(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -95,6 +96,7 @@ impl CategoryResult {
     }
 
     /// Create a warning result
+    #[allow(dead_code)]
     pub fn warn(name: impl Into<String>, warnings: Vec<String>) -> Self {
         Self {
             name: name.into(),
@@ -214,9 +216,7 @@ impl DoctorResult {
 
     /// Determine the exit code for this result
     pub fn exit_code(&self) -> i32 {
-        if self.any_category_failed() {
-            1
-        } else if self.has_drift() {
+        if self.any_category_failed() || self.has_drift() {
             1
         } else if self.all_categories_passed() && !self.has_drift() {
             0

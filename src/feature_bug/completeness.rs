@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Completeness verification for bug and feature issues.
 //!
 //! This module implements the completeness check defined in plans/feature-bug-plan.md.

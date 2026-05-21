@@ -14,10 +14,9 @@
 //! 5. Next event...
 
 use crate::doctor::{DriftEvent, DriftSeverity};
-use crate::error::Result;
-use crate::github::{GitHubClient, OldGitHubClient, close_issue};
+use crate::github::GitHubClient;
+use crate::github::client::{close_issue, parse_issue_url};
 use std::io::{self, Write};
-use std::sync::Arc;
 
 /// Result of applying a single fix
 #[derive(Debug, Clone)]
@@ -32,12 +31,6 @@ pub struct FixResult {
 
 /// Interactive fix session for drift remediation
 pub struct FixSession {
-    /// GitHub client for API calls
-    client: Arc<OldGitHubClient>,
-    /// Owner of the repository
-    owner: String,
-    /// Name of the repository
-    repo: String,
     /// Token for GitHub API
     token: String,
     /// API URL override
@@ -48,15 +41,8 @@ pub struct FixSession {
 
 impl FixSession {
     /// Create a new fix session
-    pub fn new(owner: String, repo: String, token: String, api_url: Option<String>) -> Self {
-        let client = Arc::new(OldGitHubClient::compat_new(
-            token.clone(),
-            api_url.as_deref(),
-        ));
+    pub fn new(_owner: String, _repo: String, token: String, api_url: Option<String>) -> Self {
         Self {
-            client,
-            owner,
-            repo,
             token,
             api_url,
             output: Box::new(io::stdout()),
@@ -64,21 +50,15 @@ impl FixSession {
     }
 
     /// Create a fix session with custom output (for testing)
+    #[cfg(test)]
     pub fn with_output(
-        owner: String,
-        repo: String,
+        _owner: String,
+        _repo: String,
         token: String,
         api_url: Option<String>,
         output: Box<dyn Write>,
     ) -> Self {
-        let client = Arc::new(OldGitHubClient::compat_new(
-            token.clone(),
-            api_url.as_deref(),
-        ));
         Self {
-            client,
-            owner,
-            repo,
             token,
             api_url,
             output,
@@ -123,7 +103,7 @@ impl FixSession {
 
     /// Present the drift event details
     fn present_event(&mut self, event: &DriftEvent) {
-        let _ = writeln!(self.output, "");
+        let _ = writeln!(self.output);
         let _ = writeln!(self.output, "{}", "═".repeat(60));
         let _ = writeln!(self.output, "DRIFT EVENT");
         let _ = writeln!(self.output, "{}", "═".repeat(60));
@@ -174,7 +154,7 @@ impl FixSession {
             self.output,
             "    C) File new bead for manual work, close orphaned bead"
         );
-        let _ = writeln!(self.output, "");
+        let _ = writeln!(self.output);
     }
 
     /// Present options for orphan beads (no GitHub link)
@@ -182,7 +162,7 @@ impl FixSession {
         let _ = writeln!(self.output, "  Options:");
         let _ = writeln!(self.output, "    A) Attribute to existing issue");
         let _ = writeln!(self.output, "    B) Close the bead");
-        let _ = writeln!(self.output, "");
+        let _ = writeln!(self.output);
     }
 
     /// Prompt for user choice
@@ -196,7 +176,8 @@ impl FixSession {
             let input = input.trim().to_lowercase();
             match input.as_str() {
                 "y" | "yes" | "a" => FixChoice::A,
-                "n" | "no" => FixChoice::B,
+                "n" | "no" | "b" => FixChoice::B,
+                "c" => FixChoice::C,
                 "s" | "skip" => FixChoice::Skip,
                 "q" | "quit" | "cancel" => FixChoice::Quit,
                 _ => FixChoice::Skip,
@@ -216,7 +197,7 @@ impl FixSession {
             };
         };
 
-        let Some((owner, repo, issue_number)) = GitHubClient::parse_issue_url(issue_url) else {
+        let Some((owner, repo, issue_number)) = parse_issue_url(issue_url) else {
             return FixResult {
                 applied: false,
                 action: "fix_skipped".to_string(),
@@ -230,15 +211,11 @@ impl FixSession {
             issue_number
         );
 
-        match close_issue(
-            &owner,
-            &repo,
-            issue_number,
-            &self.token,
-            self.api_url.as_deref(),
-        )
-        .await
-        {
+        let mut client = GitHubClient::new(&owner, &repo).with_token(&self.token);
+        if let Some(ref api_url_str) = self.api_url {
+            client = client.with_api_base(api_url_str);
+        }
+        match close_issue(&client, issue_number).await {
             Ok(()) => {
                 let _ = writeln!(
                     self.output,

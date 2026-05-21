@@ -121,11 +121,10 @@ pub fn check_config(config_path: &Path) -> Result<CategoryResult, RogersError> {
         missing_keys.push("github.repo");
     }
     // Note: github.token can be empty if using env var injection
-    if config.llm.model.is_none() || config.llm.model.as_ref().map_or(true, |m| m.is_empty()) {
+    if config.llm.model.is_none() || config.llm.model.as_ref().is_none_or(|m| m.is_empty()) {
         missing_keys.push("llm.model");
     }
-    if config.beads.remote.is_none() || config.beads.remote.as_ref().map_or(true, |r| r.is_empty())
-    {
+    if config.beads.remote.is_none() || config.beads.remote.as_ref().is_none_or(|r| r.is_empty()) {
         missing_keys.push("beads.remote");
     }
 
@@ -138,53 +137,51 @@ pub fn check_config(config_path: &Path) -> Result<CategoryResult, RogersError> {
     messages.push("All required keys present".into());
 
     // Check 3: scheduler.interval_minutes is positive if set
-    if let Some(ref scheduler) = config.scheduler {
-        if let Some(interval) = scheduler.interval_minutes {
-            if interval <= 0 {
-                return Ok(CategoryResult::fail(
-                    CATEGORY_CONFIG,
-                    "scheduler.interval_minutes must be positive",
-                ));
-            }
-            messages.push(format!("scheduler.interval_minutes = {} ✓", interval));
+    if let Some(ref scheduler) = config.scheduler
+        && let Some(interval) = scheduler.interval_minutes
+    {
+        if interval <= 0 {
+            return Ok(CategoryResult::fail(
+                CATEGORY_CONFIG,
+                "scheduler.interval_minutes must be positive",
+            ));
         }
+        messages.push(format!("scheduler.interval_minutes = {} ✓", interval));
     }
 
     // Check 4: Warning for empty release branches if releases are configured
-    if let Some(ref release) = config.release {
-        if release
+    if let Some(ref release) = config.release
+        && release
             .active_branches
             .as_ref()
-            .map_or(true, |b| b.is_empty())
-        {
-            messages.push(
-                "WARNING: release.active_branches is empty — backport manager will not operate"
-                    .into(),
-            );
-        }
+            .is_none_or(|b| b.is_empty())
+    {
+        messages.push(
+            "WARNING: release.active_branches is empty — backport manager will not operate".into(),
+        );
     }
 
     // Check 5: Warning for labels_never_bot_managed conflicts
-    if let Some(ref rogation) = config.rogation {
-        if let Some(ref never_managed) = rogation.labels_never_bot_managed {
-            let rodgers_required = [
-                "bug",
-                "feature",
-                "question",
-                "needs-information",
-                "needs-documentation",
-                "ready-for-review",
-                "will-not-do",
-                "ready-for-work",
-                "in-progress",
-            ];
-            for label in never_managed {
-                if rodgers_required.contains(&label.as_str()) {
-                    messages.push(format!(
-                        "WARNING: label '{}' in labels_never_bot_managed conflicts with Rodgers required labels",
-                        label
-                    ));
-                }
+    if let Some(ref rogation) = config.rogation
+        && let Some(ref never_managed) = rogation.labels_never_bot_managed
+    {
+        let rodgers_required = [
+            "bug",
+            "feature",
+            "question",
+            "needs-information",
+            "needs-documentation",
+            "ready-for-review",
+            "will-not-do",
+            "ready-for-work",
+            "in-progress",
+        ];
+        for label in never_managed {
+            if rodgers_required.contains(&label.as_str()) {
+                messages.push(format!(
+                    "WARNING: label '{}' in labels_never_bot_managed conflicts with Rodgers required labels",
+                    label
+                ));
             }
         }
     }
@@ -192,27 +189,27 @@ pub fn check_config(config_path: &Path) -> Result<CategoryResult, RogersError> {
     // All checks passed
     let mut result = CategoryResult::pass_with_messages(CATEGORY_CONFIG, messages);
     // Check if we have any warnings to propagate
-    if let Some(rogation) = &config.rogation {
-        if let Some(never_managed) = &rogation.labels_never_bot_managed {
-            let rodgers_required = [
-                "bug",
-                "feature",
-                "question",
-                "needs-information",
-                "needs-documentation",
-                "ready-for-review",
-                "will-not-do",
-                "ready-for-work",
-                "in-progress",
-            ];
-            let has_conflict = never_managed
-                .iter()
-                .any(|l| rodgers_required.contains(&l.as_str()));
-            if has_conflict {
-                result.status = super::CategoryStatus::Warn(vec![
-                    "One or more Rodgers-required labels are in labels_never_bot_managed".into(),
-                ]);
-            }
+    if let Some(rogation) = &config.rogation
+        && let Some(never_managed) = &rogation.labels_never_bot_managed
+    {
+        let rodgers_required = [
+            "bug",
+            "feature",
+            "question",
+            "needs-information",
+            "needs-documentation",
+            "ready-for-review",
+            "will-not-do",
+            "ready-for-work",
+            "in-progress",
+        ];
+        let has_conflict = never_managed
+            .iter()
+            .any(|l| rodgers_required.contains(&l.as_str()));
+        if has_conflict {
+            result.status = super::CategoryStatus::Warn(vec![
+                "One or more Rodgers-required labels are in labels_never_bot_managed".into(),
+            ]);
         }
     }
 
@@ -235,7 +232,7 @@ pub async fn check_auth(
 
     // Check 1: Token is valid - call GET /user
     let user_response = client
-        .get(&format!("{}/user", base_url))
+        .get(format!("{}/user", base_url))
         .header("Authorization", format!("Bearer {}", token))
         .header("Accept", "application/vnd.github+json")
         .send()
@@ -267,7 +264,7 @@ pub async fn check_auth(
 
     // Check 3: Token can read the target repository
     let repo_response = client
-        .get(&format!("{}/repos/{}/{}", base_url, owner, repo))
+        .get(format!("{}/repos/{}/{}", base_url, owner, repo))
         .header("Authorization", format!("Bearer {}", token))
         .header("Accept", "application/vnd.github+json")
         .send()
@@ -288,7 +285,7 @@ pub async fn check_auth(
 
     // Check 4: Token can write - attempt a low-impact API call (list labels)
     let labels_response = client
-        .get(&format!("{}/repos/{}/{}/labels", base_url, owner, repo))
+        .get(format!("{}/repos/{}/{}/labels", base_url, owner, repo))
         .header("Authorization", format!("Bearer {}", token))
         .header("Accept", "application/vnd.github+json")
         .send()
@@ -302,7 +299,7 @@ pub async fn check_auth(
 
     // Check 5: Rate limit check
     let rate_response = client
-        .get(&format!("{}/rate_limit", base_url))
+        .get(format!("{}/rate_limit", base_url))
         .header("Authorization", format!("Bearer {}", token))
         .header("Accept", "application/vnd.github+json")
         .send()
@@ -341,7 +338,7 @@ pub async fn check_beads(
     database: Option<&str>,
 ) -> Result<CategoryResult, RogersError> {
     let mut messages = Vec::new();
-    let db_name = database.unwrap_or("message.hibernate");
+    let _db_name = database.unwrap_or("message.hibernate");
 
     // For now, beads connectivity check is a placeholder
     // In a real implementation, this would connect to dolt and verify schema
@@ -434,7 +431,7 @@ pub async fn check_repo(
 
     // Check 1: All required labels exist
     let labels_response = client
-        .get(&format!("{}/repos/{}/{}/labels", base_url, owner, repo))
+        .get(format!("{}/repos/{}/{}/labels", base_url, owner, repo))
         .header("Authorization", format!("Bearer {}", token))
         .header("Accept", "application/vnd.github+json")
         .send()
@@ -477,7 +474,7 @@ pub async fn check_repo(
         let mut missing_branches = Vec::new();
         for branch in &branches {
             let branch_response = client
-                .get(&format!(
+                .get(format!(
                     "{}/repos/{}/{}/branches/{}",
                     base_url, owner, repo, branch
                 ))
@@ -529,7 +526,6 @@ fn get_required_labels() -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use tempfile::TempDir;
 
     #[test]

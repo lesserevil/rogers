@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
 //! GitHub API client for Rodgers issue and comment operations.
 //!
 //! This module provides the interface for fetching GitHub issue data needed
@@ -6,4 +9,9 @@
 
 pub mod client;
 
-pub use client::{GitHubClient, GitHubComment, GitHubIssue, GitHubLabel, GitHubUser};
+pub use client::{
+    GitHubClient, GitHubComment, GitHubIssue, GitHubLabel, GitHubUser, IssueState, close_issue,
+};
+
+/// Backward compatibility alias
+pub type OldGitHubClient = GitHubClient;

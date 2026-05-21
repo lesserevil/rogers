@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Bead client for filing epic and child beads.
 //!
 //! This module provides the interface for creating beads in the beads database.
@@ -60,8 +62,6 @@ impl BeadType {
     pub fn from_github_labels(labels: &[String]) -> Self {
         if labels.iter().any(|l| l == "bug") {
             BeadType::Bug
-        } else if labels.iter().any(|l| l == "feature") {
-            BeadType::Feature
         } else {
             BeadType::Feature
         }
@@ -166,6 +166,7 @@ impl BeadClient {
     /// Build an epic bead request.
     ///
     /// Description includes plan reference and acceptance criteria.
+    #[allow(clippy::too_many_arguments)]
     pub fn build_epic_request(
         &self,
         github_issue_number: u64,
@@ -212,6 +213,7 @@ impl BeadClient {
     ///
     /// The enriched description is passed directly rather than being
     /// constructed here.
+    #[allow(clippy::too_many_arguments)]
     pub fn build_epic_request_enriched(
         &self,
         _github_issue_number: u64,
