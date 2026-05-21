@@ -17,6 +17,8 @@ pub struct InitResult {
     pub has_blockers: bool,
     /// Labels created or skipped by the fix operation.
     pub label_fix: Option<crate::init::fix::FixResult>,
+    /// Discussion categories created or skipped by the fix operation.
+    pub category_fix: Option<crate::init::fix::CategoryFixResult>,
 }
 
 /// Runs the init audit for a repository.
@@ -54,6 +56,7 @@ pub async fn run_init(
     }
 
     let mut label_fix = None;
+    let mut category_fix = None;
     let has_blockers = labels_results
         .iter()
         .any(|r| r.severity == Severity::Blocker);
@@ -64,6 +67,13 @@ pub async fn run_init(
         label_fix = Some(result);
     }
 
+    // Always apply discussion category fix when --fix is set (it's a warn, not a blocker).
+    if fix {
+        let cat_result = crate::init::fix::ensure_discussion_category(github, owner, repo).await?;
+        crate::init::fix::print_category_fix_report(&cat_result);
+        category_fix = Some(cat_result);
+    }
+
     println!("Repository: {}/{}", repository.full_name, repository.name);
     println!("Default branch: {}", repository.default_branch);
     println!("Has issues: {}", repository.has_issues);
@@ -72,6 +82,7 @@ pub async fn run_init(
     Ok(InitResult {
         has_blockers,
         label_fix,
+        category_fix,
     })
 }
 
@@ -119,6 +130,16 @@ pub async fn run_all_checks(
     let repo_settings_results = repo_settings_check.check(github, owner, repo).await?;
     all_results.extend(repo_settings_results.clone());
     for result in &repo_settings_results {
+        println!("[{}] {}", result.severity.as_str(), result.description);
+    }
+
+    // Run the discussion categories check.
+    let discussion_categories_check = crate::checks::DiscussionCategoriesCheck;
+    let discussion_categories_results = discussion_categories_check
+        .check(github, owner, repo)
+        .await?;
+    all_results.extend(discussion_categories_results.clone());
+    for result in &discussion_categories_results {
         println!("[{}] {}", result.severity.as_str(), result.description);
     }
 

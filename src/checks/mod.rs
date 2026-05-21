@@ -1,10 +1,13 @@
 //! Init audit checks — reusable check trait and common result types.
 
+mod discussion_categories;
 mod issue_templates;
 mod labels;
 mod release_workflow;
 mod repo_settings;
 
+pub use discussion_categories::DiscussionCategoriesCheck;
+pub use discussion_categories::RELEASE_PROPOSALS_CATEGORY;
 pub use issue_templates::IssueTemplatesCheck;
 pub use labels::LabelsCheck;
 pub use release_workflow::ReleaseWorkflowCheck;

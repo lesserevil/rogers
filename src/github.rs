@@ -554,7 +554,73 @@ impl GitHubClient {
         Ok(labels)
     }
 
-    /// Create a new label in a repository.
+    /// Attempt to create a label, returning the existing label if it already
+    /// exists (HTTP 422).  This is the idempotent variant used by `init --fix`.
+    ///
+    /// # Arguments
+    /// * `owner` — Repository owner
+    /// * `repo` — Repository name
+    /// * `definition` — Label definition with name, color, description
+    pub async fn create_label_idempotent(
+        &self,
+        owner: &str,
+        repo: &str,
+        definition: &LabelDefinition,
+    ) -> Result<Label> {
+        let request = CreateLabelRequest {
+            name: definition.name.to_string(),
+            color: definition.color.to_string(),
+            description: Some(definition.description.to_string()),
+        };
+
+        let url = format!("{}/repos/{}/{}/labels", self.base_url, owner, repo);
+        let resp = self
+            .client
+            .post(url)
+            .bearer_auth(&self.token)
+            .json(&request)
+            .send()
+            .await
+            .map_err(RogersError::GitHub)?;
+
+        self.update_rate_limit_from_headers(&resp);
+
+        // HTTP 422 (Unprocessable Entity) means the label already exists.
+        if resp.status() == reqwest::StatusCode::UNPROCESSABLE_ENTITY {
+            let message = resp.text().await.unwrap_or_else(|_| "unknown".to_string());
+            // Try to return the existing label from the error body if it has one.
+            if let Ok(existing) = serde_json::from_str::<Label>(&message) {
+                return Ok(existing);
+            }
+            // Fall back to a synthetic Label so callers still get a result.
+            return Ok(Label {
+                id: 0,
+                name: definition.name.to_string(),
+                color: definition.color.to_string(),
+                default: None,
+                description: Some(definition.description.to_string()),
+                url: format!(
+                    "https://api.github.com/repos/{}/{}/labels/{}",
+                    owner, repo, definition.name
+                ),
+            });
+        }
+
+        if !resp.status().is_success() {
+            let code = resp.status().as_u16();
+            let message = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "unknown error".to_string());
+            return Err(RogersError::GitHubStatus { code, message });
+        }
+
+        let text = resp.text().await.map_err(RogersError::GitHub)?;
+        let label: Label = serde_json::from_str(&text)?;
+        Ok(label)
+    }
+
+    /// Create a new label in a repository (non-idempotent, errors on existing).
     ///
     /// # Arguments
     /// * `owner` — Repository owner
@@ -620,7 +686,59 @@ impl GitHubClient {
         Ok(categories)
     }
 
-    /// Create a new discussion category.
+    /// Attempt to create a discussion category, returning the existing category
+    /// if it already exists (HTTP 422).  This is the idempotent variant used by
+    /// `init --fix`.
+    ///
+    /// # Arguments
+    /// * `owner` — Repository owner
+    /// * `repo` — Repository name
+    /// * `name` — Category name
+    pub async fn create_discussion_category_idempotent(
+        &self,
+        owner: &str,
+        repo: &str,
+        name: &str,
+    ) -> Result<DiscussionCategory> {
+        let request = serde_json::json!({ "name": name });
+
+        let url = format!(
+            "{}/repos/{}/{}/discussion-categories",
+            self.base_url, owner, repo
+        );
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.token)
+            .json(&request)
+            .send()
+            .await
+            .map_err(RogersError::GitHub)?;
+
+        self.update_rate_limit_from_headers(&resp);
+
+        // HTTP 422 means the category already exists — treat as success.
+        if resp.status() == reqwest::StatusCode::UNPROCESSABLE_ENTITY {
+            return self
+                .list_discussion_category_by_name(owner, repo, name)
+                .await;
+        }
+
+        if !resp.status().is_success() {
+            let code = resp.status().as_u16();
+            let message = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "unknown error".to_string());
+            return Err(RogersError::GitHubStatus { code, message });
+        }
+
+        let text = resp.text().await.map_err(RogersError::GitHub)?;
+        let category: DiscussionCategory = serde_json::from_str(&text)?;
+        Ok(category)
+    }
+
+    /// Create a new discussion category (non-idempotent, errors on existing).
     ///
     /// # Arguments
     /// * `owner` — Repository owner
@@ -634,20 +752,55 @@ impl GitHubClient {
     ) -> Result<DiscussionCategory> {
         let request = serde_json::json!({ "name": name });
 
-        let text = self
+        let url = format!(
+            "{}/repos/{}/{}/discussion-categories",
+            self.base_url, owner, repo
+        );
+        let resp = self
             .client
-            .post(format!("/repos/{}/{}/discussion-categories", owner, repo))
+            .post(&url)
             .bearer_auth(&self.token)
             .json(&request)
             .send()
             .await
-            .map_err(RogersError::GitHub)?
-            .text()
-            .await
             .map_err(RogersError::GitHub)?;
 
+        self.update_rate_limit_from_headers(&resp);
+
+        if !resp.status().is_success() {
+            let code = resp.status().as_u16();
+            let message = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "unknown error".to_string());
+            return Err(RogersError::GitHubStatus { code, message });
+        }
+
+        let text = resp.text().await.map_err(RogersError::GitHub)?;
         let category: DiscussionCategory = serde_json::from_str(&text)?;
         Ok(category)
+    }
+
+    /// Find a discussion category by name within a repository.
+    ///
+    /// # Arguments
+    /// * `owner` — Repository owner
+    /// * `repo` — Repository name
+    /// * `name` — Category name to search for
+    async fn list_discussion_category_by_name(
+        &self,
+        owner: &str,
+        repo: &str,
+        name: &str,
+    ) -> Result<DiscussionCategory> {
+        let categories = self.list_discussion_categories(owner, repo).await?;
+        categories
+            .into_iter()
+            .find(|c| c.name == name)
+            .ok_or_else(|| RogersError::GitHubStatus {
+                code: 404,
+                message: format!("Discussion category '{}' not found", name),
+            })
     }
 
     // ─── Branch Protection ──────────────────────────────────────────────
@@ -872,6 +1025,10 @@ fn base64_decode(input: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::init::fix::ensure_labels;
+    use crate::labels::RODGERS_REQUIRED_LABELS;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
     async fn test_rate_limit_parsing() {
@@ -1167,6 +1324,196 @@ mod tests {
         let client1 = GitHubClient::new("token1");
         let client2 = client1.with_token("token2");
         assert_eq!(client2.token, "token2");
+    }
+
+    /// Test: create_label_idempotent returns existing label on 422.
+    #[tokio::test]
+    async fn test_create_label_idempotent_handles_422() {
+        let server = MockServer::start().await;
+
+        // Simulate label already exists (422 with existing label JSON in response).
+        Mock::given(method("POST"))
+            .and(path("/repos/test-owner/test-repo/labels"))
+            .respond_with(ResponseTemplate::new(422).set_body_json(serde_json::json!({
+                "id": 42,
+                "name": "feature",
+                "color": "a2eeef",
+                "default": false,
+                "description": "A feature request",
+                "url": "https://api.github.com/repos/test/test/labels/feature"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = GitHubClient::new("").with_base_url(&server.uri());
+        let definition = RODGERS_REQUIRED_LABELS
+            .iter()
+            .find(|l| l.name == "feature")
+            .unwrap();
+        let label = client
+            .create_label_idempotent("test-owner", "test-repo", definition)
+            .await
+            .unwrap();
+
+        // Should have parsed the existing label from the 422 response.
+        assert_eq!(label.id, 42);
+        assert_eq!(label.name, "feature");
+        assert_eq!(label.color, "a2eeef");
+    }
+
+    /// Test: create_label_idempotent returns existing label on 422 with non-JSON body.
+    #[tokio::test]
+    async fn test_create_label_idempotent_handles_422_non_json_body() {
+        let server = MockServer::start().await;
+
+        // Simulate label already exists (422 with a message body, not JSON).
+        Mock::given(method("POST"))
+            .and(path("/repos/test-owner/test-repo/labels"))
+            .respond_with(ResponseTemplate::new(422).set_body_json(serde_json::json!({
+                "message": "Validation Failed",
+                "errors": [{"resource": "Label", "code": "already_exists", "field": "name"}]
+            })))
+            .mount(&server)
+            .await;
+
+        let client = GitHubClient::new("").with_base_url(&server.uri());
+        let definition = RODGERS_REQUIRED_LABELS
+            .iter()
+            .find(|l| l.name == "bug")
+            .unwrap();
+        let label = client
+            .create_label_idempotent("test-owner", "test-repo", definition)
+            .await
+            .unwrap();
+
+        // Should fall back to a synthetic label since body isn't a Label.
+        assert_eq!(label.id, 0);
+        assert_eq!(label.name, "bug");
+        assert_eq!(label.color, "d73a4a");
+    }
+
+    /// Test: create_discussion_category_idempotent re-fetches on error.
+    #[tokio::test]
+    async fn test_create_discussion_category_idempotent_re_fetches() {
+        let server = MockServer::start().await;
+
+        // First POST fails with "already been taken" message.
+        Mock::given(method("POST"))
+            .and(path("/repos/test-owner/test-repo/discussion-categories"))
+            .respond_with(
+                ResponseTemplate::new(422).set_body_string(
+                    r#"{"message":"Validation Failed","errors":[{"resource":"DiscussionCategory","code":"already_exists","field":"name","message":"already been taken"}]}"#,
+                ),
+            )
+            .mount(&server)
+            .await;
+
+        // GET categories succeeds and returns the existing category.
+        Mock::given(method("GET"))
+            .and(path("/repos/test-owner/test-repo/discussion-categories"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "total_count": 1,
+                "categories": [{
+                    "id": 789,
+                    "name": "Release Proposals",
+                    "description": "Propose new releases",
+                    "emoji": "🚀",
+                    "emoji_name": "rocket",
+                    "color": "0075ca",
+                    "is_answerable": false,
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "repository_id": 123,
+                    "slug": "release-proposals"
+                }]
+            })))
+            .mount(&server)
+            .await;
+
+        let client = GitHubClient::new("").with_base_url(&server.uri());
+        let category = client
+            .create_discussion_category_idempotent("test-owner", "test-repo", "Release Proposals")
+            .await
+            .unwrap();
+
+        assert_eq!(category.id, 789);
+        assert_eq!(category.name, "Release Proposals");
+    }
+
+    /// Test: create_label_idempotent creates when label doesn't exist.
+    #[tokio::test]
+    async fn test_create_label_idempotent_creates_when_missing() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/repos/test-owner/test-repo/labels"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "id": 100,
+                "name": "test-label",
+                "color": "ffffff",
+                "default": false,
+                "description": "A test",
+                "url": "https://api.github.com/repos/test/test/labels/test-label"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = GitHubClient::new("").with_base_url(&server.uri());
+        let label = client
+            .create_label_idempotent(
+                "test-owner",
+                "test-repo",
+                &LabelDefinition {
+                    name: "test-label",
+                    color: "ffffff",
+                    description: "A test",
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(label.id, 100);
+        assert_eq!(label.name, "test-label");
+    }
+
+    /// Test: ensure_labels handles HTTP error (e.g., 403) by continuing.
+    #[tokio::test]
+    async fn test_ensure_labels_continues_on_error() {
+        let server = MockServer::start().await;
+
+        // Labels: only "bug" exists.
+        Mock::given(method("GET"))
+            .and(path("/repos/test-owner/test-repo/labels"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {
+                    "id": 1,
+                    "name": "bug",
+                    "color": "d73a4a",
+                    "default": false,
+                    "description": "A bug report",
+                    "url": "https://api.github.com/repos/test/test/labels/bug"
+                }
+            ])))
+            .mount(&server)
+            .await;
+
+        // POST fails with 403 for all labels.
+        Mock::given(method("POST"))
+            .and(path("/repos/test-owner/test-repo/labels"))
+            .respond_with(ResponseTemplate::new(403).set_body_json(serde_json::json!({
+                "message": "Requires admin to create labels"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = GitHubClient::new("").with_base_url(&server.uri());
+        let result = ensure_labels(&client, "test-owner", "test-repo")
+            .await
+            .unwrap();
+
+        // "bug" is skipped, all others failed but result is still OK.
+        assert_eq!(result.created.len(), 0);
+        assert_eq!(result.skipped.len(), 1);
+        assert_eq!(result.skipped[0], "bug");
     }
 }
 
