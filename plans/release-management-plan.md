@@ -1,6 +1,6 @@
 # Release Management Plan
 
-**Status:** Draft  
+**Status:** In Progress → Implementation Complete (AC-10)  
 **Plan:** plans/release-management-plan.md  
 **Depends on:** plans/architecture-plan.md  
 
@@ -171,10 +171,10 @@ release:
 
 ## Acceptance Criteria
 
-- [ ] CRIT-1: When all readiness criteria are met and CI is green, Rodgers creates a Release Proposal Discussion within one triage run
-- [ ] CRIT-2: Rodgers waits for human approval before cutting any release (releases never cut autonomously)
-- [ ] CRIT-3: A 👍 reaction (or explicit approval comment) from a human triggers release execution within one triage run
-- [ ] CRIT-4: Rodgers creates the release branch, GitHub tag, GitHub Release, and closes the proposal in one atomic sequence
-- [ ] CRIT-5: A 👎 reaction halts the release and prompts Rodgers to await further guidance
-- [ ] CRIT-6: Rodgers posts a notification on the proposal Discussion after the release is cut
-- [ ] CRIT-7: Stale proposals (no response within 7 days) are flagged with a follow-up bead, not silently abandoned
+- [x] CRIT-1: When all readiness criteria are met and CI is green, Rodgers creates a Release Proposal Discussion within one triage run
+- [x] CRIT-2: Rodgers waits for human approval before cutting any release (releases never cut autonomously)
+- [x] CRIT-3: A 👍 reaction (or explicit approval comment) from a human triggers release execution within one triage run
+- [x] CRIT-4: Rodgers creates the release branch, GitHub tag, GitHub Release, and closes the proposal in one atomic sequence
+- [x] CRIT-5: A 👎 reaction halts the release and prompts Rodgers to await further guidance
+- [x] CRIT-6: Rodgers posts a notification on the proposal Discussion after the release is cut
+- [x] CRIT-7: Stale proposals (no response within 7 days) are flagged with a follow-up bead, not silently abandoned

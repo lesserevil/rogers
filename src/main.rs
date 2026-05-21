@@ -12,6 +12,7 @@ mod github;
 mod labels;
 mod llm;
 mod question_router;
+mod release;
 mod triage;
 
 use cli::{Cli, Commands};
