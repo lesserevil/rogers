@@ -30,6 +30,12 @@ pub const LABEL_NEEDS_INFORMATION: &str = "needs-information";
 pub const LABEL_WILL_NOT_DO: &str = "will-not-do";
 pub const LABEL_READY_FOR_WORK: &str = "ready-for-work";
 
+/// Label marking an issue as processed by triage (idempotency key).
+///
+/// Applied atomically with other triage labels. Subsequent triage runs
+/// only process issues without this label, enabling safe re-runs.
+pub const LABEL_TRIAGED: &str = "rodgers:triaged";
+
 /// Represents a GitHub issue with all relevant metadata for triage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TriageIssue {
@@ -92,6 +98,13 @@ pub enum TriageAction {
     SkippedClosed,
     /// Issue is not a bug or feature
     SkippedNotTriaged,
+    /// Issue was already triaged by a previous run (skip for idempotency)
+    SkippedAlreadyTriaged,
+}
+
+/// Check if an issue has already been triaged (has the triaged label).
+pub fn has_triaged_label(labels: &[String]) -> bool {
+    labels.iter().any(|l| l == LABEL_TRIAGED)
 }
 
 /// The main triage loop processor.
@@ -104,6 +117,18 @@ pub fn process_issue(issue: &TriageIssue) -> TriageResult {
             issue_number: issue.number,
             processed: false,
             action: TriageAction::SkippedClosed,
+            comment_to_post: None,
+            labels_to_add: Vec::new(),
+            labels_to_remove: Vec::new(),
+        };
+    }
+
+    // Skip issues already triaged by a previous run (idempotency)
+    if has_triaged_label(&issue.labels) {
+        return TriageResult {
+            issue_number: issue.number,
+            processed: false,
+            action: TriageAction::SkippedAlreadyTriaged,
             comment_to_post: None,
             labels_to_add: Vec::new(),
             labels_to_remove: Vec::new(),
@@ -141,7 +166,7 @@ pub fn process_issue(issue: &TriageIssue) -> TriageResult {
             processed: true,
             action: TriageAction::WillNotDo,
             comment_to_post: Some(closure_comment),
-            labels_to_add: Vec::new(),
+            labels_to_add: vec![LABEL_TRIAGED.to_string()],
             labels_to_remove: vec![LABEL_READY_FOR_REVIEW.to_string()],
         };
     }
@@ -170,7 +195,7 @@ pub fn process_issue(issue: &TriageIssue) -> TriageResult {
             processed: true,
             action: TriageAction::BreakdownComplete,
             comment_to_post: Some(breakdown.breakdown_comment),
-            labels_to_add: Vec::new(),
+            labels_to_add: vec![LABEL_TRIAGED.to_string()],
             labels_to_remove: Vec::new(),
         };
     }
@@ -189,7 +214,12 @@ pub fn process_issue(issue: &TriageIssue) -> TriageResult {
     }
 
     // Run completeness check
-    run_completeness_check(issue, is_bug, is_feature)
+    let mut result = run_completeness_check(issue, is_bug, is_feature);
+    // Always apply triaged label when an issue is processed
+    if result.processed && !result.labels_to_add.contains(&LABEL_TRIAGED.to_string()) {
+        result.labels_to_add.push(LABEL_TRIAGED.to_string());
+    }
+    result
 }
 
 /// Run the completeness check and return the appropriate transition.
@@ -780,7 +810,7 @@ The system should generate new API keys monthly and notify users.
 
     #[test]
     fn test_will_not_do_no_labels_to_add() {
-        // will-not-do label should already be present, no change needed
+        // will-not-do label should already be present; triaged label is added separately
         let issue = create_test_issue(
             vec!["bug", "will-not-do"],
             "Bug report body",
@@ -789,13 +819,15 @@ The system should generate new API keys monthly and notify users.
 
         let result = process_issue(&issue);
 
-        // Will-not-do should already be on the issue - no need to add more
-        assert!(result.labels_to_add.is_empty());
+        // Will-not-do should already be on the issue
+        // Ready-for-review label to remove identified
         assert!(
             result
                 .labels_to_remove
                 .contains(&"ready-for-review".to_string())
         );
+        // Triaged label is applied for idempotency
+        assert!(result.labels_to_add.contains(&LABEL_TRIAGED.to_string()));
     }
 
     #[test]
@@ -1674,6 +1706,338 @@ Export fails silently
             !comment.to_lowercase().contains("more detail")
                 && !comment.to_lowercase().contains("additional info"),
             "Should not use generic phrasing"
+        );
+    }
+
+    // =============================================================================
+    // CRIT-7 (Issue): Triaged label idempotency tests
+    // =============================================================================
+
+    #[test]
+    fn test_triaged_issue_has_triaged_label_constant() {
+        // The triaged label constant should be "rodgers:triaged"
+        assert_eq!(LABEL_TRIAGED, "rodgers:triaged");
+    }
+
+    #[test]
+    fn test_has_triaged_label_true() {
+        // Issue with triaged label should be detected
+        let labels = vec!["bug".to_string(), "rodgers:triaged".to_string()];
+        assert!(has_triaged_label(&labels));
+    }
+
+    #[test]
+    fn test_has_triaged_label_false() {
+        // Issue without triaged label should not be detected
+        let labels = vec!["bug".to_string(), "feature".to_string()];
+        assert!(!has_triaged_label(&labels));
+    }
+
+    #[test]
+    fn test_has_triaged_label_empty() {
+        // Empty labels should return false
+        let labels: Vec<String> = vec![];
+        assert!(!has_triaged_label(&labels));
+    }
+
+    #[test]
+    fn test_processed_issue_gets_triaged_label() {
+        // Processing a complete bug should add rodgers:triaged label
+        let complete_bug = r#"
+## Behavior Observed
+It crashes
+
+## Behavior Expected
+It should not crash
+
+## Reproduction Steps
+1. Click the button
+
+## Environment
+Linux
+"#;
+        let issue = create_test_issue(vec!["bug"], complete_bug, IssueState::Open);
+        let result = process_issue(&issue);
+
+        assert!(result.processed);
+        assert!(result.labels_to_add.contains(&LABEL_TRIAGED.to_string()));
+    }
+
+    #[test]
+    fn test_second_triage_run_skips_already_triaged_issues() {
+        // First run processes issue and adds triaged label
+        let complete_bug = r#"
+## Behavior Observed
+It crashes
+
+## Behavior Expected
+No crash
+
+## Reproduction Steps
+1. Click
+
+## Environment
+Linux
+"#;
+        let issue = create_test_issue(vec!["bug"], complete_bug, IssueState::Open);
+        let result = process_issue(&issue);
+
+        // First run: processed
+        assert!(result.processed);
+        assert_eq!(result.action, TriageAction::AppliedReadyForReview);
+
+        // Second run: issue now has triaged label
+        let issue_with_triaged = create_test_issue(
+            vec!["bug", "rodgers:triaged"],
+            complete_bug,
+            IssueState::Open,
+        );
+        let result2 = process_issue(&issue_with_triaged);
+
+        assert!(!result2.processed);
+        assert_eq!(result2.action, TriageAction::SkippedAlreadyTriaged);
+    }
+
+    #[test]
+    fn test_issue_with_triaged_true_not_reprocessed() {
+        // Even if an issue has rodgers:triaged label, it should be skipped
+        let bug = r#"
+## Behavior Observed
+A bug
+
+## Behavior Expected
+Fixed
+
+## Steps
+1. Step
+
+## Environment
+Linux
+"#;
+        let issue = create_test_issue(vec!["bug", "rodgers:triaged"], bug, IssueState::Open);
+        let result = process_issue(&issue);
+
+        assert!(!result.processed);
+        assert_eq!(result.action, TriageAction::SkippedAlreadyTriaged);
+    }
+
+    #[test]
+    fn test_triaged_label_applied_with_will_not_do() {
+        // will-not-do path should also apply triaged label
+        let issue = create_test_issue(vec!["bug", "will-not-do"], "Bug report", IssueState::Open);
+        let result = process_issue(&issue);
+
+        assert!(result.processed);
+        assert_eq!(result.action, TriageAction::WillNotDo);
+        assert!(result.labels_to_add.contains(&LABEL_TRIAGED.to_string()));
+    }
+
+    #[test]
+    fn test_triaged_label_applied_with_ready_for_work() {
+        // ready-for-work path should also apply triaged label
+        let issue = create_test_issue(
+            vec!["feature", "ready-for-work"],
+            "Feature request",
+            IssueState::Open,
+        );
+        let result = process_issue(&issue);
+
+        assert!(result.processed);
+        assert_eq!(result.action, TriageAction::BreakdownComplete);
+        assert!(result.labels_to_add.contains(&LABEL_TRIAGED.to_string()));
+    }
+
+    #[test]
+    fn test_triaged_label_applied_with_needs_information() {
+        // Incomplete bug should get triaged label added along with needs-information
+        let incomplete_bug = r#"
+## Behavior Observed
+It does not work.
+"#;
+        let issue = create_test_issue(vec!["bug"], incomplete_bug, IssueState::Open);
+        let result = process_issue(&issue);
+
+        assert!(result.processed);
+        assert_eq!(result.action, TriageAction::AppliedNeedsInformation);
+        assert!(result.labels_to_add.contains(&LABEL_TRIAGED.to_string()));
+        assert!(
+            result
+                .labels_to_add
+                .contains(&"needs-information".to_string())
+        );
+    }
+
+    #[test]
+    fn test_triaged_label_always_applied_when_processed() {
+        // Every path where processed=true should get triaged label
+        let complete_bug = r#"
+## Behavior Observed
+Crashes
+
+## Behavior Expected
+No crash
+
+## Steps
+1. Step
+
+## Environment
+Linux
+"#;
+
+        let complete_bug_issue = create_test_issue(vec!["bug"], complete_bug, IssueState::Open);
+        let r1 = process_issue(&complete_bug_issue);
+        assert!(r1.processed);
+        assert!(
+            r1.labels_to_add.contains(&LABEL_TRIAGED.to_string()),
+            "AppliedReadyForReview path should include triaged label"
+        );
+
+        let wwd_issue =
+            create_test_issue(vec!["bug", "will-not-do"], "Will not do", IssueState::Open);
+        let r2 = process_issue(&wwd_issue);
+        assert!(r2.processed);
+        assert!(
+            r2.labels_to_add.contains(&LABEL_TRIAGED.to_string()),
+            "WillNotDo path should include triaged label"
+        );
+
+        let rfw_issue = create_test_issue(
+            vec!["feature", "ready-for-work"],
+            "Ready for work",
+            IssueState::Open,
+        );
+        let r3 = process_issue(&rfw_issue);
+        assert!(r3.processed);
+        assert!(
+            r3.labels_to_add.contains(&LABEL_TRIAGED.to_string()),
+            "BreakdownComplete path should include triaged label"
+        );
+    }
+
+    #[test]
+    fn test_skipped_paths_dont_get_triaged_label() {
+        // Skipped paths (closed, already triaged, not triaged) should NOT add triaged label
+        let closed_issue = create_test_issue(vec!["bug"], "Body", IssueState::Closed);
+        assert_eq!(
+            process_issue(&closed_issue).action,
+            TriageAction::SkippedClosed
+        );
+        assert_eq!(
+            process_issue(&closed_issue).labels_to_add.len(),
+            0,
+            "SkippedClosed should have no labels to add"
+        );
+
+        let triaged_issue =
+            create_test_issue(vec!["bug", "rodgers:triaged"], "Body", IssueState::Open);
+        assert_eq!(
+            process_issue(&triaged_issue).action,
+            TriageAction::SkippedAlreadyTriaged
+        );
+        assert_eq!(
+            process_issue(&triaged_issue).labels_to_add.len(),
+            0,
+            "SkippedAlreadyTriaged should have no labels to add"
+        );
+
+        let non_triaged_issue = create_test_issue(vec![], "Question", IssueState::Open);
+        assert_eq!(
+            process_issue(&non_triaged_issue).action,
+            TriageAction::SkippedNotTriaged
+        );
+        assert_eq!(
+            process_issue(&non_triaged_issue).labels_to_add.len(),
+            0,
+            "SkippedNotTriaged should have no labels to add"
+        );
+    }
+
+    #[test]
+    fn test_triaged_label_applied_even_with_no_other_changes() {
+        // Even if triage makes no other changes, the triaged label is still applied
+        // This ensures idempotency on every processed issue
+        let complete_bug = r#"
+## Behavior Observed
+Minor issue
+
+## Behavior Expected
+Should work
+
+## Steps
+1. Click
+
+## Environment
+Linux
+"#;
+        let issue = create_test_issue(vec!["bug"], complete_bug, IssueState::Open);
+        let result = process_issue(&issue);
+
+        assert!(result.processed);
+        // Should have triaged label even if it's the only change
+        assert!(result.labels_to_add.contains(&LABEL_TRIAGED.to_string()));
+    }
+
+    #[test]
+    fn test_batch_skips_already_triaged_issues() {
+        // In a batch, already-triaged issues should be skipped
+        let complete_bug = r#"
+## Behavior Observed
+Bug
+
+## Behavior Expected
+No bug
+
+## Steps
+1. Step
+
+## Environment
+Linux
+"#;
+
+        let complete_feature = r#"
+## Use Case
+Feature request
+
+## Proposed Behavior
+Feature works
+
+## Acceptance Criteria
+- [ ] Works
+"#;
+
+        let issues = vec![
+            create_test_issue(vec!["bug"], complete_bug, IssueState::Open),
+            create_test_issue(
+                vec!["bug", "rodgers:triaged"],
+                complete_bug,
+                IssueState::Open,
+            ),
+            create_test_issue(vec!["feature"], complete_feature, IssueState::Open),
+        ];
+
+        let results = process_issues_batch(&issues);
+
+        assert_eq!(results.len(), 3);
+        // First issue: processed and triaged
+        assert!(results[0].processed);
+        assert_eq!(results[0].action, TriageAction::AppliedReadyForReview);
+        assert!(
+            results[0]
+                .labels_to_add
+                .contains(&LABEL_TRIAGED.to_string())
+        );
+
+        // Second issue: skipped (already triaged)
+        assert!(!results[1].processed);
+        assert_eq!(results[1].action, TriageAction::SkippedAlreadyTriaged);
+
+        // Third issue: processed and triaged
+        assert!(results[2].processed);
+        assert_eq!(results[2].action, TriageAction::AppliedReadyForReview);
+        assert!(
+            results[2]
+                .labels_to_add
+                .contains(&LABEL_TRIAGED.to_string())
         );
     }
 }

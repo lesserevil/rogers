@@ -3,7 +3,8 @@
 pub mod triage_loop;
 
 pub use triage_loop::{
-    IssueState, TriageAction, TriageIssue, TriageResult, process_issue, process_issues_batch,
+    IssueState, LABEL_TRIAGED, TriageAction, TriageIssue, TriageResult, has_triaged_label,
+    process_issue, process_issues_batch,
 };
 
 /// Label constants for triage operations.
