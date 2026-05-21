@@ -144,6 +144,16 @@ pub async fn run_all_checks(
         println!("[{}] {}", result.severity.as_str(), result.description);
     }
 
+    // Run the general workflows check.
+    let general_workflows_check = crate::checks::GeneralWorkflowsCheck;
+    let general_workflows_results = general_workflows_check
+        .check(github, owner, repo)
+        .await?;
+    all_results.extend(general_workflows_results.clone());
+    for result in &general_workflows_results {
+        println!("[{}] {}", result.severity.as_str(), result.description);
+    }
+
     println!("Repository: {}/{}", repository.full_name, repository.name);
     println!("Default branch: {}", repository.default_branch);
     println!("Has issues: {}", repository.has_issues);
