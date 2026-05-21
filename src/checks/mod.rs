@@ -49,7 +49,7 @@ impl Fixability {
         match self {
             Fixability::Auto => "auto",
             Fixability::Manual => "manual",
-            Fixability::NotApplicable => "info",
+            Fixability::NotApplicable => "na",
         }
     }
 }

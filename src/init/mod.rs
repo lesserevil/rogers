@@ -5,6 +5,7 @@
 //! via the `--fix` flag.
 
 pub mod fix;
+pub mod report;
 
 use crate::checks::{CheckResult, Fixability, InitCheck, Severity};
 use crate::error::Result;
