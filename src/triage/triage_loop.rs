@@ -20,6 +20,7 @@ use crate::feature_bug::{
     FeatureBugIssue, TransitionSummary, check_bug_completeness, check_feature_completeness,
     execute_breakdown,
 };
+use crate::triage::router::route_feature;
 use serde::{Deserialize, Serialize};
 
 /// Label constants for triage operations.
@@ -233,27 +234,50 @@ fn run_completeness_check(issue: &TriageIssue, is_bug: bool, is_feature: bool) -
         is_feature,
     };
 
-    let (is_complete, transition) = if is_bug {
+    let (is_complete, transition, route_labels) = if is_bug {
         let result = check_bug_completeness(&issue.body);
         if result.is_complete {
-            (true, TransitionSummary::bug_ready_for_review(&fb_issue))
+            (true, TransitionSummary::bug_ready_for_review(&fb_issue), Vec::new())
         } else {
             (
                 false,
                 TransitionSummary::bug_needs_information(&fb_issue, &result.request_message),
+                Vec::new(),
             )
         }
     } else {
+        // Feature issue: run completeness check AND route to feature-bug workflow
         let result = check_feature_completeness(&issue.body);
         if result.is_complete {
-            (true, TransitionSummary::feature_ready_for_review(&fb_issue))
+            // Route feature to feature-bug workflow with priority assessment
+            let route_result = route_feature(
+                issue.number,
+                &issue.title,
+                &issue.body,
+                &issue.labels,
+                false, // use keyword-based priority by default
+            );
+            (
+                true,
+                TransitionSummary::feature_ready_for_review(&fb_issue),
+                route_result.labels_to_add,
+            )
         } else {
             (
                 false,
                 TransitionSummary::feature_needs_information(&fb_issue, &result.request_message),
+                Vec::new(),
             )
         }
     };
+
+    // Merge route labels with transition labels
+    let mut final_labels_to_add = transition.labels_to_add;
+    for label in route_labels {
+        if !final_labels_to_add.contains(&label) {
+            final_labels_to_add.push(label);
+        }
+    }
 
     TriageResult {
         issue_number: issue.number,
@@ -264,7 +288,7 @@ fn run_completeness_check(issue: &TriageIssue, is_bug: bool, is_feature: bool) -
             TriageAction::AppliedNeedsInformation
         },
         comment_to_post: Some(transition.comment),
-        labels_to_add: transition.labels_to_add,
+        labels_to_add: final_labels_to_add,
         labels_to_remove: transition.labels_to_remove,
     }
 }

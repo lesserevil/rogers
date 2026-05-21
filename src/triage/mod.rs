@@ -1,6 +1,11 @@
 //! Triage module - Triage loop processing for Rodgers.
 
+pub mod priority;
+pub mod router;
 pub mod triage_loop;
+
+pub use priority::{assess_priority, llm_assess_priority, Priority, PriorityAssessment};
+pub use router::{route_feature, route_feature_batch, FeatureIssue, RouteResult};
 
 pub use triage_loop::{
     IssueState, LABEL_TRIAGED, TriageAction, TriageIssue, TriageResult, has_triaged_label,

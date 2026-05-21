@@ -65,6 +65,11 @@ pub const RODGERS_REQUIRED_LABELS: &[LabelDefinition] = &[
         color: "cc317c",
         description: "Rodgers has processed this issue (idempotency marker)",
     },
+    LabelDefinition {
+        name: "rodgers:feature",
+        color: "a2eeef",
+        description: "Feature routed to feature-bug workflow with priority assessment",
+    },
 ];
 
 /// Labels Rodgers creates programmatically.
