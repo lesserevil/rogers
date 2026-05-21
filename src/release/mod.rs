@@ -3,7 +3,7 @@
 //! This module provides the release management system that detects
 //! release candidacy, creates proposal discussions, and executes
 //! releases with human approval. It also includes changelog generation
-//! from PR data using conventional commits.
+//! from PR data using conventional commits and backport trigger detection.
 //!
 //! ## Overview
 //!
@@ -16,12 +16,18 @@
 //! 6. Posts a notification and closes the discussion
 //! 7. Handles stale proposals (reminder → close + revisit bead)
 
+pub mod backport_trigger;
 pub mod changelog;
 pub mod detector;
 pub mod execution;
 pub mod manager;
 pub mod proposal;
 
+pub use backport_trigger::{
+    BackportConfig, BackportDetectionResult, BackportTriggerEvent, build_approval_discussion_body,
+    build_backport_pending_comment, create_trigger_from_merge, create_trigger_from_triage,
+    detect_backport_candidate, identify_target_branches,
+};
 pub use changelog::{
     ChangelogConfig, ConventionalCommitType, GroupedPRs, ParsedCommit, PullRequest,
     generate_markdown, generate_release_notes, group_prs_by_type, parse_conventional_commit,

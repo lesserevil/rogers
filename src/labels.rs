@@ -80,6 +80,25 @@ pub const RODGERS_REQUIRED_LABELS: &[LabelDefinition] = &[
 /// Labels Rodgers creates programmatically.
 pub const RODGERS_AUTO_LABELS: &[LabelDefinition] = RODGERS_REQUIRED_LABELS;
 
+/// Additional labels Rodgers monitors (but does not auto-create).
+pub const RODGERS_BACKPORT_LABELS: &[LabelDefinition] = &[
+    LabelDefinition {
+        name: "backport-me",
+        color: "0e8a16",
+        description: "Human-requested backport to active release branches",
+    },
+    LabelDefinition {
+        name: "backport-ready",
+        color: "1d76db",
+        description: "Backport is approved and ready for cherry-pick",
+    },
+    LabelDefinition {
+        name: "backport-done",
+        color: "6cc644",
+        description: "Backport has been applied to all target branches",
+    },
+];
+
 /// All labels Rodgers should NOT conflict with (optional warning list).
 pub const RODGERS_RESERVED_LABELS: &[&str] = &[
     "bug",
@@ -92,9 +111,57 @@ pub const RODGERS_RESERVED_LABELS: &[&str] = &[
     "ready-for-work",
     "in-progress",
     "rodgers:triaged",
+    "security",
+    "backport-me",
+    "backport-ready",
+    "backport-done",
+    "rodgers:type=backport",
 ];
 
 /// Returns true if the given label name is a Rodgers-reserved label.
 pub fn is_rodgers_reserved(name: &str) -> bool {
     RODGERS_RESERVED_LABELS.contains(&name)
+}
+
+/// Checks if an issue is a backport candidate based on its labels.
+///
+/// Returns `Some(priority)` where priority is:
+/// - `Some(1)` for security patches (highest priority)
+/// - `Some(2)` for `backport-me` labeled issues
+/// - `None` for issues without backport indicators
+pub fn backport_candidate_priority(labels: &[String]) -> Option<u8> {
+    // Security patches get highest priority (CRIT-12 from backport-plan)
+    if labels.iter().any(|l| l == "security") {
+        return Some(1);
+    }
+    // CVE pattern in any label
+    for label in labels {
+        if label.starts_with("CVE-") {
+            return Some(1);
+        }
+    }
+    // backport-me label triggers manual backport request
+    if labels.iter().any(|l| l == "backport-me") {
+        return Some(2);
+    }
+    None
+}
+
+/// Checks if a commit message indicates a security fix.
+///
+/// Detects:
+/// 1. CVE patterns: CVE-YYYY-NNNNN
+/// 2. GHSA references: GHSA-xxxx-xxxx-xxxx
+pub fn is_security_commit_message(message: &str) -> bool {
+    let msg = message.to_lowercase();
+    // Check for CVE pattern (simple string search)
+    if msg.contains("cve-") && msg.contains("cve-20") {
+        return true;
+    }
+    // Check for GHSA reference
+    let ghsa_pattern = "ghsa-";
+    if msg.contains(ghsa_pattern) {
+        return true;
+    }
+    false
 }

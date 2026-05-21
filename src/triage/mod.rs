@@ -33,8 +33,10 @@ pub use scheduler::{
 };
 pub use state_machine::{TransitionError, TriageState, TriageStateMachine};
 pub use triage_loop::{
-    IssueState, LABEL_TRIAGED, TriageAction, TriageIssue, TriageResult, has_triaged_label,
-    process_issue, process_issues_batch,
+    BackportTriggerInfo, IssueState, LABEL_BACKPORT_ME, LABEL_BUG, LABEL_FEATURE,
+    LABEL_NEEDS_INFORMATION, LABEL_READY_FOR_REVIEW, LABEL_READY_FOR_WORK, LABEL_SECURITY,
+    LABEL_TRIAGED, LABEL_WILL_NOT_DO, TriageAction, TriageIssue, TriageResult,
+    check_backport_triggers, has_triaged_label, process_issue, process_issues_batch,
 };
 
 /// Label constants for triage operations.
