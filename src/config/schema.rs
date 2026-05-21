@@ -122,13 +122,152 @@ pub struct TriageConfig {
     pub assignees: Option<Vec<String>>,
 }
 
+/// Default values for release configuration.
+pub const DEFAULT_APPROVAL_DISCUSSION_CATEGORY: &str = "Announcements";
+pub const DEFAULT_VOTING_WINDOW_DAYS: u32 = 2;
+pub const DEFAULT_STALE_THRESHOLD_DAYS: u32 = 7;
+
 /// Release configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReleaseConfig {
     pub approval_discussion_category: Option<String>,
     pub active_branches: Option<Vec<String>>,
     pub voting_window_days: Option<u32>,
     pub stale_threshold_days: Option<u32>,
+}
+
+impl ReleaseConfig {
+    /// Create a new ReleaseConfig with explicit values.
+    pub fn new(
+        approval_discussion_category: Option<String>,
+        active_branches: Option<Vec<String>>,
+        voting_window_days: Option<u32>,
+        stale_threshold_days: Option<u32>,
+    ) -> Self {
+        Self {
+            approval_discussion_category,
+            active_branches,
+            voting_window_days,
+            stale_threshold_days,
+        }
+    }
+
+    /// Apply default values for any fields that are None.
+    pub fn apply_defaults(&self) -> ResolvedReleaseConfig {
+        ResolvedReleaseConfig {
+            approval_discussion_category: self
+                .approval_discussion_category
+                .clone()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| DEFAULT_APPROVAL_DISCUSSION_CATEGORY.to_string()),
+            active_branches: self.active_branches.clone().unwrap_or_default(),
+            voting_window_days: self
+                .voting_window_days
+                .unwrap_or(DEFAULT_VOTING_WINDOW_DAYS),
+            stale_threshold_days: self
+                .stale_threshold_days
+                .unwrap_or(DEFAULT_STALE_THRESHOLD_DAYS),
+        }
+    }
+
+    /// Validate the config and apply defaults in one step.
+    pub fn validate_and_defaults(&self) -> Result<ResolvedReleaseConfig, Vec<String>> {
+        let mut errors = Vec::new();
+
+        if let Some(days) = self.voting_window_days {
+            if days == 0 {
+                errors.push("release.voting_window_days must be positive".to_string());
+            }
+        }
+        if let Some(days) = self.stale_threshold_days {
+            if days == 0 {
+                errors.push("release.stale_threshold_days must be positive".to_string());
+            }
+        }
+
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+
+        let resolved = self.apply_defaults();
+
+        if resolved.active_branches.is_empty() {
+            tracing::warn!("release.active_branches is empty — backport manager will not operate");
+        }
+
+        Ok(resolved)
+    }
+
+    /// Check if any release configuration fields are set (non-None).
+    pub fn is_configured(&self) -> bool {
+        self.approval_discussion_category.is_some()
+            || self.active_branches.is_some()
+            || self.voting_window_days.is_some()
+            || self.stale_threshold_days.is_some()
+    }
+}
+
+/// Resolved release configuration with all defaults applied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedReleaseConfig {
+    /// GitHub Discussion category for approval proposals.
+    pub approval_discussion_category: String,
+
+    /// Active release branches for backports.
+    pub active_branches: Vec<String>,
+
+    /// Days before reminder ping for stale proposals.
+    pub voting_window_days: u32,
+
+    /// Days before closing a stale proposal.
+    pub stale_threshold_days: u32,
+}
+
+impl ResolvedReleaseConfig {
+    /// Check if a branch is an active release branch.
+    pub fn is_active_branch(&self, branch: &str) -> bool {
+        self.active_branches.contains(&branch.to_string())
+    }
+
+    /// Get the list of active branches.
+    pub fn active_branches(&self) -> &[String] {
+        &self.active_branches
+    }
+
+    /// Check if backport management is active (has at least one branch).
+    pub fn is_backport_active(&self) -> bool {
+        !self.active_branches.is_empty()
+    }
+
+    /// Check if a proposal is stale.
+    pub fn is_stale_after_days(&self, days_since_creation: i32) -> bool {
+        days_since_creation > self.stale_threshold_days as i32
+    }
+
+    /// Check if a proposal should be nudged.
+    pub fn should_nudge_after_days(&self, days_since_creation: i32) -> bool {
+        days_since_creation > self.voting_window_days as i32
+            && !self.is_stale_after_days(days_since_creation)
+    }
+}
+
+/// Load release configuration from a YAML file.
+///
+/// Returns a `ReleaseConfig` parsed from the YAML. If the file does not
+/// exist or the release section is absent, returns `ReleaseConfig::default()`.
+pub fn load_release_config_from_yaml(path: &std::path::Path) -> Result<ReleaseConfig, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("Failed to read config file {:?}: {}", path, e))?;
+
+    #[derive(Debug, Deserialize)]
+    struct ConfigWrapper {
+        release: Option<ReleaseConfig>,
+    }
+
+    let wrapper: ConfigWrapper =
+        serde_yaml::from_str(&content).map_err(|e| format!("YAML parse error: {}", e))?;
+
+    Ok(wrapper.release.unwrap_or_default())
 }
 
 /// Rogation (project-level) configuration.
@@ -214,17 +353,6 @@ impl Default for TriageConfig {
                 "not planned".to_string(),
             ]),
             assignees: Some(vec![]),
-        }
-    }
-}
-
-impl Default for ReleaseConfig {
-    fn default() -> Self {
-        Self {
-            approval_discussion_category: Some("Release Proposals".to_string()),
-            active_branches: Some(vec![]),
-            voting_window_days: Some(2),
-            stale_threshold_days: Some(7),
         }
     }
 }
