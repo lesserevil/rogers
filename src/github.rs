@@ -201,9 +201,11 @@ pub struct RateLimitInfo {
 // ─── Client ───────────────────────────────────────────────────────────────
 
 /// GitHub API client with connection pooling, authentication, and rate limit tracking.
+#[derive(Clone)]
 pub struct GitHubClient {
     client: Client,
     base_url: String,
+    default_ref: String,
     token: String,
     rate_limit: Arc<Mutex<Option<RateLimitInfo>>>,
 }
@@ -249,9 +251,24 @@ impl GitHubClient {
         GitHubClient {
             client: build_client(&token),
             base_url: GITHUB_API_BASE.to_string(),
+            default_ref: "main".to_string(),
             token,
             rate_limit: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Rebuild the client with a new base URL (useful for testing).
+    #[allow(dead_code)]
+    pub fn with_base_url(mut self, base_url: &str) -> Self {
+        self.base_url = base_url.to_string();
+        self
+    }
+
+    /// Set the default git ref (branch/tag/SHA) for requests.
+    #[allow(dead_code)]
+    pub fn with_default_ref(mut self, ref_name: &str) -> Self {
+        self.default_ref = ref_name.to_string();
+        self
     }
 
     /// Rebuild the client with a new token (e.g., from CLI flag vs env var).
@@ -265,6 +282,7 @@ impl GitHubClient {
         GitHubClient {
             client: build_client(&token),
             base_url: self.base_url,
+            default_ref: self.default_ref,
             token,
             rate_limit: self.rate_limit,
         }
@@ -661,6 +679,46 @@ impl GitHubClient {
             .filter_map(|item| serde_json::from_value(item).ok())
             .collect();
         Ok(workflows)
+    }
+
+    // ─── Directory Listing ──────────────────────────────────────────────
+
+    /// List directory contents from a repository.
+    ///
+    /// Returns a vector of JSON values, each representing a file or directory
+    /// entry in the specified path. Each entry contains at least:
+    /// - `name`: file/directory name
+    /// - `type`: "file" or "dir"
+    /// - `path`: full path
+    ///
+    /// # Arguments
+    /// * `owner` — Repository owner
+    /// * `repo` — Repository name
+    /// * `path` — Directory path within the repository
+    /// * `ref_name` — Git reference (branch, tag, or commit SHA)
+    pub async fn list_directory(
+        &self,
+        owner: &str,
+        repo: &str,
+        path: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let text = self
+            .get_text(&format!(
+                "/repos/{}/{}/contents/{}?ref={}",
+                owner, repo, path, self.default_ref
+            ))
+            .await?;
+        let body: serde_json::Value = serde_json::from_str(&text)?;
+
+        match body {
+            serde_json::Value::Array(arr) => Ok(arr),
+            serde_json::Value::Object(_) => {
+                // Single file returned instead of directory — treat as empty list
+                // (the path exists but is a file, not a directory)
+                Ok(Vec::new())
+            }
+            _ => Ok(Vec::new()),
+        }
     }
 
     // ─── File Contents ──────────────────────────────────────────────────

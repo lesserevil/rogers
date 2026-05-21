@@ -12,16 +12,30 @@ fn main() -> Result<()> {
             github_token,
         } => {
             let (owner, repo_name) = parse_repo(&repo)?;
-            let _client = rogers::github::GitHubClient::new(&github_token.unwrap_or_default());
+            let token = github_token.unwrap_or_default();
+            let client = rogers::github::GitHubClient::new(&token);
 
-            // For now, just verify the client works
-            // Full init implementation will come in follow-up beads
-            println!("Repository: {}/{}", owner, repo_name);
-            println!("Client initialized successfully");
-            if fix {
-                println!("Fix mode: enabled");
+            // Run init (async via tokio block_on since main is sync).
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                rogers::error::RogersError::Config(format!("Failed to create runtime: {}", e))
+            })?;
+
+            let result = rt
+                .block_on(async { rogers::init::run_init(&owner, &repo_name, fix, &client).await });
+
+            match result {
+                Ok(_) => {
+                    println!("Init check complete.");
+                    if fix {
+                        println!("Fix mode: completed");
+                    }
+                    Ok(())
+                }
+                Err(e) => {
+                    println!("Init check failed: {}", e);
+                    Err(e)
+                }
             }
-            Ok(())
         }
         rogers::cli::Commands::Doctor {
             verbose,
