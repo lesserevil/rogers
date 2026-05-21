@@ -4,11 +4,15 @@
 
 pub mod classifier;
 pub mod engine;
+pub mod priority;
+pub mod router;
 pub mod state_machine;
 pub mod triage_loop;
 
 pub use classifier::{ClassificationResult, Classifier};
 pub use engine::TriageEngine;
+pub use priority::{assess_priority, llm_assess_priority, Priority, PriorityAssessment};
+pub use router::{route_feature, route_feature_batch, FeatureIssue, RouteResult};
 pub use state_machine::{TransitionError, TriageState, TriageStateMachine};
 pub use triage_loop::{
     IssueState, LABEL_TRIAGED, TriageAction, TriageIssue, TriageResult, has_triaged_label,
