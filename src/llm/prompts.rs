@@ -6,6 +6,338 @@
 use serde::{Deserialize, Serialize};
 
 /// Classification prompt with context.
+/// Prompt for extracting fields from a bug report freeform description.
+///
+/// Returns structured information about which required fields are present.
+pub const BUG_FIELD_EXTRACTION_PROMPT: &str = r#"You are analyzing a bug report. Identify which of the following required fields are present in the issue content.
+
+Required fields for a complete bug report:
+1. **Behavior observed** - A description of what happened that is wrong
+2. **Behavior expected** - A description of what the reporter expected
+3. **Reproduction steps** - Steps to reproduce the issue (or N/A with justification)
+4. **Environment** - OS, version, hardware, browser, etc.
+
+Analyze the issue content and respond with a JSON object indicating which fields are present.
+Return ONLY the JSON object, no additional text.
+
+Example response:
+{"behavior_observed": true, "behavior_expected": true, "reproduction_steps": false, "environment": false}
+
+Issue content:
+{issue_content}
+"#;
+
+/// Prompt for extracting fields from a feature request freeform description.
+///
+/// Returns structured information about which required fields are present.
+pub const FEATURE_FIELD_EXTRACTION_PROMPT: &str = r#"You are analyzing a feature request. Identify which of the following required fields are present in the issue content.
+
+Required fields for a complete feature request:
+1. **Use case** - Why the requester needs this feature (the problem they are solving)
+2. **Proposed behavior** - How the feature should work once implemented
+3. **Acceptance criteria** - How the feature would be verified (testable, enumerated list)
+
+Analyze the issue content and respond with a JSON object indicating which fields are present.
+Return ONLY the JSON object, no additional text.
+
+Example response:
+{"use_case": true, "proposed_behavior": true, "acceptance_criteria": false}
+
+Issue content:
+{issue_content}
+"#;
+
+/// Prompt for generating specific requests for missing bug report fields.
+pub const BUG_MISSING_FIELDS_REQUEST_PROMPT: &str = r#"The following required fields are missing from this bug report:
+{missing_fields}
+
+Generate a friendly, specific request comment asking the user to provide ONLY the missing fields.
+Do NOT request fields that are already present. Do NOT use generic phrases like "please provide more details".
+Ask specifically for each missing field with a brief explanation of why it's needed.
+
+Bug missing fields:
+{bug_missing}
+
+Example for missing environment and reproduction_steps:
+"Thanks for the report! To help us reproduce this issue, could you provide:
+- **Reproduction steps**: How can we reproduce what you're seeing?
+- **Environment**: What OS, version, and relevant context are you using?"
+
+Respond with ONLY the comment text.
+"#;
+
+/// Prompt for generating specific requests for missing feature request fields.
+pub const FEATURE_MISSING_FIELDS_REQUEST_PROMPT: &str = r#"The following required fields are missing from this feature request:
+{missing_fields}
+
+Generate a friendly, specific request comment asking the user to provide ONLY the missing fields.
+Do NOT request fields that are already present. Do NOT use generic phrases like "please provide more details".
+Ask specifically for each missing field with a brief explanation of why it's needed.
+
+Feature missing fields:
+{feature_missing}
+
+Example for missing use_case and acceptance_criteria:
+"Thanks for the feature suggestion! To help us evaluate this, could you provide:
+- **Use case**: Why do you need this feature? What problem are you solving?
+- **Acceptance criteria**: How would you verify this feature works correctly? (Please provide a testable list)"
+
+Respond with ONLY the comment text.
+"#;
+
+/// Prompt for generating a warm closure comment when an issue is declined (will-not-do).
+///
+/// The comment should:
+/// - Express gratitude for the report/request
+/// - Politely explain the decision not to pursue
+/// - Be warm and respectful, NOT curt or dismissive
+/// - Never just say "no" or "we won't do this"
+pub const WARM_CLOSURE_PROMPT: &str = r#"You are writing a closure comment for a GitHub issue that will not be pursued.
+
+Generate a warm, empathetic comment that:
+1. Thanks the requestor for taking the time to report/submit this issue
+2. Explains that after consideration, this will not be worked on at this time
+3. Expresses regret that we cannot address this right now
+4. Leaves the door open for future consideration
+
+TONE: Warm, grateful, respectful. This person took time to file an issue - acknowledge that.
+DO NOT USE: Curt phrases like "not a priority", "we won't implement this", or just "no"
+
+Example good response:
+"Thanks @username for the detailed feature request! I appreciate you taking the time to outline this use case.
+
+After careful consideration, we're unable to prioritize this at the moment. The team has weighed this against other planned work and has decided not to move forward with this specific request.
+
+We apologize for not being able to address this for you. If circumstances change in the future or you have other ideas, please don't hesitate to open a new issue.
+
+Thanks again for contributing to the project!"
+
+Issue details:
+- Title: {issue_title}
+- Author: @{issue_author}
+- Type: {issue_type}
+
+Respond with ONLY the comment text (no preamble or explanation).
+"#;
+
+/// Prompt for analyzing whether an issue requires epic-scale breakdown.
+///
+/// Epic-scale issues span multiple codebase areas or have sequential dependencies,
+/// requiring breakdown into an epic bead + child beads. Standard work can be
+/// handled as a single epic bead.
+///
+/// Epic-scale indicators:
+/// - Multiple distinct codebase areas (CLI, API, DB, UI, config)
+/// - Sequential dependencies ("and then...", step 1, step 2, etc.)
+/// - Multiple logically distinct acceptance criteria groups
+pub const EPIC_SCALE_ANALYSIS_PROMPT: &str = r#"You are analyzing a GitHub issue to determine whether it requires epic-scale breakdown.
+
+An issue is epic-scale when it involves:
+1. **Multiple codebase areas** - CLI, UI, API, database, configuration, auth, etc.
+2. **Sequential dependencies** - work that must be done in phases, "and then..." patterns
+3. **Multiple distinct units** - different logical concerns that could be worked on separately
+
+Standard (single epic) issues:
+- Describe work in one codebase area
+- Can be described without "and then"
+- One logical unit of acceptance criteria
+
+Analyze the issue and respond with a JSON object:
+{"is_epic_scale": true/false, "reasons": [...], "child_beads": [{"title": "...", "description": "..."}]}
+
+If is_epic_scale is true, provide one child_beads entry per distinct unit of work.
+Each child_beads title should indicate the codebase area it touches.
+Do NOT provide more than 5 child beads - group if needed.
+
+Issue content:
+{issue_content}
+"#;
+
+/// Prompt for breaking down an epic-scale issue into child bead specifications.
+///
+/// Given an issue determined to be epic-scale, generate specific child bead
+/// titles and descriptions following the two rules:
+/// 1. **Single codebase part** - One entry per area (CLI, API, DB, UI, config)
+/// 2. **No "...and then..." scope** - Each bead fits in one non-compound sentence
+pub const EPIC_BREAKDOWN_PROMPT: &str = r#"You are breaking down an epic-scale GitHub issue into child bead specifications.
+
+Each child bead must follow two rules:
+1. **Single codebase part.** Touches at most one distinct area: CLI, UI, API, database, config, auth, etc.
+2. **No "...and then..." scope.** Description fits in one non-compound sentence. If it naturally continues with "and then...", split into separate beads.
+
+Generate child bead specifications as a JSON array:
+[
+  {"title": "Area: Short description of this unit", "description": "Concrete scope: what this bead does specifically", "priority": 2}
+]
+
+Maximum 5 child beads. Priority: 0=critical, 1=high, 2=medium, 3=low.
+Group related work into a single bead rather than splitting finely.
+
+Issue title: {issue_title}
+Issue body: {issue_body}
+
+Respond with ONLY the JSON array, no preamble.
+"#;
+
+/// Prompt for generating a standalone child bead description with all required sections.
+///
+/// A standalone bead is one that a naive but competent junior developer can implement
+/// without consulting other beads or the epic description. Each bead MUST include:
+/// 1. **WHAT TO DO** - Concrete files, packages, functions, or commands to create/modify
+/// 2. **WHY** - User-visible behavior, constraint, or design rule this serves
+/// 3. **HOW TO VERIFY** - Test, command, or observable result that proves work is done
+/// 4. **EDGE CASES AND PITFALLS** - Non-obvious constraints a careful reader could miss
+/// 5. **PROJECT-SPECIFIC TERMINOLOGY** - Project terms explained inline
+pub const STANDALONE_BEAD_PROMPT: &str = r#"Generate a standalone child bead description for implementation.
+
+A standalone bead provides ALL context needed for a naive but competent junior developer
+to implement it WITHOUT consulting other beads or the parent epic.
+
+REQUIRED SECTIONS (write all 5):
+1. **WHAT TO DO**: Name concrete files, packages, functions, and commands to create or modify.
+2. **WHY**: Explain the user-visible behavior, constraint, or design rule this serves.
+3. **HOW TO VERIFY**: Specify the test, command, or observable result that proves work is done.
+4. **EDGE CASES AND PITFALLS**: Non-obvious constraints a careful reader could miss.
+5. **PROJECT-SPECIFIC TERMINOLOGY**: Define project-specific terms inline.
+
+RULES:
+- Single codebase part only (CLI OR API OR DB OR UI OR Config OR Auth)
+- No "and then..." patterns - each bead scope should fit in one non-compound sentence
+- Write for a naive junior dev who can write code and run tools but hasn't read the plan
+
+FORMAT your response as a JSON object:
+{
+  "title": "Area: Brief description (e.g., 'API: User profile endpoint')",
+  "description": "Full standalone description with all 5 sections formatted as markdown"
+}
+
+Bead scope: {bead_scope}
+Codebase area: {codebase_area}
+Acceptance criteria context: {ac_context}
+
+Respond with ONLY the JSON object, no preamble or explanation.
+"#;
+
+/// Prompt for validating that a child bead description is standalone-ready.
+///
+/// This prompt helps an LLM validate that generated beads meet standalone criteria:
+/// - All 5 required sections present
+/// - Single codebase part (no CLI+API+DB+UI in one bead)
+/// - No compound "and then..." patterns
+pub const STANDALONE_VALIDATION_PROMPT: &str = r#"Validate whether a child bead description is standalone-ready.
+
+A standalone-ready bead can be implemented by a naive but competent junior developer
+WITHOUT consulting other beads, the parent epic, or out-of-band knowledge.
+
+Check for these issues:
+
+1. **MISSING SECTIONS**: Verify all 5 sections exist:
+   - WHAT TO DO
+   - WHY
+   - HOW TO VERIFY
+   - EDGE CASES AND PITFALLS (or EDGE CASES)
+   - PROJECT-SPECIFIC TERMINOLOGY (or TERMINOLOGY)
+
+2. **MULTIPLE CODEBASE AREAS**: Flag if bead touches multiple distinct areas:
+   - CLI alone
+   - API alone
+   - Database alone
+   - UI alone
+   - Config alone
+   - Auth alone
+   (Exception: API + Database may be combined as they're closely related)
+
+3. **COMPOUND PATTERNS**: Flag if bead has sequential work patterns:
+   - "and then" patterns
+   - "first... second..." patterns
+   - "Step 1... Step 2..." numbered patterns
+   - "after that" or "afterwards"
+   - Sequential work that should be separate beads
+
+Bead description to validate:
+{bead_description}
+
+Respond with a JSON object:
+{
+  "is_standalone_ready": true/false,
+  "issues": ["list of issues found"],
+  "suggestions": ["list of suggestions to fix issues"]
+}
+"#;
+
+/// Prompt for splitting a compound bead into separate standalone beads.
+pub const BEAD_SPLIT_PROMPT: &str = r#"Split a compound bead into separate standalone beads.
+
+The following bead has compound scope (touches multiple areas or has sequential patterns).
+Split it into 2-5 separate beads, each touching ONE distinct codebase area.
+
+Original bead:
+{original_bead}
+
+RULES FOR SPLIT BEADS:
+1. Each bead touches only ONE codebase area: CLI, API, DB, UI, Config, or Auth
+2. No "and then..." patterns in any single bead
+3. Each bead is standalone: includes all 5 sections
+4. Maximum 5 beads - group closely related work
+5. Preserve ordering if beads have dependencies
+
+FORMAT as JSON array:
+[
+  {
+    "title": "Area: Brief description",
+    "description": "Standalone description (5 sections) for this unit",
+    "has_dependency_on": null or "Area: Previous bead title"
+  }
+]
+
+Respond with ONLY the JSON array.
+"#;
+
+/// Prompt for classifying an unlabeled GitHub issue.
+///
+/// Used as LLM fallback when label heuristics don't match any known labels.
+/// Asks the LLM to classify the issue into one of: Bug, Feature, Question, Docs, Chore.
+/// Also requests a confidence level to enable low-confidence fallback to Question.
+///
+/// This is called only for issues that have NO matching heuristic labels
+/// (no bug, enhancement, question, documentation, chore, etc.).
+pub const ISSUE_CLASSIFICATION_PROMPT: &str = r#"You are classifying a GitHub issue to determine its type.
+
+CLASSIFICATION CATEGORIES:
+- **Bug**: Something is broken, not working as expected, produces errors, crashes
+- **Feature**: Request for new functionality, improvement, or enhancement
+- **Question**: Asking for help, how-to, clarification, or support
+- **Docs**: Request for documentation, missing docs, documentation correction
+- **Chore**: Internal maintenance, dependency updates, CI/CD, refactoring (not user-facing)
+
+CLASSIFICATION RULES:
+1. If the issue describes something that is BROKEN → Bug
+2. If the issue requests NEW functionality → Feature
+3. If the issue is asking HOW to do something → Question
+4. If the issue is about MISSING or WRONG documentation → Docs
+5. If the issue is internal maintenance (deps, CI, refactor) → Chore
+6. If you cannot confidently determine the type → Question (default)
+
+EXISTING LABELS: {existing_labels}
+
+Issue Title: {title}
+Issue Body: {body}
+
+Respond with ONLY a JSON object (no preamble):
+{
+  "issue_type": "Bug" | "Feature" | "Question" | "Docs" | "Chore",
+  "confidence": "High" | "Medium" | "Low",
+  "rationale": "Brief explanation of why you chose this type (1-2 sentences)"
+}
+
+RULES:
+- Set confidence to "Low" if you are uncertain or the issue is vague
+- When in doubt, classify as "Question"
+- Do NOT guess if the issue lacks sufficient information — use "Question" as default
+"#;
+
+/// Result from LLM field extraction for bug reports.
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClassificationPrompt {
     /// System prompt for the LLM.
@@ -734,5 +1066,66 @@ mod tests {
         let prompt = QuestionRoutingPrompt::for_routing(&metadata, None);
         assert!(prompt.system_prompt.contains("implementation"));
         assert!(prompt.user_prompt.contains("internals"));
+    }
+
+    // =============================================================================
+    // Issue Classification Prompt Tests (CRIT-2)
+    // =============================================================================
+
+    #[test]
+    fn test_classification_prompt_includes_all_categories() {
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Bug"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Feature"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Question"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Docs"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Chore"));
+    }
+
+    #[test]
+    fn test_classification_prompt_includes_placeholders() {
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("{existing_labels}"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("{title}"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("{body}"));
+    }
+
+    #[test]
+    fn test_classification_prompt_requires_json_output() {
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("JSON"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("issue_type"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("confidence"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("rationale"));
+    }
+
+    #[test]
+    fn test_classification_prompt_confidence_levels() {
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("High"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Medium"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Low"));
+    }
+
+    #[test]
+    fn test_classification_prompt_defaults_to_question() {
+        // When in doubt, should default to Question
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Question"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("in doubt") || ISSUE_CLASSIFICATION_PROMPT.contains("default"));
+    }
+
+    #[test]
+    fn test_classification_prompt_classifies_bugs_as_broken() {
+        // Bug classification rule: describes something broken
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("BROKEN"));
+    }
+
+    #[test]
+    fn test_classification_prompt_classifies_features_as_new_functionality() {
+        // Feature classification rule: request for new functionality
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("NEW functionality"));
+    }
+
+    #[test]
+    fn test_classification_prompt_classifies_docs_as_missing_docs() {
+        // Docs classification rule: missing or wrong documentation
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("MISSING"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("documentation"));
     }
 }
