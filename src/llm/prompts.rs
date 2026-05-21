@@ -308,6 +308,49 @@ FORMAT as JSON array:
 Respond with ONLY the JSON array.
 "#;
 
+/// Prompt for classifying an unlabeled GitHub issue.
+///
+/// Used as LLM fallback when label heuristics don't match any known labels.
+/// Asks the LLM to classify the issue into one of: Bug, Feature, Question, Docs, Chore.
+/// Also requests a confidence level to enable low-confidence fallback to Question.
+///
+/// This is called only for issues that have NO matching heuristic labels
+/// (no bug, enhancement, question, documentation, chore, etc.).
+pub const ISSUE_CLASSIFICATION_PROMPT: &str = r#"You are classifying a GitHub issue to determine its type.
+
+CLASSIFICATION CATEGORIES:
+- **Bug**: Something is broken, not working as expected, produces errors, crashes
+- **Feature**: Request for new functionality, improvement, or enhancement
+- **Question**: Asking for help, how-to, clarification, or support
+- **Docs**: Request for documentation, missing docs, documentation correction
+- **Chore**: Internal maintenance, dependency updates, CI/CD, refactoring (not user-facing)
+
+CLASSIFICATION RULES:
+1. If the issue describes something that is BROKEN → Bug
+2. If the issue requests NEW functionality → Feature
+3. If the issue is asking HOW to do something → Question
+4. If the issue is about MISSING or WRONG documentation → Docs
+5. If the issue is internal maintenance (deps, CI, refactor) → Chore
+6. If you cannot confidently determine the type → Question (default)
+
+EXISTING LABELS: {existing_labels}
+
+Issue Title: {title}
+Issue Body: {body}
+
+Respond with ONLY a JSON object (no preamble):
+{
+  "issue_type": "Bug" | "Feature" | "Question" | "Docs" | "Chore",
+  "confidence": "High" | "Medium" | "Low",
+  "rationale": "Brief explanation of why you chose this type (1-2 sentences)"
+}
+
+RULES:
+- Set confidence to "Low" if you are uncertain or the issue is vague
+- When in doubt, classify as "Question"
+- Do NOT guess if the issue lacks sufficient information — use "Question" as default
+"#;
+
 /// Result from LLM field extraction for bug reports.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BugFieldExtraction {
@@ -770,5 +813,66 @@ mod tests {
         // The standalone validation prompt explicitly checks for sequential patterns
         assert!(STANDALONE_VALIDATION_PROMPT.contains("and then"));
         assert!(STANDALONE_VALIDATION_PROMPT.contains("Step"));
+    }
+
+    // =============================================================================
+    // Issue Classification Prompt Tests (CRIT-2)
+    // =============================================================================
+
+    #[test]
+    fn test_classification_prompt_includes_all_categories() {
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Bug"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Feature"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Question"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Docs"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Chore"));
+    }
+
+    #[test]
+    fn test_classification_prompt_includes_placeholders() {
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("{existing_labels}"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("{title}"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("{body}"));
+    }
+
+    #[test]
+    fn test_classification_prompt_requires_json_output() {
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("JSON"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("issue_type"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("confidence"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("rationale"));
+    }
+
+    #[test]
+    fn test_classification_prompt_confidence_levels() {
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("High"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Medium"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Low"));
+    }
+
+    #[test]
+    fn test_classification_prompt_defaults_to_question() {
+        // When in doubt, should default to Question
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Question"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("in doubt") || ISSUE_CLASSIFICATION_PROMPT.contains("default"));
+    }
+
+    #[test]
+    fn test_classification_prompt_classifies_bugs_as_broken() {
+        // Bug classification rule: describes something broken
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("BROKEN"));
+    }
+
+    #[test]
+    fn test_classification_prompt_classifies_features_as_new_functionality() {
+        // Feature classification rule: request for new functionality
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("NEW functionality"));
+    }
+
+    #[test]
+    fn test_classification_prompt_classifies_docs_as_missing_docs() {
+        // Docs classification rule: missing or wrong documentation
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("MISSING"));
+        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("documentation"));
     }
 }
