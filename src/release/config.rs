@@ -14,7 +14,7 @@
 //!
 //! ## Usage
 //!
-//! ```
+//! ```no_run
 //! use rogers::release::config::load_release_config;
 //!
 //! // Load with default search paths

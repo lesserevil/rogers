@@ -1,8 +1,53 @@
+# Rogers configuration
+# Copy this file to config.yaml and fill in your values.
+# Never commit config.yaml with real credentials.
 
 github:
-  owner: test
-  repo: test
+  owner: OWNER
+  repo: REPO
+  token: ${RODGERS_GITHUB_TOKEN}    # env var injection supported — set before running Rodgers
+  api_url: https://api.github.com   # change for GitHub Enterprise
+
+scheduler:
+  interval_minutes: 5              # minimum: 1
+  enabled: true                    # set to false to run ad-hoc only
+
+beads:
+  remote:                           # dolt remote URL — set before first run
+  database: message.hibernate       # dolt database name
+
+llm:
+  provider: openai
+  base_url: https://api.openai.com/v1
+  model: gpt-4o-mini
+  api_key: ${OPENAI_API_KEY}       # env var injection supported
+
+triage:
+  default_labels:
+    - triage
+  bot_labels:
+    - luditus
+    - circular
+  close_labels:
+    - wontfix
+    - duplicate
+    - not planned
+  assignees: []                     # usernames to assign to new issues
+
 release:
+  approval_discussion_category: Announcements   # GitHub Discussion category for proposals
+  active_branches: []                          # e.g. ["release/1.x", "release/2.x"]
   voting_window_days: 2
-tegory: "Announcements"
-  voting_window_days: 2
+  stale_threshold_days: 7
+
+rogation:
+  ignore_labels: []               # labels that suppress Rodgers' processing entirely
+  labels_never_bot_managed: []   # labels Rodgers will never manage — humans own these
+  custom_type_names: {}           # project-specific type aliases: display_name → rodgers:type
+  format:                         # override bead description format
+  agent_file:                     # explicit path to per-project agent instructions
+  template_dir:                    # per-project override for embedded issue templates (optional)
+  security_label: security         # label name Rodgers checks for security patch detection
+
+log_level: info                   # debug | info | warn | error
+error_channel:                    # Slack channel ID for error notifications

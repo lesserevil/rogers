@@ -309,11 +309,324 @@ pub fn rodgers_required_label_names() -> &'static [&'static str] {
     ]
 }
 
-impl Default for SchedulerConfig {
-    fn default() -> Self {
-        Self {
-            interval_minutes: 15,
-            enabled: Some(true),
+    // Helper to safely set env vars in tests
+    fn set_env_var(key: &str, value: &str) {
+        unsafe { std::env::set_var(key, value) };
+    }
+
+    // =============================================================================
+    // ReleaseConfig — schema validation tests
+    // =============================================================================
+
+    #[test]
+    fn test_release_config_defaults() {
+        let config = ReleaseConfig::default();
+        assert!(config.approval_discussion_category.is_none());
+        assert!(config.active_branches.is_none());
+        assert!(config.voting_window_days.is_none());
+        assert!(config.stale_threshold_days.is_none());
+        assert!(!config.is_configured());
+    }
+
+    #[test]
+    fn test_release_config_applies_defaults() {
+        let config = ReleaseConfig::default();
+        let resolved = config.apply_defaults();
+
+        assert_eq!(
+            resolved.approval_discussion_category,
+            DEFAULT_APPROVAL_DISCUSSION_CATEGORY
+        );
+        assert!(resolved.active_branches.is_empty());
+        assert_eq!(resolved.voting_window_days, DEFAULT_VOTING_WINDOW_DAYS);
+        assert_eq!(resolved.stale_threshold_days, DEFAULT_STALE_THRESHOLD_DAYS);
+    }
+
+    #[test]
+    fn test_release_config_custom_values() {
+        let config = ReleaseConfig::new(
+            Some("Security Advisories".to_string()),
+            Some(vec!["release/1.x".to_string(), "release/2.x".to_string()]),
+            Some(3),
+            Some(10),
+        );
+        let resolved = config.apply_defaults();
+
+        assert_eq!(resolved.approval_discussion_category, "Security Advisories");
+        assert_eq!(resolved.active_branches.len(), 2);
+        assert!(resolved.is_active_branch("release/1.x"));
+        assert!(resolved.is_active_branch("release/2.x"));
+        assert!(!resolved.is_active_branch("main"));
+        assert_eq!(resolved.voting_window_days, 3);
+        assert_eq!(resolved.stale_threshold_days, 10);
+    }
+
+    #[test]
+    fn test_release_config_empty_category_defaults() {
+        // Empty string should fall back to default
+        let config = ReleaseConfig::new(Some("".to_string()), None, None, None);
+        let resolved = config.apply_defaults();
+        assert_eq!(
+            resolved.approval_discussion_category,
+            DEFAULT_APPROVAL_DISCUSSION_CATEGORY
+        );
+    }
+
+    #[test]
+    fn test_release_config_is_configured() {
+        let empty = ReleaseConfig::default();
+        assert!(!empty.is_configured());
+
+        let configured = ReleaseConfig::new(Some("Announcements".to_string()), None, None, None);
+        assert!(configured.is_configured());
+    }
+
+    // =============================================================================
+    // ResolvedReleaseConfig tests
+    // =============================================================================
+
+    #[test]
+    fn test_is_active_branch() {
+        let config = ResolvedReleaseConfig {
+            approval_discussion_category: "Announcements".to_string(),
+            active_branches: vec!["release/1.x".to_string(), "release/2.x".to_string()],
+            voting_window_days: 2,
+            stale_threshold_days: 7,
+        };
+
+        assert!(config.is_active_branch("release/1.x"));
+        assert!(config.is_active_branch("release/2.x"));
+        assert!(!config.is_active_branch("main"));
+        assert!(!config.is_active_branch("develop"));
+    }
+
+    #[test]
+    fn test_is_backport_active() {
+        let with_branches = ResolvedReleaseConfig {
+            approval_discussion_category: "Announcements".to_string(),
+            active_branches: vec!["release/1.x".to_string()],
+            voting_window_days: 2,
+            stale_threshold_days: 7,
+        };
+        assert!(with_branches.is_backport_active());
+
+        let empty_branches = ResolvedReleaseConfig {
+            approval_discussion_category: "Announcements".to_string(),
+            active_branches: vec![],
+            voting_window_days: 2,
+            stale_threshold_days: 7,
+        };
+        assert!(!empty_branches.is_backport_active());
+    }
+
+    #[test]
+    fn test_is_stale_after_days() {
+        let config = ResolvedReleaseConfig {
+            approval_discussion_category: "Announcements".to_string(),
+            active_branches: vec!["release/1.x".to_string()],
+            voting_window_days: 2,
+            stale_threshold_days: 7,
+        };
+
+        assert!(!config.is_stale_after_days(0));
+        assert!(!config.is_stale_after_days(5));
+        assert!(!config.is_stale_after_days(7));
+        assert!(config.is_stale_after_days(8));
+        assert!(config.is_stale_after_days(30));
+    }
+
+    #[test]
+    fn test_should_nudge_after_days() {
+        let config = ResolvedReleaseConfig {
+            approval_discussion_category: "Announcements".to_string(),
+            active_branches: vec!["release/1.x".to_string()],
+            voting_window_days: 2,
+            stale_threshold_days: 7,
+        };
+
+        // Before voting window: no nudge
+        assert!(!config.should_nudge_after_days(0));
+        assert!(!config.should_nudge_after_days(1));
+        // At voting window boundary: no nudge (must be > voting_window)
+        assert!(!config.should_nudge_after_days(2));
+        // Past voting window but not stale: nudge
+        assert!(config.should_nudge_after_days(3));
+        assert!(config.should_nudge_after_days(6));
+        // At stale threshold: not stale yet (must be > stale_threshold)
+        assert!(!config.is_stale_after_days(7));
+        assert!(config.should_nudge_after_days(7));
+        // Past stale threshold: stale, not nudged
+        assert!(config.is_stale_after_days(8));
+        assert!(!config.should_nudge_after_days(8));
+    }
+
+    // =============================================================================
+    // validate_and_defaults tests
+    // =============================================================================
+
+    #[test]
+    fn test_validate_and_defaults_valid() {
+        let config = ReleaseConfig::new(
+            Some("Announcements".to_string()),
+            Some(vec!["release/1.x".to_string()]),
+            Some(3),
+            Some(10),
+        );
+        let result = config.validate_and_defaults();
+        assert!(result.is_ok());
+        let resolved = result.unwrap();
+        assert_eq!(resolved.voting_window_days, 3);
+        assert_eq!(resolved.stale_threshold_days, 10);
+    }
+
+    #[test]
+    fn test_validate_and_defaults_negative_voting_window() {
+        let config = ReleaseConfig::new(None, None, Some(-1), None);
+        let result = config.validate_and_defaults();
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("voting_window_days"));
+        assert!(errors[0].contains("non-negative"));
+    }
+
+    #[test]
+    fn test_validate_and_defaults_negative_stale_threshold() {
+        let config = ReleaseConfig::new(None, None, None, Some(-5));
+        let result = config.validate_and_defaults();
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("stale_threshold_days"));
+    }
+
+    #[test]
+    fn test_validate_and_defaults_both_negative() {
+        let config = ReleaseConfig::new(None, None, Some(-1), Some(-1));
+        let result = config.validate_and_defaults();
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert_eq!(errors.len(), 2);
+    }
+
+    #[test]
+    fn test_validate_and_defaults_zero_days_ok() {
+        // Zero is valid (non-negative)
+        let config = ReleaseConfig::new(None, None, Some(0), Some(0));
+        let result = config.validate_and_defaults();
+        assert!(result.is_ok());
+        let resolved = result.unwrap();
+        assert_eq!(resolved.voting_window_days, 0);
+        assert_eq!(resolved.stale_threshold_days, 0);
+    }
+
+    #[test]
+    fn test_validate_and_defaults_empty_branches_warns() {
+        // Empty branches should still succeed (with a warning logged)
+        let config = ReleaseConfig::new(None, Some(vec![]), None, None);
+        let result = config.validate_and_defaults();
+        assert!(result.is_ok());
+        assert!(result.unwrap().active_branches.is_empty());
+    }
+
+    #[test]
+    fn test_validate_and_defaults_all_defaults_applied() {
+        let config = ReleaseConfig::default();
+        let resolved = config.validate_and_defaults().unwrap();
+        assert_eq!(
+            resolved.approval_discussion_category,
+            DEFAULT_APPROVAL_DISCUSSION_CATEGORY
+        );
+        assert!(resolved.active_branches.is_empty());
+        assert_eq!(resolved.voting_window_days, DEFAULT_VOTING_WINDOW_DAYS);
+        assert_eq!(resolved.stale_threshold_days, DEFAULT_STALE_THRESHOLD_DAYS);
+    }
+
+    // =============================================================================
+    // load_release_config_from_yaml tests
+    // =============================================================================
+
+    #[test]
+    fn test_load_release_config_from_yaml_with_release_section() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.yaml");
+
+        let content = r#"
+github:
+  owner: test
+  repo: test
+release:
+  approval_discussion_category: "Security Advisories"
+  active_branches:
+    - release/1.x
+    - release/2.x
+  voting_window_days: 3
+  stale_threshold_days: 10
+"#;
+        std::fs::write(&config_path, content).unwrap();
+
+        let config = load_release_config_from_yaml(&config_path).unwrap();
+        assert_eq!(
+            config.approval_discussion_category,
+            Some("Security Advisories".to_string())
+        );
+        assert_eq!(config.active_branches.as_ref().unwrap().len(), 2);
+        assert_eq!(config.voting_window_days, Some(3));
+        assert_eq!(config.stale_threshold_days, Some(10));
+    }
+
+    #[test]
+    fn test_load_release_config_from_yaml_no_release_section() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.yaml");
+
+        let content = r#"
+github:
+  owner: test
+  repo: test
+llm:
+  model: gpt-4
+"#;
+        std::fs::write(&config_path, content).unwrap();
+
+        let config = load_release_config_from_yaml(&config_path).unwrap();
+        assert_eq!(config, ReleaseConfig::default());
+    }
+
+    #[test]
+    fn test_load_release_config_from_yaml_missing_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("nonexistent.yaml");
+        let result = load_release_config_from_yaml(&config_path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("No such file"));
+    }
+
+    #[test]
+    fn test_load_release_config_from_yaml_invalid_yaml() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("config.yaml");
+
+        let content = "{ invalid: yaml: [";
+        std::fs::write(&config_path, content).unwrap();
+
+        let result = load_release_config_from_yaml(&config_path);
+        assert!(result.is_err());
+    }
+
+    // =============================================================================
+    // load_release_config_with_env tests
+    // =============================================================================
+
+    fn save_env_var(key: &str) -> Option<String> {
+        std::env::var(key).ok()
+    }
+
+    fn restore_env_var(key: &str, original: Option<&str>) {
+        match original {
+            Some(v) => unsafe { std::env::set_var(key, v) },
+            None => unsafe { std::env::remove_var(key) },
+>>>>>>> c658d26 (rogers-p9l: config-driven release schedule and branches)
         }
     }
 }
