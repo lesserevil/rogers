@@ -1157,7 +1157,13 @@ impl GitHubClient {
     // ---- Merged Pull Requests ----
 
     /// Build the API URL for listing pull requests.
-    fn pull_requests_url(&self, base_branch: &str, state: &str, sort: &str, direction: &str) -> String {
+    fn pull_requests_url(
+        &self,
+        base_branch: &str,
+        state: &str,
+        sort: &str,
+        direction: &str,
+    ) -> String {
         format!(
             "{}/repos/{}/{}/pulls?base={}&state={}&sort={}&direction={}&per_page=100",
             self.api_base, self.owner, self.repo, base_branch, state, sort, direction
@@ -1195,8 +1201,10 @@ impl GitHubClient {
             let is_last_page = prs.len() < 100;
 
             // Filter to only merged PRs
-            let merged: Vec<MergedPR> =
-                prs.into_iter().filter(|p| p.merge_commit_sha.is_some()).collect();
+            let merged: Vec<MergedPR> = prs
+                .into_iter()
+                .filter(|p| p.merge_commit_sha.is_some())
+                .collect();
 
             all_prs.extend(merged);
 
@@ -1288,7 +1296,10 @@ impl GitHubClient {
                     if check.status == "completed" {
                         // A completed check with a failure conclusion means CI is red
                         if let Some(ref conclusion) = check.conclusion {
-                            if conclusion == "failure" || conclusion == "timed_out" || conclusion == "startup_failure" {
+                            if conclusion == "failure"
+                                || conclusion == "timed_out"
+                                || conclusion == "startup_failure"
+                            {
                                 return Ok(false);
                             }
                         }

@@ -18,12 +18,14 @@
 
 pub mod backport_trigger;
 pub mod bead;
+pub mod branch;
 pub mod changelog;
 pub mod config;
 pub mod detector;
 pub mod execution;
 pub mod manager;
 pub mod proposal;
+pub mod tag;
 
 pub use backport_trigger::{
     BackportConfig, BackportDetectionResult, BackportTriggerEvent, build_approval_discussion_body,
@@ -33,6 +35,9 @@ pub use backport_trigger::{
 pub use bead::{
     ReleaseBeadMetadata, build_release_bead_request, build_release_bead_start,
     build_release_bead_with_url, update_release_bead_for_github_release,
+};
+pub use branch::{
+    ReleaseBranchConfig, ReleaseBranchResult, create_branch, determine_source_branch,
 };
 pub use changelog::{
     ChangelogConfig, ConventionalCommitType, GroupedPRs, ParsedCommit, PullRequest,
@@ -44,3 +49,7 @@ pub use detector::{
 pub use execution::{ReleaseExecutionError, ReleaseExecutor, ReleaseResult};
 pub use manager::{PendingApproval, ReleaseManager, ReleaseRunResult, ReleaseState};
 pub use proposal::{ApprovalResult, ReleaseApproval, ReleaseProposalManager};
+pub use tag::{
+    TagConfig, TagResult, build_release_message, build_release_message_with_changelog, create_tag,
+    create_tag_local,
+};
