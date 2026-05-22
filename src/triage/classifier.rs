@@ -175,7 +175,10 @@ impl Classifier {
     }
 
     /// Check completeness of an already-classified issue.
-    pub async fn check_completeness(&self, issue: &Issue) -> crate::error::Result<ClassificationResult> {
+    pub async fn check_completeness(
+        &self,
+        issue: &Issue,
+    ) -> crate::error::Result<ClassificationResult> {
         let metadata = Self::issue_to_metadata(issue);
         let prompt = ClassificationPrompt::for_completeness_check(&metadata);
 
@@ -247,7 +250,10 @@ impl Classifier {
     }
 
     /// Validate and parse LLM classification output.
-    fn validate_and_parse_classification(&self, content: &str) -> crate::error::Result<ClassificationResult> {
+    fn validate_and_parse_classification(
+        &self,
+        content: &str,
+    ) -> crate::error::Result<ClassificationResult> {
         let json_str = Self::extract_json(content);
 
         match self.validator.validate_classification(&json_str) {

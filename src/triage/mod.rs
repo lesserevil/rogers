@@ -18,23 +18,23 @@ pub mod state_machine;
 pub mod triage_loop;
 
 pub use classifier::{
-    ClassificationMethod, Classifier, ClassifiedIssue, Confidence, IssueType, LlmClassificationResult,
-    PreCheckResult, TriageClassification, classify_by_labels, classify_issue,
-    classify_issue as classify, default_llm_classifier, is_bot_author, issue_type_to_workflow,
-    pre_check_classification, resolve_conflicting_labels, validate_classification,
+    classify_by_labels, classify_issue, classify_issue as classify, default_llm_classifier,
+    is_bot_author, issue_type_to_workflow, pre_check_classification, resolve_conflicting_labels,
+    validate_classification, ClassificationMethod, ClassifiedIssue, Classifier, Confidence,
+    IssueType, LlmClassificationResult, PreCheckResult, TriageClassification,
 };
 pub use engine::TriageEngine;
-pub use priority::{Priority, PriorityAssessment, assess_priority, llm_assess_priority};
-pub use router::{FeatureIssue, RouteResult, route_feature, route_feature_batch};
+pub use priority::{assess_priority, llm_assess_priority, Priority, PriorityAssessment};
+pub use router::{route_feature, route_feature_batch, FeatureIssue, RouteResult};
 
 pub use scheduler::{
-    DEFAULT_INTERVAL_MINUTES, RetryPolicy, RunLock, RunMetadata, RunTrigger, SchedulerConfig,
-    TriageScheduler, TriagedState, WebhookEvent, run_once,
+    run_once, RetryPolicy, RunLock, RunMetadata, RunTrigger, SchedulerConfig, TriageScheduler,
+    TriagedState, WebhookEvent, DEFAULT_INTERVAL_MINUTES,
 };
 pub use state_machine::{TransitionError, TriageState, TriageStateMachine};
 pub use triage_loop::{
-    IssueState, LABEL_TRIAGED, TriageAction, TriageIssue, TriageResult, has_triaged_label,
-    process_issue, process_issues_batch,
+    has_triaged_label, process_issue, process_issues_batch, IssueState, TriageAction, TriageIssue,
+    TriageResult, LABEL_TRIAGED,
 };
 
 /// Label constants for triage operations.

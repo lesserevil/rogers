@@ -17,8 +17,8 @@ use crate::feature_bug::will_not_do::{
     generate_warm_closure_comment, has_will_not_do_label, resolve_issue_type,
 };
 use crate::feature_bug::{
-    FeatureBugIssue, TransitionSummary, check_bug_completeness, check_feature_completeness,
-    execute_breakdown,
+    check_bug_completeness, check_feature_completeness, execute_breakdown, FeatureBugIssue,
+    TransitionSummary,
 };
 use crate::question_router::route_question_issue;
 use crate::triage::router::route_feature;
@@ -145,7 +145,6 @@ pub fn process_issue(issue: &TriageIssue) -> TriageResult {
     if is_question {
         return process_question_issue(issue);
     }
-
 
     // Check if this is a bug or feature issue
     let is_bug = issue.labels.iter().any(|l| l == LABEL_BUG);
@@ -411,11 +410,9 @@ OS: Linux
 
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedReadyForReview);
-        assert!(
-            result
-                .labels_to_add
-                .contains(&"ready-for-review".to_string())
-        );
+        assert!(result
+            .labels_to_add
+            .contains(&"ready-for-review".to_string()));
         assert!(result.comment_to_post.is_some());
     }
 
@@ -439,11 +436,9 @@ It should do X.
 
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedReadyForReview);
-        assert!(
-            result
-                .labels_to_add
-                .contains(&"ready-for-review".to_string())
-        );
+        assert!(result
+            .labels_to_add
+            .contains(&"ready-for-review".to_string()));
     }
 
     #[test]
@@ -460,19 +455,15 @@ It does not work.
 
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedNeedsInformation);
-        assert!(
-            result
-                .labels_to_add
-                .contains(&"needs-information".to_string())
-        );
+        assert!(result
+            .labels_to_add
+            .contains(&"needs-information".to_string()));
         assert!(result.comment_to_post.is_some());
-        assert!(
-            result
-                .comment_to_post
-                .as_ref()
-                .unwrap()
-                .contains("Reproduction steps")
-        );
+        assert!(result
+            .comment_to_post
+            .as_ref()
+            .unwrap()
+            .contains("Reproduction steps"));
     }
 
     #[test]
@@ -669,11 +660,9 @@ macOS
 
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedReadyForReview);
-        assert!(
-            result
-                .labels_to_remove
-                .contains(&"needs-information".to_string())
-        );
+        assert!(result
+            .labels_to_remove
+            .contains(&"needs-information".to_string()));
     }
 
     #[test]
@@ -796,11 +785,9 @@ The system should generate new API keys monthly and notify users.
 
         let result = process_issue(&issue);
 
-        assert!(
-            result
-                .labels_to_remove
-                .contains(&"ready-for-review".to_string())
-        );
+        assert!(result
+            .labels_to_remove
+            .contains(&"ready-for-review".to_string()));
     }
 
     #[test]
@@ -919,11 +906,9 @@ The system should generate new API keys monthly and notify users.
 
         // Will-not-do should already be on the issue
         // Ready-for-review label to remove identified
-        assert!(
-            result
-                .labels_to_remove
-                .contains(&"ready-for-review".to_string())
-        );
+        assert!(result
+            .labels_to_remove
+            .contains(&"ready-for-review".to_string()));
         // Triaged label is applied for idempotency
         assert!(result.labels_to_add.contains(&LABEL_TRIAGED.to_string()));
     }
@@ -1108,16 +1093,12 @@ The application should respond correctly
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedNeedsInformation);
         // Does NOT apply ready-for-review
-        assert!(
-            !result
-                .labels_to_add
-                .contains(&"ready-for-review".to_string())
-        );
-        assert!(
-            result
-                .labels_to_add
-                .contains(&"needs-information".to_string())
-        );
+        assert!(!result
+            .labels_to_add
+            .contains(&"ready-for-review".to_string()));
+        assert!(result
+            .labels_to_add
+            .contains(&"needs-information".to_string()));
     }
 
     #[test]
@@ -1141,11 +1122,9 @@ The app crashes on startup
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedNeedsInformation);
         // Does NOT apply ready-for-review
-        assert!(
-            !result
-                .labels_to_add
-                .contains(&"ready-for-review".to_string())
-        );
+        assert!(!result
+            .labels_to_add
+            .contains(&"ready-for-review".to_string()));
     }
 
     #[test]
@@ -1168,11 +1147,9 @@ The button should work
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedNeedsInformation);
         // Does NOT apply ready-for-review
-        assert!(
-            !result
-                .labels_to_add
-                .contains(&"ready-for-review".to_string())
-        );
+        assert!(!result
+            .labels_to_add
+            .contains(&"ready-for-review".to_string()));
     }
 
     #[test]
@@ -1196,11 +1173,9 @@ No error message
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedNeedsInformation);
         // Does NOT apply ready-for-review
-        assert!(
-            !result
-                .labels_to_add
-                .contains(&"ready-for-review".to_string())
-        );
+        assert!(!result
+            .labels_to_add
+            .contains(&"ready-for-review".to_string()));
     }
 
     // Unit tests: Feature missing 1 field → needs-information, not ready-for-review
@@ -1222,16 +1197,12 @@ The feature should export data to CSV
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedNeedsInformation);
         // Does NOT apply ready-for-review
-        assert!(
-            !result
-                .labels_to_add
-                .contains(&"ready-for-review".to_string())
-        );
-        assert!(
-            result
-                .labels_to_add
-                .contains(&"needs-information".to_string())
-        );
+        assert!(!result
+            .labels_to_add
+            .contains(&"ready-for-review".to_string()));
+        assert!(result
+            .labels_to_add
+            .contains(&"needs-information".to_string()));
     }
 
     #[test]
@@ -1251,11 +1222,9 @@ I need to export data for analysis
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedNeedsInformation);
         // Does NOT apply ready-for-review
-        assert!(
-            !result
-                .labels_to_add
-                .contains(&"ready-for-review".to_string())
-        );
+        assert!(!result
+            .labels_to_add
+            .contains(&"ready-for-review".to_string()));
     }
 
     #[test]
@@ -1274,11 +1243,9 @@ Drag and drop cards between columns
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedNeedsInformation);
         // Does NOT apply ready-for-review
-        assert!(
-            !result
-                .labels_to_add
-                .contains(&"ready-for-review".to_string())
-        );
+        assert!(!result
+            .labels_to_add
+            .contains(&"ready-for-review".to_string()));
     }
 
     // Unit tests: All minimum present → ready-for-review allowed
@@ -1307,16 +1274,12 @@ App should save successfully
 
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedReadyForReview);
-        assert!(
-            result
-                .labels_to_add
-                .contains(&"ready-for-review".to_string())
-        );
-        assert!(
-            !result
-                .labels_to_add
-                .contains(&"needs-information".to_string())
-        );
+        assert!(result
+            .labels_to_add
+            .contains(&"ready-for-review".to_string()));
+        assert!(!result
+            .labels_to_add
+            .contains(&"needs-information".to_string()));
     }
 
     #[test]
@@ -1339,16 +1302,12 @@ Clicking export generates a PDF file
 
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedReadyForReview);
-        assert!(
-            result
-                .labels_to_add
-                .contains(&"ready-for-review".to_string())
-        );
-        assert!(
-            !result
-                .labels_to_add
-                .contains(&"needs-information".to_string())
-        );
+        assert!(result
+            .labels_to_add
+            .contains(&"ready-for-review".to_string()));
+        assert!(!result
+            .labels_to_add
+            .contains(&"needs-information".to_string()));
     }
 
     // Unit test: Template-filed complete → ready-for-review
@@ -1378,11 +1337,9 @@ Valid form submissions should be accepted
 
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedReadyForReview);
-        assert!(
-            result
-                .labels_to_add
-                .contains(&"ready-for-review".to_string())
-        );
+        assert!(result
+            .labels_to_add
+            .contains(&"ready-for-review".to_string()));
     }
 
     #[test]
@@ -1406,11 +1363,9 @@ Checkbox selection with "Delete Selected" button
 
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedReadyForReview);
-        assert!(
-            result
-                .labels_to_add
-                .contains(&"ready-for-review".to_string())
-        );
+        assert!(result
+            .labels_to_add
+            .contains(&"ready-for-review".to_string()));
     }
 
     // Unit test: Freeform complete → ready-for-review
@@ -1437,11 +1392,9 @@ Checkbox selection with "Delete Selected" button
 
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedReadyForReview);
-        assert!(
-            result
-                .labels_to_add
-                .contains(&"ready-for-review".to_string())
-        );
+        assert!(result
+            .labels_to_add
+            .contains(&"ready-for-review".to_string()));
     }
 
     #[test]
@@ -1464,11 +1417,9 @@ When clicking the export button, the system should generate a PDF file
 
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedReadyForReview);
-        assert!(
-            result
-                .labels_to_add
-                .contains(&"ready-for-review".to_string())
-        );
+        assert!(result
+            .labels_to_add
+            .contains(&"ready-for-review".to_string()));
     }
 
     // Integration test: Incomplete issues never reach ready-for-review
@@ -1619,11 +1570,9 @@ TBD
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedNeedsInformation);
         // Does NOT apply ready-for-review - fields without proper patterns are missing
-        assert!(
-            !result
-                .labels_to_add
-                .contains(&"ready-for-review".to_string())
-        );
+        assert!(!result
+            .labels_to_add
+            .contains(&"ready-for-review".to_string()));
     }
 
     #[test]
@@ -1650,11 +1599,9 @@ N/A - Race condition that cannot be reliably reproduced in test environment
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedReadyForReview);
         // N/A with justification is acceptable - bug can be complete
-        assert!(
-            result
-                .labels_to_add
-                .contains(&"ready-for-review".to_string())
-        );
+        assert!(result
+            .labels_to_add
+            .contains(&"ready-for-review".to_string()));
     }
 
     // Hard block verification: system always enforces (no human override)
@@ -1727,11 +1674,9 @@ Issue only
 
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedNeedsInformation);
-        assert!(
-            result
-                .labels_to_add
-                .contains(&"needs-information".to_string())
-        );
+        assert!(result
+            .labels_to_add
+            .contains(&"needs-information".to_string()));
 
         // The guard is enforced by the triage workflow:
         // - Incomplete → needs-information (block)
@@ -1767,11 +1712,9 @@ Login succeeds within 5 seconds
 
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedReadyForReview);
-        assert!(
-            result
-                .labels_to_add
-                .contains(&"ready-for-review".to_string())
-        );
+        assert!(result
+            .labels_to_add
+            .contains(&"ready-for-review".to_string()));
     }
 
     #[test]
@@ -1958,11 +1901,9 @@ It does not work.
         assert!(result.processed);
         assert_eq!(result.action, TriageAction::AppliedNeedsInformation);
         assert!(result.labels_to_add.contains(&LABEL_TRIAGED.to_string()));
-        assert!(
-            result
-                .labels_to_add
-                .contains(&"needs-information".to_string())
-        );
+        assert!(result
+            .labels_to_add
+            .contains(&"needs-information".to_string()));
     }
 
     #[test]
@@ -2119,11 +2060,9 @@ Feature works
         // First issue: processed and triaged
         assert!(results[0].processed);
         assert_eq!(results[0].action, TriageAction::AppliedReadyForReview);
-        assert!(
-            results[0]
-                .labels_to_add
-                .contains(&LABEL_TRIAGED.to_string())
-        );
+        assert!(results[0]
+            .labels_to_add
+            .contains(&LABEL_TRIAGED.to_string()));
 
         // Second issue: skipped (already triaged)
         assert!(!results[1].processed);
@@ -2132,11 +2071,9 @@ Feature works
         // Third issue: processed and triaged
         assert!(results[2].processed);
         assert_eq!(results[2].action, TriageAction::AppliedReadyForReview);
-        assert!(
-            results[2]
-                .labels_to_add
-                .contains(&LABEL_TRIAGED.to_string())
-        );
+        assert!(results[2]
+            .labels_to_add
+            .contains(&LABEL_TRIAGED.to_string()));
     }
 
     // =============================================================================
@@ -2379,11 +2316,9 @@ Linux
 
         // Question → routed to question workflow
         assert_eq!(results[1].action, TriageAction::QuestionRouted);
-        assert!(
-            results[1]
-                .labels_to_add
-                .contains(&"rodgers:question".to_string())
-        );
+        assert!(results[1]
+            .labels_to_add
+            .contains(&"rodgers:question".to_string()));
 
         // Feature → ready-for-review
         assert_eq!(results[2].action, TriageAction::AppliedReadyForReview);
@@ -2532,4 +2467,5 @@ Linux
             result.labels_to_add.contains(&LABEL_TRIAGED.to_string()),
             "Question issue must get rodgers:triaged label for idempotency"
         );
-    }}
+    }
+}

@@ -392,16 +392,12 @@ mod tests {
 
         assert!(result.routed);
         assert_eq!(result.action, QuestionRouteAction::NeedsClarification);
-        assert!(
-            result
-                .labels_to_add
-                .contains(&LABEL_RODGERS_QUESTION.to_string())
-        );
-        assert!(
-            result
-                .labels_to_add
-                .contains(&LABEL_NEEDS_INFORMATION.to_string())
-        );
+        assert!(result
+            .labels_to_add
+            .contains(&LABEL_RODGERS_QUESTION.to_string()));
+        assert!(result
+            .labels_to_add
+            .contains(&LABEL_NEEDS_INFORMATION.to_string()));
         assert!(result.comment_to_post.is_some());
         assert!(!result.close_issue);
     }
@@ -418,11 +414,9 @@ mod tests {
 
         assert!(result.routed);
         assert_eq!(result.action, QuestionRouteAction::AnsweredViaDocumentation);
-        assert!(
-            result
-                .labels_to_add
-                .contains(&LABEL_RODGERS_QUESTION.to_string())
-        );
+        assert!(result
+            .labels_to_add
+            .contains(&LABEL_RODGERS_QUESTION.to_string()));
         assert!(result.comment_to_post.is_some());
     }
 
@@ -438,11 +432,9 @@ mod tests {
 
         assert!(result.routed);
         assert_eq!(result.action, QuestionRouteAction::AnsweredViaCodeSearch);
-        assert!(
-            result
-                .labels_to_add
-                .contains(&LABEL_RODGERS_QUESTION.to_string())
-        );
+        assert!(result
+            .labels_to_add
+            .contains(&LABEL_RODGERS_QUESTION.to_string()));
         assert!(result.comment_to_post.is_some());
     }
 
@@ -458,16 +450,12 @@ mod tests {
 
         assert!(result.routed);
         assert_eq!(result.action, QuestionRouteAction::FiledDocumentationGap);
-        assert!(
-            result
-                .labels_to_add
-                .contains(&LABEL_RODGERS_QUESTION.to_string())
-        );
-        assert!(
-            result
-                .labels_to_add
-                .contains(&LABEL_NEEDS_DOCUMENTATION.to_string())
-        );
+        assert!(result
+            .labels_to_add
+            .contains(&LABEL_RODGERS_QUESTION.to_string()));
+        assert!(result
+            .labels_to_add
+            .contains(&LABEL_NEEDS_DOCUMENTATION.to_string()));
         assert!(result.comment_to_post.is_some());
     }
 

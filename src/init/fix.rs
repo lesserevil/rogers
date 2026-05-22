@@ -727,10 +727,9 @@ mod tests {
             voting_window_days: None,
             stale_threshold_days: None,
         };
-        let result =
-            ensure_discussion_category(&client, "test-owner", "test-repo", Some(&config))
-                .await
-                .unwrap();
+        let result = ensure_discussion_category(&client, "test-owner", "test-repo", Some(&config))
+            .await
+            .unwrap();
 
         assert_eq!(result.created, vec!["Custom Proposals".to_string()]);
         assert!(result.skipped.is_empty());
@@ -771,10 +770,9 @@ mod tests {
         let client = make_client(&server);
         let config = ReleaseConfig::default();
         // Default is "Release Proposals" per config schema default.
-        let result =
-            ensure_discussion_category(&client, "test-owner", "test-repo", Some(&config))
-                .await
-                .unwrap();
+        let result = ensure_discussion_category(&client, "test-owner", "test-repo", Some(&config))
+            .await
+            .unwrap();
 
         assert_eq!(result.created, vec!["Release Proposals".to_string()]);
     }

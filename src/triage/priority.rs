@@ -318,11 +318,9 @@ mod tests {
             &[],
         );
         assert_eq!(assessment.priority, Priority::P1);
-        assert!(
-            assessment
-                .matched_keywords
-                .contains(&"critical".to_string())
-        );
+        assert!(assessment
+            .matched_keywords
+            .contains(&"critical".to_string()));
     }
 
     #[test]
@@ -344,11 +342,9 @@ mod tests {
             &[],
         );
         assert_eq!(assessment.priority, Priority::P2);
-        assert!(
-            assessment
-                .matched_keywords
-                .contains(&"important".to_string())
-        );
+        assert!(assessment
+            .matched_keywords
+            .contains(&"important".to_string()));
     }
 
     #[test]
@@ -359,11 +355,9 @@ mod tests {
             &[],
         );
         assert_eq!(assessment.priority, Priority::P2);
-        assert!(
-            assessment
-                .matched_keywords
-                .contains(&"high value".to_string())
-        );
+        assert!(assessment
+            .matched_keywords
+            .contains(&"high value".to_string()));
     }
 
     #[test]
@@ -385,11 +379,9 @@ mod tests {
             &[],
         );
         assert_eq!(assessment.priority, Priority::P3);
-        assert!(
-            assessment
-                .matched_keywords
-                .contains(&"nice to have".to_string())
-        );
+        assert!(assessment
+            .matched_keywords
+            .contains(&"nice to have".to_string()));
     }
 
     #[test]
@@ -400,11 +392,9 @@ mod tests {
             &[],
         );
         assert_eq!(assessment.priority, Priority::P4);
-        assert!(
-            assessment
-                .matched_keywords
-                .contains(&"low priority".to_string())
-        );
+        assert!(assessment
+            .matched_keywords
+            .contains(&"low priority".to_string()));
     }
 
     #[test]
@@ -457,11 +447,9 @@ mod tests {
             &[],
         );
         assert_eq!(assessment.priority, Priority::P1);
-        assert!(
-            assessment
-                .matched_keywords
-                .contains(&"critical".to_string())
-        );
+        assert!(assessment
+            .matched_keywords
+            .contains(&"critical".to_string()));
         assert!(assessment.matched_keywords.contains(&"urgent".to_string()));
     }
 
@@ -595,11 +583,9 @@ mod tests {
 
         assert_eq!(assessment.priority, Priority::P2);
         assert_eq!(assessment.method, "keyword");
-        assert!(
-            assessment
-                .matched_keywords
-                .contains(&"important".to_string())
-        );
+        assert!(assessment
+            .matched_keywords
+            .contains(&"important".to_string()));
     }
 
     #[test]
@@ -625,11 +611,9 @@ mod tests {
 
         assert_eq!(assessment.priority, Priority::P1);
         // Should contain all matched keywords
-        assert!(
-            assessment
-                .matched_keywords
-                .contains(&"critical".to_string())
-        );
+        assert!(assessment
+            .matched_keywords
+            .contains(&"critical".to_string()));
         assert!(assessment.matched_keywords.contains(&"urgent".to_string()));
         // "important" should NOT be included since P1 takes precedence
     }

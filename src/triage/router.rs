@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::priority::{Priority, PriorityAssessment, assess_priority, llm_assess_priority};
+use super::priority::{assess_priority, llm_assess_priority, Priority, PriorityAssessment};
 
 /// Label that marks a feature issue routed to the feature-bug workflow.
 pub const LABEL_RODGERS_FEATURE: &str = "rodgers:feature";
@@ -302,11 +302,9 @@ mod tests {
         assert!(result.routed);
         let feature = result.routed_feature.unwrap();
         assert_eq!(feature.priority.priority, Priority::P1);
-        assert!(
-            feature
-                .labels_to_add
-                .contains(&priority_label(&Priority::P1))
-        );
+        assert!(feature
+            .labels_to_add
+            .contains(&priority_label(&Priority::P1)));
     }
 
     #[test]
@@ -329,11 +327,9 @@ mod tests {
         assert!(result.routed);
         let feature = result.routed_feature.unwrap();
         assert_eq!(feature.priority.priority, Priority::P2);
-        assert!(
-            feature
-                .labels_to_add
-                .contains(&priority_label(&Priority::P2))
-        );
+        assert!(feature
+            .labels_to_add
+            .contains(&priority_label(&Priority::P2)));
     }
 
     #[test]
@@ -356,11 +352,9 @@ mod tests {
         assert!(result.routed);
         let feature = result.routed_feature.unwrap();
         assert_eq!(feature.priority.priority, Priority::P3);
-        assert!(
-            feature
-                .labels_to_add
-                .contains(&priority_label(&Priority::P3))
-        );
+        assert!(feature
+            .labels_to_add
+            .contains(&priority_label(&Priority::P3)));
     }
 
     #[test]
@@ -384,11 +378,9 @@ mod tests {
         let feature = result.routed_feature.unwrap();
         assert_eq!(feature.priority.priority, Priority::P3);
         // "nice to have" maps to P3, not P4
-        assert!(
-            feature
-                .labels_to_add
-                .contains(&priority_label(&Priority::P3))
-        );
+        assert!(feature
+            .labels_to_add
+            .contains(&priority_label(&Priority::P3)));
     }
 
     #[test]
@@ -546,18 +538,14 @@ mod tests {
 
         let feature = result.routed_feature.unwrap();
         // Should have rodgers:feature label
-        assert!(
-            feature
-                .labels_to_add
-                .contains(&LABEL_RODGERS_FEATURE.to_string())
-        );
+        assert!(feature
+            .labels_to_add
+            .contains(&LABEL_RODGERS_FEATURE.to_string()));
         // Should have priority label
-        assert!(
-            feature
-                .labels_to_add
-                .iter()
-                .any(|l| l.starts_with("priority:"))
-        );
+        assert!(feature
+            .labels_to_add
+            .iter()
+            .any(|l| l.starts_with("priority:")));
         // Should have priority metadata
         assert!(matches!(
             feature.priority.priority,
@@ -589,26 +577,20 @@ mod tests {
         assert_eq!(feature.priority.priority, Priority::P1);
         assert_eq!(feature.priority.method, "keyword");
         assert!(!feature.priority.human_set);
-        assert!(
-            feature
-                .priority
-                .matched_keywords
-                .contains(&"critical".to_string())
-        );
-        assert!(
-            feature
-                .priority
-                .matched_keywords
-                .contains(&"urgent".to_string())
-        );
+        assert!(feature
+            .priority
+            .matched_keywords
+            .contains(&"critical".to_string()));
+        assert!(feature
+            .priority
+            .matched_keywords
+            .contains(&"urgent".to_string()));
         assert_eq!(feature.issue_number, 13);
 
         // Verify labels
-        assert!(
-            feature
-                .labels_to_add
-                .contains(&LABEL_RODGERS_FEATURE.to_string())
-        );
+        assert!(feature
+            .labels_to_add
+            .contains(&LABEL_RODGERS_FEATURE.to_string()));
         assert!(feature.labels_to_add.contains(&"priority:p1".to_string()));
     }
 
@@ -887,17 +869,13 @@ mod tests {
 
         // Should have exactly: rodgers:feature + priority label
         assert_eq!(result.labels_to_add.len(), 2);
-        assert!(
-            result
-                .labels_to_add
-                .contains(&"rodgers:feature".to_string())
-        );
-        assert!(
-            result
-                .labels_to_add
-                .iter()
-                .any(|l| l.starts_with("priority:"))
-        );
+        assert!(result
+            .labels_to_add
+            .contains(&"rodgers:feature".to_string()));
+        assert!(result
+            .labels_to_add
+            .iter()
+            .any(|l| l.starts_with("priority:")));
     }
 
     #[test]
