@@ -3,8 +3,8 @@
 //! Centralizes all GitHub API calls, authentication, rate limit handling,
 //! and error mapping for the Rodgers init audit system.
 
-use reqwest::Client;
 use reqwest::header;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -471,11 +471,12 @@ impl GitHubClient {
     fn next_page_url(&self, link_header: &str) -> Option<String> {
         for part in link_header.split(',') {
             let part = part.trim();
-            if part.contains("rel=\"next\"")
-                && let Some(start) = part.find('<')
-                && let Some(end) = part.find('>')
-            {
-                return Some(part[start + 1..end].to_string());
+            if part.contains("rel=\"next\"") {
+                if let Some(start) = part.find('<') {
+                    if let Some(end) = part.find('>') {
+                        return Some(part[start + 1..end].to_string());
+                    }
+                }
             }
         }
         None

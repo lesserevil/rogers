@@ -13,6 +13,7 @@
 pub mod beads;
 pub mod checks;
 pub mod cli;
+pub mod config;
 pub mod error;
 pub mod feature_bug;
 pub mod github;

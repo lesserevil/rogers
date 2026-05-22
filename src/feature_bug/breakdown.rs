@@ -48,7 +48,11 @@ impl BreakdownAnalyzer {
     ///
     /// Returns `Ok(Some(breakdown))` for epic-scale issues,
     /// `Ok(None)` for non-epic issues.
-    pub async fn analyze_epic(&self, issue: &Issue, domain_context: Option<&str>) -> Result<Option<EpicBreakdown>> {
+    pub async fn analyze_epic(
+        &self,
+        issue: &Issue,
+        domain_context: Option<&str>,
+    ) -> Result<Option<EpicBreakdown>> {
         let metadata = Self::issue_to_metadata(issue);
 
         // Check for orphan detection (issue in ready-for-work but no existing epic)
@@ -109,7 +113,11 @@ impl BreakdownAnalyzer {
                         plan_ref,
                     ),
                     scope: item.scope_description.clone(),
-                    priority: Self::infer_priority(issue_num, child_num, breakdown.sub_work_items.len()),
+                    priority: Self::infer_priority(
+                        issue_num,
+                        child_num,
+                        breakdown.sub_work_items.len(),
+                    ),
                 }
             })
             .collect()
@@ -146,10 +154,7 @@ This is part of the epic work tracked in the parent bead. Completing this child 
 **PROJECT-SPECIFIC TERMINOLOGY**
 - 'Standalone bead': A self-contained unit that can be implemented without consulting other beads or the epic description
 "#,
-            plan_ref,
-            issue.number,
-            issue.title,
-            scope
+            plan_ref, issue.number, issue.title, scope
         ))
     }
 
@@ -278,10 +283,7 @@ Consider the AGENTS.md rule: each child bead should be implementable by a naive 
     }
 
     /// Parse the epic assessment response from LLM.
-    fn parse_epic_assessment(
-        &self,
-        content: &str,
-    ) -> Result<EpicAssessmentResult> {
+    fn parse_epic_assessment(&self, content: &str) -> Result<EpicAssessmentResult> {
         // Extract JSON if wrapped in markdown
         let json_str = Self::extract_json(content);
 
@@ -439,7 +441,9 @@ impl BreakdownComment {
 
         body.push_str("\n---\n\n");
         body.push_str("### ⏳ Next Steps\n\n");
-        body.push_str("These child beads are currently **deferred** (not started). To begin work:\n\n");
+        body.push_str(
+            "These child beads are currently **deferred** (not started). To begin work:\n\n",
+        );
         body.push_str("1. Review the breakdown above\n");
         body.push_str("2. Modify any child bead OR add a comment to this issue\n");
         body.push_str("3. Rodgers will batch-open all child beads\n\n");

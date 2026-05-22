@@ -192,7 +192,7 @@ fn has_matching_branches_in_section(section: &str) -> bool {
         };
 
         let after_key = &remaining[idx + 9..]; // After "branches:"
-        // Make sure it's not `branches_something` (like branches_ignore)
+                                               // Make sure it's not `branches_something` (like branches_ignore)
         if after_key.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
             // Skip past this and search for next `branches:`
             remaining = &remaining[idx + 9..];
@@ -381,11 +381,9 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].severity, Severity::Warn);
-        assert!(
-            results[0]
-                .description
-                .contains("No GitHub Actions workflow files found")
-        );
+        assert!(results[0]
+            .description
+            .contains("No GitHub Actions workflow files found"));
         assert_eq!(results[0].fixability, Fixability::Manual);
     }
 
@@ -432,11 +430,9 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].severity, Severity::Warn);
-        assert!(
-            results[0]
-                .description
-                .contains("No CI workflow found for pull requests")
-        );
+        assert!(results[0]
+            .description
+            .contains("No CI workflow found for pull requests"));
         assert!(results[0].description.contains("Release"));
     }
 
@@ -815,11 +811,9 @@ mod tests {
         // PR on feature/staging only, not main/master/develop → Warn
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].severity, Severity::Warn);
-        assert!(
-            results[0]
-                .description
-                .contains("No CI workflow found for pull requests")
-        );
+        assert!(results[0]
+            .description
+            .contains("No CI workflow found for pull requests"));
     }
 
     /// Test: PR trigger with branches-ignore instead of branches → Info.
@@ -936,11 +930,9 @@ mod tests {
         // Should return Warn since only readable file has no PR trigger.
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].severity, Severity::Warn);
-        assert!(
-            results[0]
-                .description
-                .contains("No CI workflow found for pull requests")
-        );
+        assert!(results[0]
+            .description
+            .contains("No CI workflow found for pull requests"));
     }
 
     /// Test: `.yaml` extension workflows are recognized.
@@ -1129,11 +1121,9 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].severity, Severity::Warn);
-        assert!(
-            results[0]
-                .description
-                .contains("No CI workflow found for pull requests")
-        );
+        assert!(results[0]
+            .description
+            .contains("No CI workflow found for pull requests"));
     }
 
     // ─── Unit tests for detection helpers ──────────────────────────────

@@ -2,7 +2,7 @@
 //!
 //! The main triage engine that coordinates issue classification and state transitions.
 
-use crate::config::{Config, TriageConfig};
+use crate::config::schema::{Config, TriageConfig};
 use crate::error::{Result, RogersError};
 use crate::github::client::GitHubClient;
 use crate::github::models::Issue;

@@ -219,13 +219,11 @@ mod tests {
         assert_eq!(results[0].severity, Severity::Blocker);
         assert!(results[0].description.contains("No branch protection"));
         assert_eq!(results[0].fixability, Fixability::Manual);
-        assert!(
-            results[0]
-                .fix_instructions
-                .as_deref()
-                .unwrap()
-                .contains("https://github.com/test-owner/test-repo/settings/branches")
-        );
+        assert!(results[0]
+            .fix_instructions
+            .as_deref()
+            .unwrap()
+            .contains("https://github.com/test-owner/test-repo/settings/branches"));
     }
 
     // ─── Test: Default branch is not main (warn) ───────────────────────
@@ -261,13 +259,11 @@ mod tests {
 
         // First result should be the default branch warning.
         assert_eq!(results[0].severity, Severity::Warn);
-        assert!(
-            results[0]
-                .description
-                .contains("develop")
-                .then(|| true)
-                .unwrap_or(false)
-        );
+        assert!(results[0]
+            .description
+            .contains("develop")
+            .then(|| true)
+            .unwrap_or(false));
         assert_eq!(results[0].fixability, Fixability::Manual);
 
         // Second result should be the branch protection info.

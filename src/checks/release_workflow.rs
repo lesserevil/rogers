@@ -412,11 +412,9 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].severity, Severity::Blocker);
-        assert!(
-            results[0]
-                .description
-                .contains("No GitHub Actions workflow files found")
-        );
+        assert!(results[0]
+            .description
+            .contains("No GitHub Actions workflow files found"));
         assert_eq!(results[0].fixability, Fixability::Manual);
         assert!(results[0].fix_instructions.is_some());
     }

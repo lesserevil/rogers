@@ -194,19 +194,33 @@ impl ReportFormatter {
         summary
     }
 
-    /// Format a single finding line with aligned severity column.
+    /// Format a single finding line with aligned severity column, including
+    /// indented fix instructions when present.
     ///
-    /// Example: `[BLOCKER] Description text - fixability: auto`
-    /// Example: `[WARN   ] Description text - fixability: manual`
-    /// Example: `[INFO   ] Description text - fixability: na`
+    /// Example:
+    /// ```text
+    /// [BLOCKER] Description text - fixability: manual
+    ///   → Create the directory and add template files at https://...
+    /// ```
     fn format_finding_line(finding: &CheckResult) -> String {
         let severity_label = format_finding_severity(finding.severity);
-        format!(
+        let mut line = format!(
             "[{}] {} - fixability: {}",
             severity_label,
             finding.description,
             finding.fixability.as_str()
-        )
+        );
+
+        // Append fix instructions if present.
+        if let Some(ref instructions) = finding.fix_instructions {
+            for instr_line in instructions.lines() {
+                line.push('\n');
+                line.push_str("  → ");
+                line.push_str(instr_line);
+            }
+        }
+
+        line
     }
 }
 
@@ -258,13 +272,11 @@ mod tests {
         let output = ReportFormatter::format_text("test-owner/test-repo", &results, false);
 
         assert!(output.starts_with("=== Rodgers Project Readiness Audit ===\n"));
-        assert!(
-            output
-                .lines()
-                .nth(1)
-                .unwrap()
-                .contains("Repository: test-owner/test-repo")
-        );
+        assert!(output
+            .lines()
+            .nth(1)
+            .unwrap()
+            .contains("Repository: test-owner/test-repo"));
         assert!(output.lines().nth(2).unwrap().contains("Scanned at:"));
     }
 
@@ -487,12 +499,10 @@ mod tests {
             "Rodgers Project Readiness Audit"
         );
         assert_eq!(parsed["audit_header"]["repository"], "owner/repo");
-        assert!(
-            parsed["audit_header"]["scanned_at"]
-                .as_str()
-                .unwrap()
-                .contains("T")
-        );
+        assert!(parsed["audit_header"]["scanned_at"]
+            .as_str()
+            .unwrap()
+            .contains("T"));
 
         assert!(parsed["findings"].is_array());
         assert_eq!(parsed["findings"].as_array().unwrap().len(), 2);
@@ -787,5 +797,482 @@ mod tests {
         );
         let exit_code = if has_blockers { 1 } else { 0 };
         assert_eq!(exit_code, 1);
+    }
+
+    // ─── AC-2: Single blocker → exit 1, listed ─────────────────────────
+
+    #[test]
+    fn test_single_blocker_exit_1_and_listed() {
+        // AC-2: When any blocker check fails, exit code is 1 and the
+        // blocker is listed in the report.
+        let results = vec![
+            make_result_with_fixability(
+                Severity::Blocker,
+                "Required labels missing: needs-information, will-not-do",
+                Fixability::Auto,
+            ),
+            make_result_with_fixability(
+                Severity::Info,
+                "Issue templates found: bug_report.yml",
+                Fixability::NotApplicable,
+            ),
+            make_result_with_fixability(
+                Severity::Info,
+                "Branch protection enabled for main",
+                Fixability::NotApplicable,
+            ),
+        ];
+
+        // Exit code: 1 because has_blockers is true
+        let has_blockers = results.iter().any(|r| r.severity == Severity::Blocker);
+        let exit_code = if has_blockers { 1 } else { 0 };
+        assert_eq!(exit_code, 1, "exit code should be 1 for single blocker");
+
+        // Report should list the blocker
+        let output = ReportFormatter::format_text("owner/repo", &results, false);
+        assert!(
+            output.contains("[BLOCKER]"),
+            "report should contain [BLOCKER] marker"
+        );
+        assert!(
+            output.contains("Required labels missing"),
+            "report should contain the blocker description"
+        );
+        assert!(
+            output.contains("fixability: auto"),
+            "report should show fixability for blocker"
+        );
+        assert!(
+            output.contains("1 blockers"),
+            "summary should show 1 blocker"
+        );
+    }
+
+    // ─── AC-2: Multiple blockers → exit 1, ALL listed ─────────────────
+
+    #[test]
+    fn test_multiple_blockers_exit_1_all_listed() {
+        // AC-2: Must collect ALL blockers before exit, not stop at first.
+        let results = vec![
+            make_result_with_fixability(
+                Severity::Blocker,
+                "Required labels missing: needs-information, will-not-do",
+                Fixability::Auto,
+            ),
+            make_result_with_fixability(
+                Severity::Blocker,
+                "Issue templates directory not found",
+                Fixability::Manual,
+            ),
+            make_result_with_fixability(
+                Severity::Blocker,
+                "No release-capable GitHub Actions workflow found",
+                Fixability::Manual,
+            ),
+            make_result_with_fixability(
+                Severity::Warn,
+                "Discussion category not found",
+                Fixability::Auto,
+            ),
+            make_result_with_fixability(
+                Severity::Info,
+                "CI workflow found",
+                Fixability::NotApplicable,
+            ),
+        ];
+
+        // Exit code: 1
+        let has_blockers = results.iter().any(|r| r.severity == Severity::Blocker);
+        let exit_code = if has_blockers { 1 } else { 0 };
+        assert_eq!(
+            exit_code, 1,
+            "exit code should be 1 when multiple blockers exist"
+        );
+
+        // Report should list ALL three blockers
+        let output = ReportFormatter::format_text("owner/repo", &results, false);
+
+        // All three blockers should appear in the output
+        assert!(
+            output.contains("Required labels missing"),
+            "all blockers listed: required labels missing"
+        );
+        assert!(
+            output.contains("Issue templates directory not found"),
+            "all blockers listed: issue templates not found"
+        );
+        assert!(
+            output.contains("No release-capable"),
+            "all blockers listed: no release workflow"
+        );
+
+        // Summary should show 3 blockers
+        assert!(
+            output.contains("3 blockers"),
+            "summary should show 3 blockers, got: {}",
+            output
+                .lines()
+                .find(|l| l.contains("blockers"))
+                .unwrap_or("not found")
+        );
+
+        // Count [BLOCKER] markers to confirm all three appear
+        let blocker_count = output.matches("[BLOCKER]").count();
+        assert_eq!(
+            blocker_count, 3,
+            "should have exactly 3 [BLOCKER] lines, found {}",
+            blocker_count
+        );
+    }
+
+    // ─── AC-2: Blocker report shows severity, description, fixability ─
+
+    #[test]
+    fn test_blocker_report_shows_severity_description_fixability() {
+        // AC-2: Report format is '[BLOCKER] Description - fixability'
+        let results = vec![
+            make_result_with_fixability(
+                Severity::Blocker,
+                "Required labels missing: bug, feature",
+                Fixability::Auto,
+            ),
+            make_result_with_fixability(
+                Severity::Blocker,
+                "Main branch has no branch protection rules",
+                Fixability::Manual,
+            ),
+            make_result_with_fixability(
+                Severity::Blocker,
+                "No release-capable workflow found",
+                Fixability::Manual,
+            ),
+        ];
+
+        let output = ReportFormatter::format_text("owner/repo", &results, false);
+
+        // Each blocker must have severity label
+        assert!(output.contains("[BLOCKER]"));
+
+        // Each blocker must have its description
+        assert!(output.contains("Required labels missing: bug, feature"));
+        assert!(output.contains("Main branch has no branch protection rules"));
+        assert!(output.contains("No release-capable workflow found"));
+
+        // Each blocker must show fixability
+        assert!(
+            output.contains("fixability: auto"),
+            "auto fixability should be shown"
+        );
+        assert!(
+            output.contains("fixability: manual"),
+            "manual fixability should be shown"
+        );
+
+        // Verify that warnings do NOT cause exit 1
+        let warn_only_results = vec![
+            make_result(Severity::Warn, "some warning"),
+            make_result(Severity::Warn, "another warning"),
+        ];
+        let warn_has_blockers = warn_only_results
+            .iter()
+            .any(|r| r.severity == Severity::Blocker);
+        let warn_exit_code = if warn_has_blockers { 1 } else { 0 };
+        assert_eq!(warn_exit_code, 0, "warnings alone should NOT cause exit 1");
+    }
+
+    // ─── AC-2: ALL blockers collected, none skipped ────────────────────
+
+    #[test]
+    fn test_all_blockers_collected_no_early_exit() {
+        // Verify the implementation does NOT stop after finding the first
+        // blocker — ALL blockers from ALL checks must be present.
+        let results = vec![
+            // Simulate results from different checks
+            make_result_with_fixability(
+                Severity::Blocker,
+                "Required labels missing: needs-information",
+                Fixability::Auto,
+            ),
+            make_result_with_fixability(
+                Severity::Blocker,
+                "Issue templates directory not found",
+                Fixability::Manual,
+            ),
+            make_result_with_fixability(
+                Severity::Blocker,
+                "No release-capable GitHub Actions workflow found",
+                Fixability::Manual,
+            ),
+            make_result_with_fixability(
+                Severity::Blocker,
+                "Main branch unprotected",
+                Fixability::Manual,
+            ),
+            make_result_with_fixability(
+                Severity::Warn,
+                "Delete branches on merge disabled",
+                Fixability::Manual,
+            ),
+            make_result_with_fixability(
+                Severity::Info,
+                "CI workflow exists",
+                Fixability::NotApplicable,
+            ),
+        ];
+
+        let has_blockers = results.iter().any(|r| r.severity == Severity::Blocker);
+        let exit_code = if has_blockers { 1 } else { 0 };
+        assert_eq!(exit_code, 1);
+
+        let output = ReportFormatter::format_text("owner/repo", &results, false);
+
+        // ALL four blockers must appear
+        let blocker_count = output.matches("[BLOCKER]").count();
+        assert_eq!(
+            blocker_count, 4,
+            "all 4 blockers must be listed, found {} — no early exit",
+            blocker_count
+        );
+
+        // Verify specific blocker content
+        assert!(output.contains("Required labels missing"));
+        assert!(output.contains("Issue templates directory not found"));
+        assert!(output.contains("No release-capable"));
+        assert!(output.contains("Main branch unprotected"));
+
+        // Verify fixability shown for each
+        let auto_count = output.matches("fixability: auto").count();
+        let manual_count = output.matches("fixability: manual").count();
+        let na_count = output.matches("fixability: na").count();
+
+        assert_eq!(auto_count, 1, "should have 1 auto fixability");
+        assert!(
+            manual_count >= 3,
+            "should have at least 3 manual fixabilities (blockers + warn), got {}",
+            manual_count
+        );
+        assert_eq!(na_count, 1, "should have 1 na fixability");
+    }
+
+    // ─── AC-2: Exit codes — Auth failure = 3, Invalid args = 2 ──────
+
+    #[test]
+    fn test_blocker_exit_code_is_1() {
+        // Exit code 1 is for blocker failures, not auth (3) or config (2).
+        let results = vec![make_result(Severity::Blocker, "required labels missing")];
+        let has_blockers = results.iter().any(|r| r.severity == Severity::Blocker);
+        let exit_code = if has_blockers { 1 } else { 0 };
+        assert_eq!(exit_code, 1, "blocker failures should exit 1, not 2 or 3");
+    }
+
+    #[test]
+    fn test_no_blockers_exit_0() {
+        // Confirm exit 0 when there are no blockers at all.
+        let results = vec![
+            make_result(Severity::Info, "all labels present"),
+            make_result(Severity::Info, "branch protection enabled"),
+            make_result(Severity::Warn, "delete branches off"),
+        ];
+        let has_blockers = results.iter().any(|r| r.severity == Severity::Blocker);
+        let exit_code = if has_blockers { 1 } else { 0 };
+        assert_eq!(exit_code, 0, "no blockers should exit 0");
+    }
+
+    // ─── AC-5: Fix instructions included in report ─────────────────────
+
+    #[test]
+    fn test_fix_instructions_included_in_blocker_report() {
+        // AC-5: Blockers for missing issue templates must include specific
+        // instructions with direct links/commands.
+        let results = vec![CheckResult {
+            severity: Severity::Blocker,
+            description: "Issue templates directory not found".to_string(),
+            fixability: Fixability::Manual,
+            fix_instructions: Some(
+                "Create the directory and add template files at \
+                 https://github.com/owner/repo/new/main/.github/ISSUE_TEMPLATE/"
+                    .to_string(),
+            ),
+        }];
+
+        let output = ReportFormatter::format_text("owner/repo", &results, false);
+
+        // Must contain the blocker
+        assert!(output.contains("[BLOCKER]"));
+        assert!(output.contains("Issue templates directory not found"));
+
+        // Must contain the fix instruction with a link
+        assert!(
+            output.contains("github.com/owner/repo"),
+            "fix instructions must include direct link to create templates"
+        );
+        assert!(
+            output.contains(".github/ISSUE_TEMPLATE/"),
+            "fix instructions must reference the template directory path"
+        );
+        // Instructions are prefixed with "→"
+        assert!(
+            output.contains("  → Create the directory"),
+            "fix instructions must be included with arrow prefix"
+        );
+    }
+
+    #[test]
+    fn test_fix_instructions_included_in_release_workflow_blocker() {
+        // AC-5: Blockers for missing release workflow must include specific
+        // instructions with direct links/commands.
+        let results = vec![CheckResult {
+            severity: Severity::Blocker,
+            description: "No release-capable GitHub Actions workflow found".to_string(),
+            fixability: Fixability::Manual,
+            fix_instructions: Some(
+                "Create a release workflow at .github/workflows/release.yml with a \
+                 push trigger on tag patterns (v*, *.*.*) and artifact upload steps."
+                    .to_string(),
+            ),
+        }];
+
+        let output = ReportFormatter::format_text("owner/repo", &results, false);
+
+        // Must contain the blocker
+        assert!(output.contains("[BLOCKER]"));
+        assert!(output.contains("No release-capable"));
+
+        // Must contain the fix instruction
+        assert!(
+            output.contains("release.yml") || output.contains("release-workflow"),
+            "fix instructions must reference the release workflow path"
+        );
+        assert!(
+            output.contains("  → Create a release workflow"),
+            "fix instructions must be included with arrow prefix"
+        );
+    }
+
+    #[test]
+    fn test_fix_instructions_include_direct_links() {
+        // AC-5: Instructions must include direct links/commands.
+        let results = vec![
+            CheckResult {
+                severity: Severity::Blocker,
+                description: "Issue templates directory not found".to_string(),
+                fixability: Fixability::Manual,
+                fix_instructions: Some(
+                    "Create the directory and add template files at \
+                     https://github.com/owner/repo/new/main/.github/ISSUE_TEMPLATE/"
+                        .to_string(),
+                ),
+            },
+            CheckResult {
+                severity: Severity::Blocker,
+                description: "No release-capable workflow found".to_string(),
+                fixability: Fixability::Manual,
+                fix_instructions: Some(
+                    "Add a release workflow at .github/workflows/release.yml. \
+                     See: https://docs.github.com/en/actions/workflow-syntax"
+                        .to_string(),
+                ),
+            },
+        ];
+
+        let output = ReportFormatter::format_text("owner/repo", &results, false);
+
+        // Both blockers must be listed
+        assert_eq!(output.matches("[BLOCKER]").count(), 2);
+
+        // Both must have fix instructions with links
+        assert!(output.contains("github.com"), "must include direct links");
+        assert!(
+            output.contains("docs.github.com"),
+            "must include documentation links"
+        );
+
+        // Both must show fix instructions with arrow prefix
+        let arrow_count = output.matches("  → ").count();
+        assert!(
+            arrow_count >= 2,
+            "both blockers must have fix instructions, found {}",
+            arrow_count
+        );
+    }
+
+    #[test]
+    fn test_fix_instructions_shown_for_manual_fixability() {
+        // AC-5: fixability: manual findings should show instructions.
+        let results = vec![CheckResult {
+            severity: Severity::Blocker,
+            description: "Manual fix required".to_string(),
+            fixability: Fixability::Manual,
+            fix_instructions: Some("Run this command: rogers init --fix".to_string()),
+        }];
+
+        let output = ReportFormatter::format_text("o/r", &results, false);
+        assert!(
+            output.contains("fixability: manual"),
+            "manual fixability should be shown"
+        );
+        assert!(
+            output.contains("  → Run this command"),
+            "fix instructions should appear for manual fixability"
+        );
+    }
+
+    #[test]
+    fn test_no_fix_instructions_when_none_provided() {
+        // When a finding has no fix_instructions, no arrow line should appear.
+        let results = vec![make_result(Severity::Info, "all good")];
+        let output = ReportFormatter::format_text("o/r", &results, false);
+        assert!(
+            !output.contains("  →"),
+            "no arrow prefix when no instructions"
+        );
+    }
+
+    #[test]
+    fn test_multiline_fix_instructions() {
+        // Fix instructions with multiple lines should each get an arrow prefix.
+        let results = vec![CheckResult {
+            severity: Severity::Blocker,
+            description: "Workflow not found".to_string(),
+            fixability: Fixability::Manual,
+            fix_instructions: Some(
+                "Line one: create the file.\nLine two: commit it.\nLine three: push it."
+                    .to_string(),
+            ),
+        }];
+
+        let output = ReportFormatter::format_text("o/r", &results, false);
+        assert!(output.contains("  → Line one: create the file."));
+        assert!(output.contains("  → Line two: commit it."));
+        assert!(output.contains("  → Line three: push it."));
+    }
+
+    // ─── AC-5: JSON report includes fixability ──────────────────────────
+
+    #[test]
+    fn test_json_report_shows_fixability_for_blockers() {
+        // Verify JSON report includes fixability information.
+        let results = vec![
+            CheckResult {
+                severity: Severity::Blocker,
+                description: "Issue templates missing".to_string(),
+                fixability: Fixability::Manual,
+                fix_instructions: None,
+            },
+            CheckResult {
+                severity: Severity::Blocker,
+                description: "No release workflow".to_string(),
+                fixability: Fixability::Manual,
+                fix_instructions: None,
+            },
+        ];
+
+        let json = ReportFormatter::format_json("o/r", &results, false);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["findings"][0]["fixability"], "manual");
+        assert_eq!(parsed["findings"][1]["fixability"], "manual");
+        assert_eq!(parsed["findings"][0]["severity"], "BLOCKER");
+        assert_eq!(parsed["findings"][1]["severity"], "BLOCKER");
     }
 }

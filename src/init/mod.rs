@@ -47,11 +47,11 @@ pub async fn run_init(
         println!("[{}] {}", first.severity.as_str(), first.description);
 
         // Report fixability for auto-fixable findings.
-        if first.fixability == Fixability::Auto
-            && let Some(ref instructions) = first.fix_instructions
-        {
-            for line in instructions.lines() {
-                println!("{}", line);
+        if first.fixability == Fixability::Auto {
+            if let Some(ref instructions) = first.fix_instructions {
+                for line in instructions.lines() {
+                    println!("{}", line);
+                }
             }
         }
     }
@@ -70,7 +70,8 @@ pub async fn run_init(
 
     // Always apply discussion category fix when --fix is set (it's a warn, not a blocker).
     if fix {
-        let cat_result = crate::init::fix::ensure_discussion_category(github, owner, repo).await?;
+        let cat_result =
+            crate::init::fix::ensure_discussion_category(github, owner, repo, None).await?;
         crate::init::fix::print_category_fix_report(&cat_result);
         category_fix = Some(cat_result);
     }
@@ -109,11 +110,11 @@ pub async fn run_all_checks(
     all_results.extend(labels_results.clone());
     for result in &labels_results {
         println!("[{}] {}", result.severity.as_str(), result.description);
-        if result.fixability == Fixability::Auto
-            && let Some(ref instructions) = result.fix_instructions
-        {
-            for line in instructions.lines() {
-                println!("{}", line);
+        if result.fixability == Fixability::Auto {
+            if let Some(ref instructions) = result.fix_instructions {
+                for line in instructions.lines() {
+                    println!("{}", line);
+                }
             }
         }
     }
@@ -124,6 +125,11 @@ pub async fn run_all_checks(
     all_results.extend(issue_templates_results.clone());
     for result in &issue_templates_results {
         println!("[{}] {}", result.severity.as_str(), result.description);
+        if let Some(ref instructions) = result.fix_instructions {
+            for line in instructions.lines() {
+                println!("  → {}", line);
+            }
+        }
     }
 
     // Run the repo settings check.
@@ -140,6 +146,11 @@ pub async fn run_all_checks(
     all_results.extend(release_workflow_results.clone());
     for result in &release_workflow_results {
         println!("[{}] {}", result.severity.as_str(), result.description);
+        if let Some(ref instructions) = result.fix_instructions {
+            for line in instructions.lines() {
+                println!("  → {}", line);
+            }
+        }
     }
 
     // Run the discussion categories check.
