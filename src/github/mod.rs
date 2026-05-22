@@ -10,7 +10,8 @@
 pub mod client;
 
 pub use client::{
-    GitHubClient, GitHubComment, GitHubIssue, GitHubLabel, GitHubUser, IssueState, close_issue,
+    GitHubClient, GitHubComment, GitHubIssue, GitHubLabel, GitHubUser, IssueState, MergedPR,
+    GitTag, CheckRun, CommitStatus, BranchHead, close_issue,
 };
 
 /// Backward compatibility alias

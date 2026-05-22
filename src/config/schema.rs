@@ -272,10 +272,6 @@ mod tests {
         unsafe { std::env::set_var(key, value) };
     }
 
-    fn remove_env_var(key: &str) {
-        unsafe { std::env::remove_var(key) };
-    }
-
     // =============================================================================
     // ReleaseConfig — schema validation tests
     // =============================================================================
