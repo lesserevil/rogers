@@ -112,13 +112,11 @@ mod tests {
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].severity, Severity::Info);
-        assert!(
-            results[0]
-                .description
-                .contains("All")
-                .then(|| true)
-                .unwrap_or(false)
-        );
+        assert!(results[0]
+            .description
+            .contains("All")
+            .then(|| true)
+            .unwrap_or(false));
         for label in RODGERS_REQUIRED_LABELS.iter() {
             assert!(
                 results[0].description.contains(label.name),

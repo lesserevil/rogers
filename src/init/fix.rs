@@ -153,7 +153,7 @@ pub fn print_category_fix_report(result: &CategoryFixResult) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::github::{CreateLabelRequest, Label};
+    use crate::github::init_client::{CreateLabelRequest, Label};
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

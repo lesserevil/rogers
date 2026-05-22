@@ -6,7 +6,7 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::config::LlmConfig;
+use crate::config::schema::LlmConfig;
 use crate::error::{Result, RogersError};
 
 /// LLM client for OpenAI-compatible API.

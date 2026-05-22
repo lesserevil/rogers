@@ -5,10 +5,11 @@
 
 pub mod auth;
 pub mod client;
+pub mod init_client;
 pub mod models;
 pub mod rate_limit;
 
 pub use auth::{AuthError, GitHubAuth};
-pub use client::GitHubClient;
+pub use init_client::GitHubClient;
 pub use models::*;
 pub use rate_limit::{RateLimitHandler, DEFAULT_WARNING_THRESHOLD};

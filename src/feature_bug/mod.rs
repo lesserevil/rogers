@@ -5,6 +5,4 @@
 
 pub mod breakdown;
 
-pub use breakdown::{
-    BreakdownAnalyzer, BreakdownComment, ChildBeadRequest, EpicBreakdown,
-};
+pub use breakdown::{BreakdownAnalyzer, BreakdownComment, ChildBeadRequest, EpicBreakdown};

@@ -147,13 +147,11 @@ mod tests {
         assert_eq!(results[0].severity, Severity::Blocker);
         assert!(results[0].description.contains("not found"));
         assert_eq!(results[0].fixability, Fixability::Manual);
-        assert!(
-            results[0]
-                .fix_instructions
-                .as_deref()
-                .unwrap()
-                .contains("github.com/test-owner/test-repo")
-        );
+        assert!(results[0]
+            .fix_instructions
+            .as_deref()
+            .unwrap()
+            .contains("github.com/test-owner/test-repo"));
     }
 
     #[tokio::test]

@@ -47,11 +47,11 @@ pub async fn run_init(
         println!("[{}] {}", first.severity.as_str(), first.description);
 
         // Report fixability for auto-fixable findings.
-        if first.fixability == Fixability::Auto
-            && let Some(ref instructions) = first.fix_instructions
-        {
-            for line in instructions.lines() {
-                println!("{}", line);
+        if first.fixability == Fixability::Auto {
+            if let Some(ref instructions) = first.fix_instructions {
+                for line in instructions.lines() {
+                    println!("{}", line);
+                }
             }
         }
     }
@@ -109,11 +109,11 @@ pub async fn run_all_checks(
     all_results.extend(labels_results.clone());
     for result in &labels_results {
         println!("[{}] {}", result.severity.as_str(), result.description);
-        if result.fixability == Fixability::Auto
-            && let Some(ref instructions) = result.fix_instructions
-        {
-            for line in instructions.lines() {
-                println!("{}", line);
+        if result.fixability == Fixability::Auto {
+            if let Some(ref instructions) = result.fix_instructions {
+                for line in instructions.lines() {
+                    println!("{}", line);
+                }
             }
         }
     }
@@ -124,6 +124,11 @@ pub async fn run_all_checks(
     all_results.extend(issue_templates_results.clone());
     for result in &issue_templates_results {
         println!("[{}] {}", result.severity.as_str(), result.description);
+        if let Some(ref instructions) = result.fix_instructions {
+            for line in instructions.lines() {
+                println!("  → {}", line);
+            }
+        }
     }
 
     // Run the repo settings check.
@@ -140,6 +145,11 @@ pub async fn run_all_checks(
     all_results.extend(release_workflow_results.clone());
     for result in &release_workflow_results {
         println!("[{}] {}", result.severity.as_str(), result.description);
+        if let Some(ref instructions) = result.fix_instructions {
+            for line in instructions.lines() {
+                println!("  → {}", line);
+            }
+        }
     }
 
     // Run the discussion categories check.
