@@ -23,6 +23,19 @@ if [[ -f Makefile ]] && grep -q '^fmt-check:' Makefile; then
     fi
 fi
 
+# main.rs must change alongside the subcommand registry (cli.rs).
+# main.rs contains dispatch logic that pattern-matches on the Commands
+# enum defined in cli.rs. Changing main.rs without updating cli.rs
+# risks breaking command dispatch or creating orphaned handlers.
+STAGED=$(git diff --cached --name-only)
+if echo "$STAGED" | grep -q '^src/main\.rs$'; then
+    if ! echo "$STAGED" | grep -q '^src/cli\.rs$'; then
+        fail "src/main.rs is staged but src/cli.rs (command registry) is not — \
+both must change together to keep dispatch in sync. \
+Use 'git commit --no-verify' to bypass if this is a deliberate exception."
+    fi
+fi
+
 # ─── Soft checks (warn but allow) ─────────────────────────────────
 
 # Plan-doc sync — warn when staged code under a watched source tree
