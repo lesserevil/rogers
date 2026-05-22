@@ -145,16 +145,19 @@ pub struct ClassificationResult {
 /// Supports both Rodgers conventions and common GitHub project conventions.
 const LABEL_HEURISTICS: &[(IssueType, &[&str])] = &[
     // Bug: GitHub convention and Rodgers label
-    (
-        IssueType::Bug,
-        &["bug", "bug-report", "defect"],
-    ),
+    (IssueType::Bug, &["bug", "bug-report", "defect"]),
     // Feature: Rodgers label and GitHub convention (enhancement is common on GitHub)
-    (IssueType::Feature, &["feature", "enhancement", "feature-request"]),
+    (
+        IssueType::Feature,
+        &["feature", "enhancement", "feature-request"],
+    ),
     // Question: Rodgers label and common conventions
     (IssueType::Question, &["question", "help-wanted", "support"]),
     // Documentation: Rodgers label and GitHub convention
-    (IssueType::Docs, &["documentation", "docs", "good-first-issue"]),
+    (
+        IssueType::Docs,
+        &["documentation", "docs", "good-first-issue"],
+    ),
     // Chore: internal maintenance labels
     (IssueType::Chore, &["chore", "maintenance", "ci-cd"]),
 ];
@@ -164,10 +167,7 @@ const LABEL_HEURISTICS: &[(IssueType, &[&str])] = &[
 /// These labels mean the issue should NOT be re-classified by heuristics.
 /// Only Rodgers-owned labels are used here — plain GitHub labels like
 /// `bug`, `feature`, `question`, etc. trigger normal heuristic classification.
-const RODGERS_TRIAGE_LABELS: &[&str] = &[
-    "rodgers:triaged",
-    "rodgers:feature",
-];
+const RODGERS_TRIAGE_LABELS: &[&str] = &["rodgers:triaged", "rodgers:feature"];
 
 /// A GitHub issue with relevant metadata for classification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -249,9 +249,9 @@ pub fn classify_by_labels(issue_labels: &[String]) -> Option<IssueType> {
     // Check if only `rodgers:triaged` is present (without any heuristic type labels)
     // In that case, skip classification
     let has_rodgers_triaged_only = issue_labels.iter().any(|l| l == "rodgers:triaged")
-        && issue_labels.iter().all(|l| {
-            l == "rodgers:triaged" || RODGERS_TRIAGE_LABELS.contains(&l.as_str())
-        });
+        && issue_labels
+            .iter()
+            .all(|l| l == "rodgers:triaged" || RODGERS_TRIAGE_LABELS.contains(&l.as_str()));
     if has_rodgers_triaged_only {
         return None;
     }
@@ -326,7 +326,7 @@ where
     match pre_check_classification(issue) {
         PreCheckResult::BotIssue => {
             return TriageClassification {
-                issue_type: IssueType::Question, // Default for bots
+                issue_type: IssueType::Question,        // Default for bots
                 labels_to_add: vec!["bot".to_string()], // Would apply bot_labels in production
                 should_triage: false,
                 method: ClassificationMethod::Default,
@@ -402,7 +402,10 @@ where
 /// 3. Validating the response schema
 ///
 /// Returns `Ok(ClassificationResult)` on success, `Err` on failure.
-fn classify_by_llm<F>(issue: &ClassifiedIssue, llm_classify: F) -> Result<ClassificationResult, String>
+fn classify_by_llm<F>(
+    issue: &ClassifiedIssue,
+    llm_classify: F,
+) -> Result<ClassificationResult, String>
 where
     F: FnOnce(&str, &str) -> Option<ClassificationResult>,
 {
@@ -840,7 +843,13 @@ mod tests {
     #[test]
     fn test_label_heuristic_documentation_label() {
         // Issues with 'documentation' label classified as docs
-        let issue = create_test_issue(4, "Add docs", "Need more docs", vec!["documentation"], "user4");
+        let issue = create_test_issue(
+            4,
+            "Add docs",
+            "Need more docs",
+            vec!["documentation"],
+            "user4",
+        );
         let result = classify_by_labels(&issue.labels);
         assert_eq!(result, Some(IssueType::Docs));
     }
@@ -880,7 +889,13 @@ mod tests {
     #[test]
     fn test_label_heuristic_feature_request_label() {
         // GitHub convention: feature-request maps to Feature
-        let issue = create_test_issue(7, "Feature request", "I want X", vec!["feature-request"], "user7");
+        let issue = create_test_issue(
+            7,
+            "Feature request",
+            "I want X",
+            vec!["feature-request"],
+            "user7",
+        );
         let result = classify_by_labels(&issue.labels);
         assert_eq!(result, Some(IssueType::Feature));
     }
@@ -933,26 +948,14 @@ mod tests {
 
     #[test]
     fn test_label_heuristic_maintenance_label() {
-        let issue = create_test_issue(
-            7,
-            "Refactor code",
-            "Clean up",
-            vec!["maintenance"],
-            "user7",
-        );
+        let issue = create_test_issue(7, "Refactor code", "Clean up", vec!["maintenance"], "user7");
         let result = classify_by_labels(&issue.labels);
         assert_eq!(result, Some(IssueType::Chore));
     }
 
     #[test]
     fn test_label_heuristic_ci_cd_label() {
-        let issue = create_test_issue(
-            7,
-            "Fix CI",
-            "Pipeline broken",
-            vec!["ci-cd"],
-            "user7",
-        );
+        let issue = create_test_issue(7, "Fix CI", "Pipeline broken", vec!["ci-cd"], "user7");
         let result = classify_by_labels(&issue.labels);
         assert_eq!(result, Some(IssueType::Chore));
     }
@@ -1094,7 +1097,10 @@ mod tests {
     #[test]
     fn test_pre_check_bot_issue() {
         let issue = create_test_issue(1, "Bot issue", "Body", vec![], "github-actions");
-        assert!(matches!(pre_check_classification(&issue), PreCheckResult::BotIssue));
+        assert!(matches!(
+            pre_check_classification(&issue),
+            PreCheckResult::BotIssue
+        ));
     }
 
     #[test]
@@ -1158,8 +1164,13 @@ mod tests {
 
     #[test]
     fn test_classify_enhancement_via_label_heuristic() {
-        let issue =
-            create_test_issue(1, "Feature request", "I want X", vec!["enhancement"], "user1");
+        let issue = create_test_issue(
+            1,
+            "Feature request",
+            "I want X",
+            vec!["enhancement"],
+            "user1",
+        );
         let result = classify_issue(&issue, default_llm_classifier);
         assert_eq!(result.issue_type, IssueType::Feature);
         assert!(result.labels_to_add.contains(&"feature".to_string()));
@@ -1168,8 +1179,7 @@ mod tests {
 
     #[test]
     fn test_classify_question_via_label_heuristic() {
-        let issue =
-            create_test_issue(1, "How do I?", "Need help", vec!["question"], "user1");
+        let issue = create_test_issue(1, "How do I?", "Need help", vec!["question"], "user1");
         let result = classify_issue(&issue, default_llm_classifier);
         assert_eq!(result.issue_type, IssueType::Question);
         assert!(result.labels_to_add.contains(&"question".to_string()));
@@ -1178,8 +1188,7 @@ mod tests {
 
     #[test]
     fn test_classify_documentation_via_label_heuristic() {
-        let issue =
-            create_test_issue(1, "Add docs", "Need docs", vec!["documentation"], "user1");
+        let issue = create_test_issue(1, "Add docs", "Need docs", vec!["documentation"], "user1");
         let result = classify_issue(&issue, default_llm_classifier);
         assert_eq!(result.issue_type, IssueType::Docs);
         assert!(result.labels_to_add.contains(&"documentation".to_string()));
@@ -1191,7 +1200,9 @@ mod tests {
         // Unlabeled issues should go to LLM fallback
         let llm_calls = std::cell::RefCell::new(Vec::new());
         let mock_llm = |title: &str, _body: &str| {
-            llm_calls.borrow_mut().push((title.to_string(), _body.to_string()));
+            llm_calls
+                .borrow_mut()
+                .push((title.to_string(), _body.to_string()));
             Some(ClassificationResult {
                 issue_type: IssueType::Bug,
                 confidence: Confidence::High,
@@ -1292,7 +1303,9 @@ mod tests {
         // Unlabeled issue with rich content should go to LLM
         let llm_calls = std::cell::RefCell::new(Vec::new());
         let mock_llm = |title: &str, body: &str| {
-            llm_calls.borrow_mut().push((title.to_string(), body.to_string()));
+            llm_calls
+                .borrow_mut()
+                .push((title.to_string(), body.to_string()));
             Some(ClassificationResult {
                 issue_type: IssueType::Bug,
                 confidence: Confidence::High,
@@ -1355,10 +1368,7 @@ The settings panel should open without crashing.
 
     #[test]
     fn test_workflow_mapping() {
-        assert_eq!(
-            issue_type_to_workflow(&IssueType::Bug),
-            "feature-bug-plan"
-        );
+        assert_eq!(issue_type_to_workflow(&IssueType::Bug), "feature-bug-plan");
         assert_eq!(
             issue_type_to_workflow(&IssueType::Feature),
             "feature-bug-plan"
@@ -1502,6 +1512,10 @@ The settings panel should open without crashing.
             let result = classify_issue(&issue, default_llm_classifier);
             assert_eq!(result.issue_type, expected_type, "Type mismatch: {}", name);
             assert_eq!(result.method, expected_method, "Method mismatch: {}", name);
-            assert_eq!(result.should_triage, expected_triage, "Triage mismatch: {}", name);
+            assert_eq!(
+                result.should_triage, expected_triage,
+                "Triage mismatch: {}",
+                name
+            );
         }
 }

@@ -18,10 +18,10 @@ pub mod state_machine;
 pub mod triage_loop;
 
 pub use classifier::{
-    classify_issue, classify_issue as classify, classify_by_labels, pre_check_classification,
-    ClassifiedIssue, ClassificationMethod, Confidence, IssueType, PreCheckResult,
-    TriageClassification, default_llm_classifier, is_bot_author, validate_classification,
-    issue_type_to_workflow, resolve_conflicting_labels,
+    ClassificationMethod, ClassifiedIssue, Confidence, IssueType, PreCheckResult,
+    TriageClassification, classify_by_labels, classify_issue, classify_issue as classify,
+    default_llm_classifier, is_bot_author, issue_type_to_workflow, pre_check_classification,
+    resolve_conflicting_labels, validate_classification,
 };
 pub use engine::TriageEngine;
 pub use priority::{Priority, PriorityAssessment, assess_priority, llm_assess_priority};
@@ -40,6 +40,7 @@ pub use triage_loop::{
 /// Label constants for triage operations.
 pub const LABEL_BUG: &str = "bug";
 pub const LABEL_FEATURE: &str = "feature";
+pub const LABEL_QUESTION: &str = "question";
 pub const LABEL_READY_FOR_REVIEW: &str = "ready-for-review";
 pub const LABEL_NEEDS_INFORMATION: &str = "needs-information";
 pub const LABEL_WILL_NOT_DO: &str = "will-not-do";

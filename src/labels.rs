@@ -70,6 +70,11 @@ pub const RODGERS_REQUIRED_LABELS: &[LabelDefinition] = &[
         color: "a2eeef",
         description: "Feature routed to feature-bug workflow with priority assessment",
     },
+    LabelDefinition {
+        name: "rodgers:question",
+        color: "d876e3",
+        description: "Question routed to question-routing workflow for doc/code search",
+    },
 ];
 
 /// Labels Rodgers creates programmatically.

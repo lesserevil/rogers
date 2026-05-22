@@ -1107,7 +1107,10 @@ mod tests {
     fn test_classification_prompt_defaults_to_question() {
         // When in doubt, should default to Question
         assert!(ISSUE_CLASSIFICATION_PROMPT.contains("Question"));
-        assert!(ISSUE_CLASSIFICATION_PROMPT.contains("in doubt") || ISSUE_CLASSIFICATION_PROMPT.contains("default"));
+        assert!(
+            ISSUE_CLASSIFICATION_PROMPT.contains("in doubt")
+                || ISSUE_CLASSIFICATION_PROMPT.contains("default")
+        );
     }
 
     #[test]
