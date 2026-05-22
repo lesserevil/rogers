@@ -4,10 +4,28 @@
 //! All reasoning, classification, and decision-making flows through this client.
 
 use reqwest::Client;
+use rogers_core::error::{Result, RogersError};
 use serde::{Deserialize, Serialize};
 
-use crate::config::LlmConfig;
-use crate::error::{Result, RogersError};
+/// LLM configuration (extracted from root config for use in this crate).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmConfig {
+    pub provider: Option<String>,
+    pub base_url: Option<String>,
+    pub model: String,
+    pub api_key: String,
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self {
+            provider: Some("openai".to_string()),
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            model: String::new(),
+            api_key: String::new(),
+        }
+    }
+}
 
 /// LLM client for OpenAI-compatible API.
 #[derive(Debug, Clone)]

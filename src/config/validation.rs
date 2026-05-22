@@ -4,7 +4,7 @@ use crate::config::schema::{
     apply_env_interpolation, interpolate_env_var, rodgers_required_label_names, Config,
     PLACEHOLDER_TOKEN_PATTERNS,
 };
-use crate::error::{Result, RogersError};
+use rogers_core::error::{Result, RogersError};
 use std::path::Path;
 
 /// Validation result containing any warnings.

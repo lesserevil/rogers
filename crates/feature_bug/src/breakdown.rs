@@ -12,10 +12,10 @@
 //! 5. **Wait for human signal** - Any child modification or issue comment
 //! 6. **Batch open children** - Open all children when human signal received
 
-use crate::error::{Result, RogersError};
-use crate::github::models::Issue;
-use crate::llm::client::{ChatMessage, ChatRequest, LlmClient};
-use crate::llm::prompts::IssueMetadata;
+use rogers_core::error::{Result, RogersError};
+use rogers_github::models::Issue;
+use rogers_llm::client::{ChatMessage, ChatRequest, LlmClient};
+use rogers_llm::prompts::IssueMetadata;
 use serde::{Deserialize, Serialize};
 
 /// Epic breakdown analyzer.
@@ -248,7 +248,7 @@ Consider the AGENTS.md rule: each child bead should be implementable by a naive 
             ],
             temperature: Some(0.3),
             max_tokens: Some(2048),
-            response_format: Some(crate::llm::ResponseFormat {
+            response_format: Some(rogers_llm::ResponseFormat {
                 format_type: "json_object".to_string(),
                 schema: Some(serde_json::json!({
                     "type": "object",
@@ -403,8 +403,8 @@ impl BreakdownComment {
     /// Generate the breakdown comment body.
     pub fn generate(
         issue_num: i32,
-        epic: &crate::beads::schema::Epic,
-        children: &[crate::beads::schema::Child],
+        epic: &rogers_beads::schema::Epic,
+        children: &[rogers_beads::schema::Child],
     ) -> Self {
         let mut body = String::new();
 

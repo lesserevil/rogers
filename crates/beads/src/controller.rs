@@ -3,9 +3,9 @@
 //! Provides the high-level interface for creating and managing epics
 //! and child beads. Coordinates between GitHub issues and beads database.
 
-use crate::beads::client::BeadsClient;
-use crate::beads::schema::{bead_type, status, Child, Epic};
-use crate::error::{Result, RogersError};
+use crate::client::BeadsClient;
+use crate::schema::{bead_type, status, Child, Epic};
+use rogers_core::error::{Result, RogersError};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

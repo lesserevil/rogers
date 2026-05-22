@@ -19,3 +19,6 @@ pub use client::BeadsClient;
 pub use controller::BeadController;
 pub use migration::{run_migrations, verify_schema};
 pub use schema::{Child, Epic, State, SCHEMA_VERSION};
+
+// Re-export core types for convenience
+pub use rogers_core::error::{Result, RogersError};

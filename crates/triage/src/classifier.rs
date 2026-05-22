@@ -2,11 +2,11 @@
 //!
 //! Uses the LLM to classify GitHub issues and determine completeness.
 
-use crate::error::{Result, RogersError};
-use crate::github::models::Issue;
-use crate::llm::client::{ChatMessage, ChatRequest, LlmClient};
-use crate::llm::prompts::{ClassificationPrompt, IssueMetadata};
-use crate::llm::validator::{ClassificationOutput, OutputValidator, ValidationResult};
+use rogers_core::error::{Result, RogersError};
+use rogers_github::models::Issue;
+use rogers_llm::client::{ChatMessage, ChatRequest, LlmClient};
+use rogers_llm::prompts::{ClassificationPrompt, IssueMetadata};
+use rogers_llm::validator::{ClassificationOutput, OutputValidator, ValidationResult};
 
 /// Issue classifier using LLM.
 #[derive(Debug, Clone)]
@@ -72,7 +72,7 @@ impl Classifier {
             ],
             temperature: Some(0.3),
             max_tokens: Some(2048),
-            response_format: Some(crate::llm::ResponseFormat {
+            response_format: Some(rogers_llm::ResponseFormat {
                 format_type: "json_object".to_string(),
                 schema: Some(serde_json::json!({
                     "type": "object",
@@ -222,7 +222,7 @@ mod tests {
             title: "Test Title".to_string(),
             body: Some("Test body content".to_string()),
             state: "open".to_string(),
-            user: crate::github::models::User {
+            user: rogers_github::models::User {
                 login: "testuser".to_string(),
                 id: 123,
                 node_id: None,
@@ -230,7 +230,7 @@ mod tests {
                 html_url: None,
                 user_type: Some("User".to_string()),
             },
-            labels: vec![crate::github::models::Label {
+            labels: vec![rogers_github::models::Label {
                 id: 1,
                 name: "bug".to_string(),
                 description: None,
@@ -263,7 +263,7 @@ mod tests {
             title: "Bot Issue".to_string(),
             body: None,
             state: "open".to_string(),
-            user: crate::github::models::User {
+            user: rogers_github::models::User {
                 login: "snyk-bot".to_string(),
                 id: 456,
                 node_id: None,

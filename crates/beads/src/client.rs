@@ -12,7 +12,7 @@
 //! let rows = client.query("SELECT * FROM test")?;
 //! ```
 
-use crate::error::{Result, RogersError};
+use rogers_core::error::{Result, RogersError};
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
 

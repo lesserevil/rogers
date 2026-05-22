@@ -3,21 +3,9 @@
 use clap::Parser;
 use std::path::{Path, PathBuf};
 
-mod beads;
-mod backport;
-mod cli;
-mod config;
-mod error;
-mod github;
-mod labels;
-mod llm;
-mod question_router;
-mod release;
-mod triage;
-
-use cli::{Cli, Commands};
-use config::validation::load_and_validate_config;
-use error::{Result, RogersError};
+use rogers::config::validation::load_and_validate_config;
+use rogers::{Result, RogersError};
+use rogers::cli::{Cli, Commands};
 
 fn main() {
     if let Err(e) = run() {
@@ -36,7 +24,6 @@ fn run() -> Result<()> {
             json,
             github_token,
         } => {
-            // For init, we may not have a config.yaml yet, so validate minimally
             cmd_init(&repo, fix, json, github_token.as_deref())
         }
         Commands::Doctor {
@@ -49,17 +36,15 @@ fn run() -> Result<()> {
     }
 }
 
-/// Load and validate configuration, failing fast with descriptive errors.
 fn load_config(
     config_path: Option<&PathBuf>,
-) -> Result<(config::Config, config::validation::ValidationResult)> {
+) -> Result<(rogers::config::schema::Config, rogers::config::validation::ValidationResult)> {
     let path = config_path
         .map(|p| p.as_path())
         .unwrap_or_else(|| Path::new("config.yaml"));
 
     let (config, validation_result) = load_and_validate_config(&path)?;
 
-    // Print warnings if any
     for warning in &validation_result.warnings {
         eprintln!("Warning: {}", warning);
     }
@@ -85,7 +70,6 @@ fn cmd_init(repo: &str, fix: bool, json: bool, github_token: Option<&str>) -> Re
         }
     }
 
-    // TODO: Implement init command
     Err(RogersError::Config(
         "init command not yet implemented".to_string(),
     ))
@@ -98,7 +82,6 @@ fn cmd_doctor(
     json: bool,
     config_path: Option<&Path>,
 ) -> Result<()> {
-    // Load and validate config first (fail fast)
     let path = config_path
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("config.yaml"));
@@ -135,7 +118,6 @@ fn cmd_doctor(
         }
     }
 
-    // TODO: Implement doctor command health checks
     Err(RogersError::Config(
         "doctor command not yet implemented".to_string(),
     ))

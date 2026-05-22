@@ -1,8 +1,12 @@
-//! Configuration schema definitions for Rodgers.
+//! Configuration types for the triage crate.
+//!
+//! Mirrors the config types from the root crate for use in this workspace member.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::env;
+
+// Re-export LLM config from rogers_llm crate
+pub use rogers_llm::client::LlmConfig;
 
 /// Top-level configuration structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -16,69 +20,6 @@ pub struct Config {
     pub rogation: Option<RogationConfig>,
     pub log_level: Option<String>,
     pub error_channel: Option<String>,
-}
-
-/// Interpolate environment variables in a string value.
-/// Supports ${ENV_VAR} syntax. If the env var is not set, the placeholder
-/// is left unchanged (allowing config files to be shared with documentation).
-pub fn interpolate_env_var(value: &str) -> String {
-    let mut result = value.to_string();
-
-    // Simple scan for ${VAR} pattern without regex
-    let mut start = 0;
-    while let Some(dollar_pos) = result[start..].find('$') {
-        let abs_pos = start + dollar_pos;
-
-        // Check if followed by ${...}
-        if abs_pos + 1 < result.len() && result.chars().nth(abs_pos + 1) == Some('{') {
-            if let Some(close_pos) = result[abs_pos + 2..].find('}') {
-                let var_start = abs_pos + 2;
-                let var_end = var_start + close_pos;
-                let var_name = &result[var_start..var_end];
-
-                if let Ok(env_value) = env::var(var_name) {
-                    let full_match = format!("${{{}}}", var_name);
-                    result = result.replace(&full_match, &env_value);
-                    // Don't advance start - check for more occurrences in modified string
-                } else {
-                    // Env var not set, skip past this pattern to avoid infinite loop
-                    start = var_end + 1;
-                }
-                continue;
-            }
-        }
-
-        // No ${...}, move past this $
-        start = abs_pos + 1;
-    }
-
-    result
-}
-
-/// Apply environment variable interpolation to all string fields in the config.
-pub fn apply_env_interpolation(config: &mut Config) {
-    config.github.token = interpolate_env_var(&config.github.token);
-    if let Some(api_url) = &config.github.api_url {
-        config.github.api_url = Some(interpolate_env_var(api_url));
-    }
-
-    config.beads.remote = interpolate_env_var(&config.beads.remote);
-    if let Some(database) = &config.beads.database {
-        config.beads.database = Some(interpolate_env_var(database));
-    }
-
-    if let Some(base_url) = &config.llm.base_url {
-        config.llm.base_url = Some(interpolate_env_var(base_url));
-    }
-    config.llm.api_key = interpolate_env_var(&config.llm.api_key);
-
-    if let Some(level) = &config.log_level {
-        config.log_level = Some(interpolate_env_var(level));
-    }
-
-    if let Some(channel) = &config.error_channel {
-        config.error_channel = Some(interpolate_env_var(channel));
-    }
 }
 
 /// GitHub configuration.
@@ -103,9 +44,6 @@ pub struct BeadsConfig {
     pub remote: String,
     pub database: Option<String>,
 }
-
-/// LLM configuration (re-exported from rogers-llm crate).
-pub use rogers_llm::client::LlmConfig;
 
 /// Triage configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,33 +73,6 @@ pub struct RogationConfig {
     pub agent_file: Option<String>,
     pub template_dir: Option<String>,
     pub security_label: Option<String>,
-}
-
-/// Placeholder token patterns to detect.
-pub const PLACEHOLDER_TOKEN_PATTERNS: &[&str] = &[
-    "YOUR_TOKEN",
-    "YOUR_GITHUB_TOKEN",
-    "ghp_sample",
-    "ghp_xxxxxxxxxxxx",
-    "github_pat_sample",
-    "REPLACE_ME",
-    "CHANGE_ME",
-    "INSERT_TOKEN_HERE",
-];
-
-/// Rodgers-required labels that should never be in labels_never_bot_managed.
-pub fn rodgers_required_label_names() -> &'static [&'static str] {
-    &[
-        "bug",
-        "feature",
-        "question",
-        "needs-information",
-        "needs-documentation",
-        "ready-for-review",
-        "will-not-do",
-        "ready-for-work",
-        "in-progress",
-    ]
 }
 
 impl Default for SchedulerConfig {

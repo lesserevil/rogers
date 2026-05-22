@@ -2,13 +2,13 @@
 //!
 //! The main triage engine that coordinates issue classification and state transitions.
 
-use crate::config::{Config, TriageConfig};
-use crate::error::{Result, RogersError};
-use crate::github::client::GitHubClient;
-use crate::github::models::Issue;
-use crate::llm::LlmClient;
-use crate::triage::classifier::Classifier;
-use crate::triage::state_machine::{TriageEvent, TriageState, TriageStateMachine};
+use crate::classifier::Classifier;
+use crate::config::{BeadsConfig, Config, GitHubConfig, LlmConfig, RogationConfig, SchedulerConfig, TriageConfig};
+use crate::state_machine::{TriageEvent, TriageState, TriageStateMachine};
+use rogers_core::error::{Result, RogersError};
+use rogers_github::client::GitHubClient;
+use rogers_github::models::Issue;
+use rogers_llm::client::LlmClient;
 use serde::Serialize;
 
 /// Triage engine for processing GitHub issues.
@@ -282,7 +282,7 @@ impl TriageEngine {
         &self,
         issue: &Issue,
         state_machine: &TriageStateMachine,
-        classification: &crate::triage::classifier::ClassificationResult,
+        classification: &crate::classifier::ClassificationResult,
     ) -> Vec<TriageAction> {
         let mut actions = Vec::new();
 
@@ -448,7 +448,7 @@ impl TriageEngine {
             self.github
                 .update_issue(
                     action.issue,
-                    crate::github::models::UpdateIssueRequest {
+                rogers_github::models::UpdateIssueRequest {
                         title: None,
                         body: None,
                         state: Some("closed".to_string()),
@@ -470,15 +470,15 @@ mod tests {
 
     fn create_test_config() -> Config {
         Config {
-            github: crate::config::GitHubConfig {
+            github: GitHubConfig {
                 owner: "test".to_string(),
                 repo: "test".to_string(),
                 token: "test".to_string(),
                 api_url: None,
             },
-            scheduler: crate::config::SchedulerConfig::default(),
-            beads: crate::config::BeadsConfig::default(),
-            llm: crate::config::LlmConfig {
+            scheduler: SchedulerConfig::default(),
+            beads: BeadsConfig::default(),
+            llm: LlmConfig {
                 provider: Some("openai".to_string()),
                 base_url: Some("https://api.openai.com/v1".to_string()),
                 model: "gpt-4o-mini".to_string(),
@@ -499,7 +499,7 @@ mod tests {
             title: "Bot issue".to_string(),
             body: None,
             state: "open".to_string(),
-            user: crate::github::models::User {
+            user: rogers_github::models::User {
                 login: "snyk-bot".to_string(),
                 id: 1,
                 node_id: None,
@@ -527,7 +527,7 @@ mod tests {
             title: "User issue".to_string(),
             body: None,
             state: "open".to_string(),
-            user: crate::github::models::User {
+            user: rogers_github::models::User {
                 login: "user123".to_string(),
                 id: 2,
                 node_id: None,
@@ -554,7 +554,7 @@ mod tests {
     #[test]
     fn test_should_ignore() {
         let mut config = create_test_config();
-        config.rogation = Some(crate::config::RogationConfig {
+        config.rogation = Some(RogationConfig {
             ignore_labels: Some(vec!["pinned".to_string()]),
             labels_never_bot_managed: None,
             custom_type_names: None,
@@ -569,7 +569,7 @@ mod tests {
             title: "Pinned issue".to_string(),
             body: None,
             state: "open".to_string(),
-            user: crate::github::models::User {
+            user: rogers_github::models::User {
                 login: "user".to_string(),
                 id: 1,
                 node_id: None,
@@ -577,7 +577,7 @@ mod tests {
                 html_url: None,
                 user_type: None,
             },
-            labels: vec![crate::github::models::Label {
+            labels: vec![rogers_github::models::Label {
                 id: 1,
                 name: "pinned".to_string(),
                 description: None,
@@ -603,7 +603,7 @@ mod tests {
             title: "Normal issue".to_string(),
             body: None,
             state: "open".to_string(),
-            user: crate::github::models::User {
+            user: rogers_github::models::User {
                 login: "user".to_string(),
                 id: 2,
                 node_id: None,
@@ -611,7 +611,7 @@ mod tests {
                 html_url: None,
                 user_type: None,
             },
-            labels: vec![crate::github::models::Label {
+            labels: vec![rogers_github::models::Label {
                 id: 2,
                 name: "bug".to_string(),
                 description: None,
@@ -640,7 +640,7 @@ mod tests {
             title: "Test".to_string(),
             body: None,
             state: "open".to_string(),
-            user: crate::github::models::User {
+            user: rogers_github::models::User {
                 login: "user".to_string(),
                 id: 1,
                 node_id: None,
@@ -648,7 +648,7 @@ mod tests {
                 html_url: None,
                 user_type: None,
             },
-            labels: vec![crate::github::models::Label {
+            labels: vec![rogers_github::models::Label {
                 id: 1,
                 name: "bug".to_string(),
                 description: None,
@@ -693,7 +693,7 @@ mod tests {
         let github = GitHubClient::new(
             &config.github.owner,
             &config.github.repo,
-            crate::github::GitHubAuth::new_with_default_api(&config.github.token),
+            rogers_github::auth::GitHubAuth::new_with_default_api(&config.github.token),
         );
         let _engine = TriageEngine::new(config, github, llm);
     }

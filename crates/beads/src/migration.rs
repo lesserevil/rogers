@@ -11,11 +11,11 @@
 //! - Failed migrations roll back and return errors
 //! - Dolt auto-commit is enabled by default for audit trail
 
-use crate::beads::client::BeadsClient;
-use crate::beads::schema::{
+use crate::client::BeadsClient;
+use crate::schema::{
     CREATE_CHILDREN_SQL, CREATE_EPICS_SQL, CREATE_STATE_SQL, SCHEMA_VERSION,
 };
-use crate::error::{Result, RogersError};
+use rogers_core::error::{Result, RogersError};
 
 /// Migration entry point representation.
 #[derive(Debug)]
@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn test_status_is_valid() {
-        use crate::beads::schema::status;
+        use crate::schema::status;
         assert!(status::is_valid("open"));
         assert!(status::is_valid("in_progress"));
         assert!(status::is_valid("closed"));
@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn test_bead_type_is_valid() {
-        use crate::beads::schema::bead_type;
+        use crate::schema::bead_type;
         assert!(bead_type::is_valid("epic"));
         assert!(bead_type::is_valid("feature"));
         assert!(bead_type::is_valid("bug"));
