@@ -3,10 +3,14 @@
 //! Handles creating missing required labels and discussion categories via
 //! the GitHub API.  Idempotent: safe to re-run (create-if-missing semantics).
 
-use crate::checks::RELEASE_PROPOSALS_CATEGORY;
+use crate::config::schema::ReleaseConfig;
 use crate::error::Result;
 use crate::github::GitHubClient;
 use crate::labels::RODGERS_REQUIRED_LABELS;
+
+/// Default discussion category name for release proposals.
+/// Matches `ReleaseConfig::default().approval_discussion_category`.
+pub const RELEASE_PROPOSALS_CATEGORY: &str = "Release Proposals";
 
 /// Result of an auto-fix operation — what was created and what was skipped.
 #[derive(Debug, Clone)]
@@ -92,35 +96,45 @@ pub struct CategoryFixResult {
 
 /// Ensures the Release Proposals discussion category exists.
 ///
-/// Iterates over existing categories, creates `RELEASE_PROPOSALS_CATEGORY`
-/// if it doesn't exist. Skips if it already exists.
+/// Uses the category name from `config` if provided, otherwise defaults to
+/// `RELEASE_PROPOSALS_CATEGORY` ("Release Proposals").
+///
+/// Creates the category if it doesn't exist. Skips if it already exists.
 ///
 /// This is idempotent: running multiple times produces the same result.
+///
+/// # Arguments
+/// * `github` — GitHub API client
+/// * `owner` — Repository owner
+/// * `repo` — Repository name
+/// * `config` — Optional release config; if None, uses default category name
 pub async fn ensure_discussion_category(
     github: &GitHubClient,
     owner: &str,
     repo: &str,
+    config: Option<&ReleaseConfig>,
 ) -> Result<CategoryFixResult> {
+    let category_name = config
+        .and_then(|c| c.approval_discussion_category.as_deref())
+        .unwrap_or(RELEASE_PROPOSALS_CATEGORY);
+
     let existing = github.list_discussion_categories(owner, repo).await?;
 
     let mut created = Vec::new();
     let mut skipped = Vec::new();
 
-    if existing
-        .iter()
-        .any(|c| c.name == RELEASE_PROPOSALS_CATEGORY)
-    {
-        skipped.push(RELEASE_PROPOSALS_CATEGORY.to_string());
+    if existing.iter().any(|c| c.name == category_name) {
+        skipped.push(category_name.to_string());
     } else {
         match github
-            .create_discussion_category_idempotent(owner, repo, RELEASE_PROPOSALS_CATEGORY)
+            .create_discussion_category_idempotent(owner, repo, category_name)
             .await
         {
-            Ok(_) => created.push(RELEASE_PROPOSALS_CATEGORY.to_string()),
+            Ok(_) => created.push(category_name.to_string()),
             Err(e) => {
                 eprintln!(
                     "Warning: failed to create discussion category '{}': {}",
-                    RELEASE_PROPOSALS_CATEGORY, e
+                    category_name, e
                 );
             }
         }
@@ -500,7 +514,7 @@ mod tests {
             .await;
 
         let client = make_client(&server);
-        let result = ensure_discussion_category(&client, "test-owner", "test-repo")
+        let result = ensure_discussion_category(&client, "test-owner", "test-repo", None)
             .await
             .unwrap();
 
@@ -535,7 +549,7 @@ mod tests {
             .await;
 
         let client = make_client(&server);
-        let result = ensure_discussion_category(&client, "test-owner", "test-repo")
+        let result = ensure_discussion_category(&client, "test-owner", "test-repo", None)
             .await
             .unwrap();
 
@@ -574,7 +588,7 @@ mod tests {
             .await;
 
         let client1 = make_client(&server1);
-        let result1 = ensure_discussion_category(&client1, "test-owner", "test-repo")
+        let result1 = ensure_discussion_category(&client1, "test-owner", "test-repo", None)
             .await
             .unwrap();
         assert_eq!(result1.created, vec!["Release Proposals".to_string()]);
@@ -603,7 +617,7 @@ mod tests {
             .await;
 
         let client2 = make_client(&server2);
-        let result2 = ensure_discussion_category(&client2, "test-owner", "test-repo")
+        let result2 = ensure_discussion_category(&client2, "test-owner", "test-repo", None)
             .await
             .unwrap();
         assert!(result2.created.is_empty());
@@ -665,11 +679,164 @@ mod tests {
             .await;
 
         let client = make_client(&server);
-        let result = ensure_discussion_category(&client, "test-owner", "test-repo")
+        let result = ensure_discussion_category(&client, "test-owner", "test-repo", None)
             .await
             .unwrap();
 
         assert_eq!(result.created.len(), 0);
         assert_eq!(result.skipped.len(), 0);
+    }
+
+    /// Test: ensure_discussion_category uses config value for category name.
+    #[tokio::test]
+    async fn test_ensure_discussion_category_uses_config_value() {
+        let server = MockServer::start().await;
+
+        // No categories exist.
+        Mock::given(method("GET"))
+            .and(path("/repos/test-owner/test-repo/discussion-categories"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "total_count": 0,
+                "categories": []
+            })))
+            .mount(&server)
+            .await;
+
+        // Create succeeds with custom name.
+        Mock::given(method("POST"))
+            .and(path("/repos/test-owner/test-repo/discussion-categories"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "id": 999,
+                "name": "Custom Proposals",
+                "description": "Custom category",
+                "emoji": "📋",
+                "emoji_name": "clipboard",
+                "color": "0075ca",
+                "is_answerable": false,
+                "created_at": "2024-01-01T00:00:00Z",
+                "repository_id": 123,
+                "slug": "custom-proposals"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server);
+        let config = ReleaseConfig {
+            approval_discussion_category: Some("Custom Proposals".to_string()),
+            active_branches: None,
+            voting_window_days: None,
+            stale_threshold_days: None,
+        };
+        let result =
+            ensure_discussion_category(&client, "test-owner", "test-repo", Some(&config))
+                .await
+                .unwrap();
+
+        assert_eq!(result.created, vec!["Custom Proposals".to_string()]);
+        assert!(result.skipped.is_empty());
+    }
+
+    /// Test: ensure_discussion_category defaults to "Release Proposals" when config
+    /// has None for approval_discussion_category.
+    #[tokio::test]
+    async fn test_ensure_discussion_category_defaults_when_config_none() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/repos/test-owner/test-repo/discussion-categories"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "total_count": 0,
+                "categories": []
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/repos/test-owner/test-repo/discussion-categories"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "id": 999,
+                "name": "Release Proposals",
+                "description": "Propose new releases",
+                "emoji": "🚀",
+                "emoji_name": "rocket",
+                "color": "0075ca",
+                "is_answerable": false,
+                "created_at": "2024-01-01T00:00:00Z",
+                "repository_id": 123,
+                "slug": "release-proposals"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server);
+        let config = ReleaseConfig::default();
+        // Default is "Release Proposals" per config schema default.
+        let result =
+            ensure_discussion_category(&client, "test-owner", "test-repo", Some(&config))
+                .await
+                .unwrap();
+
+        assert_eq!(result.created, vec!["Release Proposals".to_string()]);
+    }
+
+    /// Test: RELEASE_PROPOSALS_CATEGORY constant matches ReleaseConfig default.
+    #[test]
+    fn test_release_proposals_category_matches_config_default() {
+        let default_config = ReleaseConfig::default();
+        let default_category = default_config
+            .approval_discussion_category
+            .as_deref()
+            .unwrap();
+        assert_eq!(
+            RELEASE_PROPOSALS_CATEGORY,
+            default_category,
+            "RELEASE_PROPOSALS_CATEGORY constant must match ReleaseConfig::default().approval_discussion_category"
+        );
+    }
+
+    /// Test: ensure_discussion_category reports created category in output.
+    #[tokio::test]
+    async fn test_ensure_discussion_category_reports_created() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/repos/test-owner/test-repo/discussion-categories"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "total_count": 0,
+                "categories": []
+            })))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/repos/test-owner/test-repo/discussion-categories"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+                "id": 999,
+                "name": "Release Proposals",
+                "description": "Propose new releases",
+                "emoji": "🚀",
+                "emoji_name": "rocket",
+                "color": "0075ca",
+                "is_answerable": false,
+                "created_at": "2024-01-01T00:00:00Z",
+                "repository_id": 123,
+                "slug": "release-proposals"
+            })))
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server);
+        let result = ensure_discussion_category(&client, "test-owner", "test-repo", None)
+            .await
+            .unwrap();
+
+        // Verify the CategoryFixResult contains the created category.
+        assert_eq!(result.created, vec!["Release Proposals".to_string()]);
+        assert_eq!(result.created.len(), 1);
+        assert!(result.skipped.is_empty());
+
+        // Verify print_category_fix_report produces output mentioning the category.
+        // (Just verify it doesn't panic — the output goes to stdout.)
+        print_category_fix_report(&result);
     }
 }

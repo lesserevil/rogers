@@ -221,7 +221,7 @@ impl Default for TriageConfig {
 impl Default for ReleaseConfig {
     fn default() -> Self {
         Self {
-            approval_discussion_category: Some("Announcements".to_string()),
+            approval_discussion_category: Some("Release Proposals".to_string()),
             active_branches: Some(vec![]),
             voting_window_days: Some(2),
             stale_threshold_days: Some(7),

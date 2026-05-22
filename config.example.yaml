@@ -35,7 +35,7 @@ triage:
   assignees: []                     # usernames to assign to new issues
 
 release:
-  approval_discussion_category: Announcements   # GitHub Discussion category for proposals
+  approval_discussion_category: Release Proposals   # GitHub Discussion category for release/backport proposals
   active_branches: []                          # e.g. ["release/1.x", "release/2.x"]
   voting_window_days: 2
   stale_threshold_days: 7

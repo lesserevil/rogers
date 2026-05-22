@@ -70,7 +70,8 @@ pub async fn run_init(
 
     // Always apply discussion category fix when --fix is set (it's a warn, not a blocker).
     if fix {
-        let cat_result = crate::init::fix::ensure_discussion_category(github, owner, repo).await?;
+        let cat_result =
+            crate::init::fix::ensure_discussion_category(github, owner, repo, None).await?;
         crate::init::fix::print_category_fix_report(&cat_result);
         category_fix = Some(cat_result);
     }
