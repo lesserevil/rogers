@@ -127,6 +127,27 @@ impl QuestionRouter {
     pub async fn route_question(&self, issue: &Issue) -> Result<RoutingResult> {
         tracing::info!("Routing question issue #{}: {}", issue.number, issue.title);
 
+        // CRIT-5: Check rodgers:question label on entry for idempotency
+        // If the label is not present, this issue was not classified by triage
+        if !self.has_rodgers_question_label(issue) {
+            tracing::info!(
+                "Issue #{} missing rodgers:question label - not classified by triage, skipping",
+                issue.number
+            );
+            return Ok(RoutingResult {
+                action: RouterActionType::NoAction,
+                issue: issue.number,
+                comment: None,
+                labels_to_add: vec![],
+                labels_to_remove: vec![],
+                close_issue: false,
+                doc_result: None,
+                code_result: None,
+                doc_gap_bead_id: None,
+                code_explanation: None,
+            });
+        }
+
         // Check if we've already handled this issue
         if self.has_rodgers_response(issue).await? {
             tracing::info!(
@@ -299,6 +320,13 @@ impl QuestionRouter {
             serde_json::from_str(content).map_err(|e| RogersError::Json(e))?;
 
         Ok(parsed)
+    }
+
+    /// Check if the issue has the rodgers:question label applied by triage.
+    /// CRIT-5: This enables idempotent question routing - if the label is present,
+    /// the question has already been classified and routed.
+    pub fn has_rodgers_question_label(&self, issue: &Issue) -> bool {
+        issue.labels.iter().any(|l| l.name == "rodgers:question")
     }
 
     /// Generate a plain-language explanation of code.
@@ -610,5 +638,103 @@ mod tests {
         let json = serde_json::to_string(&result).unwrap();
         assert!(json.contains("post_doc_answer"));
         assert!(json.contains("123"));
+    }
+
+    // =============================================================================
+    // CRIT-5: rodgers:question label enables idempotent question routing
+    // =============================================================================
+
+    fn create_test_router() -> QuestionRouter {
+        let config = crate::config::schema::Config {
+            github: crate::config::GitHubConfig {
+                owner: "test".to_string(),
+                repo: "test".to_string(),
+                token: "test".to_string(),
+                api_url: None,
+            },
+            scheduler: crate::config::SchedulerConfig::default(),
+            beads: crate::config::BeadsConfig::default(),
+            llm: crate::config::LlmConfig {
+                provider: Some("openai".to_string()),
+                base_url: Some("https://api.openai.com/v1".to_string()),
+                model: "gpt-4o-mini".to_string(),
+                api_key: "test".to_string(),
+            },
+            triage: Some(crate::config::TriageConfig::default()),
+            release: None,
+            rogation: None,
+            log_level: None,
+            error_channel: None,
+        };
+        let github = GitHubClient::new(
+            &config.github.owner,
+            &config.github.repo,
+            crate::github::GitHubAuth::new_with_default_api(&config.github.token),
+        );
+        let llm = LlmClient::new(&config.llm);
+        let bead_controller = crate::beads::controller::BeadController::new(
+            "test".to_string(),
+            "test".to_string(),
+            crate::beads::client::BeadsClient::new(),
+        );
+        QuestionRouter::new(github, llm, bead_controller, "test", "test")
+    }
+
+    fn create_question_issue(number: i32, labels: Vec<&str>) -> Issue {
+        Issue {
+            number,
+            title: "How does X work?".to_string(),
+            body: Some("Can you explain?".to_string()),
+            state: "open".to_string(),
+            user: crate::github::models::User {
+                login: "testuser".to_string(),
+                id: 1,
+                node_id: None,
+                avatar_url: None,
+                html_url: None,
+                user_type: None,
+            },
+            labels: labels
+                .into_iter()
+                .map(|name| crate::github::models::Label {
+                    id: 1,
+                    name: name.to_string(),
+                    description: None,
+                    color: None,
+                    node_id: None,
+                })
+                .collect(),
+            assignees: vec![],
+            milestone: None,
+            comments: 0,
+            closed_at: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            pull_request: None,
+            node_id: None,
+            url: None,
+            html_url: None,
+        }
+    }
+
+    #[test]
+    fn test_has_rodgers_question_label_present() {
+        let router = create_test_router();
+        let issue = create_question_issue(1, vec!["question", "rodgers:question"]);
+        assert!(router.has_rodgers_question_label(&issue));
+    }
+
+    #[test]
+    fn test_has_rodgers_question_label_missing() {
+        let router = create_test_router();
+        let issue = create_question_issue(2, vec!["question"]);
+        assert!(!router.has_rodgers_question_label(&issue));
+    }
+
+    #[test]
+    fn test_has_rodgers_question_label_no_labels() {
+        let router = create_test_router();
+        let issue = create_question_issue(3, vec![]);
+        assert!(!router.has_rodgers_question_label(&issue));
     }
 }

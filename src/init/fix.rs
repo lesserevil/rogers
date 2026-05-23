@@ -455,8 +455,8 @@ mod tests {
     /// Test: label definition count matches required labels.
     #[tokio::test]
     async fn test_label_definition_count() {
-        // 3 triage + 2 routing + 4 workflow = 9
-        assert_eq!(RODGERS_REQUIRED_LABELS.len(), 9);
+        // 3 triage + 1 rodgers:question + 2 routing + 4 workflow = 10
+        assert_eq!(RODGERS_REQUIRED_LABELS.len(), 10);
     }
 
     /// Test: label definitions include all three categories.
@@ -727,10 +727,9 @@ mod tests {
             voting_window_days: None,
             stale_threshold_days: None,
         };
-        let result =
-            ensure_discussion_category(&client, "test-owner", "test-repo", Some(&config))
-                .await
-                .unwrap();
+        let result = ensure_discussion_category(&client, "test-owner", "test-repo", Some(&config))
+            .await
+            .unwrap();
 
         assert_eq!(result.created, vec!["Custom Proposals".to_string()]);
         assert!(result.skipped.is_empty());
@@ -771,10 +770,9 @@ mod tests {
         let client = make_client(&server);
         let config = ReleaseConfig::default();
         // Default is "Release Proposals" per config schema default.
-        let result =
-            ensure_discussion_category(&client, "test-owner", "test-repo", Some(&config))
-                .await
-                .unwrap();
+        let result = ensure_discussion_category(&client, "test-owner", "test-repo", Some(&config))
+            .await
+            .unwrap();
 
         assert_eq!(result.created, vec!["Release Proposals".to_string()]);
     }

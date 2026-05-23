@@ -288,7 +288,25 @@ impl TriageEngine {
 
         let state = state_machine.state();
 
-        // Determine the label to apply
+        // CRIT-5: When classified as question, immediately apply 'rodgers:question' label
+        // This happens atomically with classification, before any question router processing.
+        // The label persists across runs, enabling idempotent question routing.
+        let is_question = classification.output.issue_type == "question";
+        if is_question {
+            let question_label = "rodgers:question";
+            if !issue.labels.iter().any(|l| l.name == question_label) {
+                actions.push(TriageAction {
+                    action_type: TriageActionType::ApplyLabel,
+                    issue: issue.number,
+                    labels_to_add: vec![question_label.to_string()],
+                    labels_to_remove: vec![],
+                    comment: None,
+                    close_issue: false,
+                });
+            }
+        }
+
+        // Determine the label to apply from the state machine
         if let Some(label) = state.label() {
             if !issue.labels.iter().any(|l| l.name == label) {
                 actions.push(TriageAction {
@@ -696,5 +714,253 @@ mod tests {
             crate::github::GitHubAuth::new_with_default_api(&config.github.token),
         );
         let _engine = TriageEngine::new(config, github, llm);
+    }
+
+    // =============================================================================
+    // CRIT-5: rodgers:question label applied immediately on classification
+    // =============================================================================
+
+    use crate::triage::classifier::ClassificationResult;
+
+    fn create_minimal_issue(number: i32, labels: Vec<&str>) -> Issue {
+        Issue {
+            number,
+            title: "Test issue".to_string(),
+            body: Some("Test body".to_string()),
+            state: "open".to_string(),
+            user: crate::github::models::User {
+                login: "testuser".to_string(),
+                id: 1,
+                node_id: None,
+                avatar_url: None,
+                html_url: None,
+                user_type: None,
+            },
+            labels: labels
+                .into_iter()
+                .map(|name| crate::github::models::Label {
+                    id: 1,
+                    name: name.to_string(),
+                    description: None,
+                    color: None,
+                    node_id: None,
+                })
+                .collect(),
+            assignees: vec![],
+            milestone: None,
+            comments: 0,
+            closed_at: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            pull_request: None,
+            node_id: None,
+            url: None,
+            html_url: None,
+        }
+    }
+
+    #[test]
+    fn test_question_classification_applies_rodgers_question_label() {
+        // CRIT-5: When triage classifies as 'question', rodgers:question label is applied
+        let config = create_test_config();
+        let llm = LlmClient::new(&config.llm);
+        let github = GitHubClient::new(
+            &config.github.owner,
+            &config.github.repo,
+            crate::github::GitHubAuth::new_with_default_api(&config.github.token),
+        );
+        let engine = TriageEngine::new(config, github, llm);
+
+        let issue = create_minimal_issue(42, vec![]);
+        let state_machine = TriageStateMachine::from_state(TriageState::Question);
+
+        // Create a classification result for question
+        let classification = ClassificationResult {
+            output: crate::llm::validator::ClassificationOutput {
+                issue_type: "question".to_string(),
+                completeness: "complete".to_string(),
+                missing_fields: vec![],
+                severity: None,
+                priority: None,
+                response_draft: None,
+                confidence: Some(0.9),
+            },
+            raw_response: r#"{"issue_type":"question","completeness":"complete"}"#.to_string(),
+        };
+
+        let actions =
+            engine.generate_actions_for_transition(&issue, &state_machine, &classification);
+
+        // Verify rodgers:question label is in the actions
+        let has_rodgers_question = actions.iter().any(|a| {
+            a.action_type == TriageActionType::ApplyLabel
+                && a.labels_to_add.contains(&"rodgers:question".to_string())
+        });
+        assert!(
+            has_rodgers_question,
+            "rodgers:question label should be applied"
+        );
+    }
+
+    #[test]
+    fn test_non_question_does_not_get_rodgers_question_label() {
+        // CRIT-5: Non-question issues NEVER get rodgers:question
+        let config = create_test_config();
+        let llm = LlmClient::new(&config.llm);
+        let github = GitHubClient::new(
+            &config.github.owner,
+            &config.github.repo,
+            crate::github::GitHubAuth::new_with_default_api(&config.github.token),
+        );
+        let engine = TriageEngine::new(config, github, llm);
+
+        let issue = create_minimal_issue(43, vec![]);
+        let state_machine = TriageStateMachine::from_state(TriageState::Bug);
+
+        let classification = ClassificationResult {
+            output: crate::llm::validator::ClassificationOutput {
+                issue_type: "bug".to_string(),
+                completeness: "complete".to_string(),
+                missing_fields: vec![],
+                severity: None,
+                priority: None,
+                response_draft: None,
+                confidence: Some(0.9),
+            },
+            raw_response: r#"{"issue_type":"bug","completeness":"complete"}"#.to_string(),
+        };
+
+        let actions =
+            engine.generate_actions_for_transition(&issue, &state_machine, &classification);
+
+        // Verify rodgers:question is NOT in the actions
+        let has_rodgers_question = actions
+            .iter()
+            .any(|a| a.labels_to_add.contains(&"rodgers:question".to_string()));
+        assert!(
+            !has_rodgers_question,
+            "Non-question should NOT get rodgers:question"
+        );
+    }
+
+    #[test]
+    fn test_feature_does_not_get_rodgers_question_label() {
+        let config = create_test_config();
+        let llm = LlmClient::new(&config.llm);
+        let github = GitHubClient::new(
+            &config.github.owner,
+            &config.github.repo,
+            crate::github::GitHubAuth::new_with_default_api(&config.github.token),
+        );
+        let engine = TriageEngine::new(config, github, llm);
+
+        let issue = create_minimal_issue(44, vec![]);
+        let state_machine = TriageStateMachine::from_state(TriageState::Feature);
+
+        let classification = ClassificationResult {
+            output: crate::llm::validator::ClassificationOutput {
+                issue_type: "feature".to_string(),
+                completeness: "complete".to_string(),
+                missing_fields: vec![],
+                severity: None,
+                priority: None,
+                response_draft: None,
+                confidence: Some(0.9),
+            },
+            raw_response: r#"{"issue_type":"feature","completeness":"complete"}"#.to_string(),
+        };
+
+        let actions =
+            engine.generate_actions_for_transition(&issue, &state_machine, &classification);
+
+        let has_rodgers_question = actions
+            .iter()
+            .any(|a| a.labels_to_add.contains(&"rodgers:question".to_string()));
+        assert!(
+            !has_rodgers_question,
+            "Feature should NOT get rodgers:question"
+        );
+    }
+
+    #[test]
+    fn test_rodgers_question_label_idempotent() {
+        // CRIT-5: If rodgers:question already present, do not duplicate
+        let config = create_test_config();
+        let llm = LlmClient::new(&config.llm);
+        let github = GitHubClient::new(
+            &config.github.owner,
+            &config.github.repo,
+            crate::github::GitHubAuth::new_with_default_api(&config.github.token),
+        );
+        let engine = TriageEngine::new(config, github, llm);
+
+        // Issue already has rodgers:question label
+        let issue = create_minimal_issue(45, vec!["rodgers:question"]);
+        let state_machine = TriageStateMachine::from_state(TriageState::Question);
+
+        let classification = ClassificationResult {
+            output: crate::llm::validator::ClassificationOutput {
+                issue_type: "question".to_string(),
+                completeness: "complete".to_string(),
+                missing_fields: vec![],
+                severity: None,
+                priority: None,
+                response_draft: None,
+                confidence: Some(0.9),
+            },
+            raw_response: r#"{"issue_type":"question","completeness":"complete"}"#.to_string(),
+        };
+
+        let actions =
+            engine.generate_actions_for_transition(&issue, &state_machine, &classification);
+
+        // Verify rodgers:question is NOT in the labels_to_add (already present)
+        let has_rodgers_question_add = actions
+            .iter()
+            .any(|a| a.labels_to_add.contains(&"rodgers:question".to_string()));
+        assert!(
+            !has_rodgers_question_add,
+            "rodgers:question should not be re-added when already present"
+        );
+    }
+
+    #[test]
+    fn test_question_incomplete_still_gets_rodgers_question_label() {
+        // CRIT-5: Even incomplete questions get the rodgers:question label
+        let config = create_test_config();
+        let llm = LlmClient::new(&config.llm);
+        let github = GitHubClient::new(
+            &config.github.owner,
+            &config.github.repo,
+            crate::github::GitHubAuth::new_with_default_api(&config.github.token),
+        );
+        let engine = TriageEngine::new(config, github, llm);
+
+        let issue = create_minimal_issue(46, vec![]);
+        let state_machine = TriageStateMachine::from_state(TriageState::QuestionIncomplete);
+
+        let classification = ClassificationResult {
+            output: crate::llm::validator::ClassificationOutput {
+                issue_type: "question".to_string(),
+                completeness: "incomplete".to_string(),
+                missing_fields: vec!["clarification".to_string()],
+                severity: None,
+                priority: None,
+                response_draft: None,
+                confidence: Some(0.9),
+            },
+            raw_response: r#"{"issue_type":"question","completeness":"incomplete"}"#.to_string(),
+        };
+
+        let actions =
+            engine.generate_actions_for_transition(&issue, &state_machine, &classification);
+
+        let has_rodgers_question = actions
+            .iter()
+            .any(|a| a.labels_to_add.contains(&"rodgers:question".to_string()));
+        assert!(
+            has_rodgers_question,
+            "Incomplete question should still get rodgers:question"
+        );
     }
 }
