@@ -22,16 +22,12 @@
 
 pub mod backport;
 pub mod beads;
-pub mod checks;
-pub mod cli;
 pub mod config;
 pub mod error;
 pub mod feature_bug;
 pub mod git;
 pub mod github;
-pub mod init;
 pub mod labels;
 pub mod llm;
-pub mod question_router;
 pub mod release;
 pub mod triage;
