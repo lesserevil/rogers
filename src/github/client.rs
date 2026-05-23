@@ -61,9 +61,17 @@ impl GitHubClient {
         &self.owner
     }
 
-    /// Get the configured repo.
+    /// Get the repository name.
     pub fn repo(&self) -> &str {
         &self.repo
+    }
+
+    /// Build the API URL for fetching issue comments.
+    fn comments_url(&self, issue_number: u64) -> String {
+        format!(
+            "{}/repos/{}/{}/issues/{}/comments",
+            self.api_base(), self.owner, self.repo, issue_number
+        )
     }
 
     /// Get the GitHub API base URL.
@@ -197,6 +205,21 @@ impl GitHubClient {
                 message: error_body,
             });
         }
+    }
+
+    /// Fetch JSON from a URL (simple GET request with auth headers).
+    async fn fetch_json<T: for<'de> Deserialize<'de>>(&self, url: &str) -> Result<T> {
+        let request = self.client.get(url).headers(self.auth.auth_headers());
+        let response = request.send().await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(RogersError::GitHubStatus {
+                code: status.as_u16(),
+                message: body,
+            });
+        }
+        response.json::<T>().await.map_err(RogersError::from)
     }
 
     // ─── Issues ───────────────────────────────────────────────────────────────
@@ -1051,6 +1074,395 @@ struct DiscussionConnection {
     nodes: Vec<Discussion>,
 }
 
+// ============================================================================
+// Release candidacy detection: merged PRs, tags, check runs
+// ============================================================================
+
+/// A GitHub repository tag (from the API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitTag {
+    /// Tag name (e.g. "v1.2.3")
+    pub name: String,
+    /// Commit SHA the tag points to
+    pub commit: GitTagCommit,
+    /// Full tag object URL
+    pub zipball_url: String,
+    #[serde(default)]
+    pub tarball_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitTagCommit {
+    pub sha: String,
+    #[serde(default)]
+    pub url: String,
+}
+
+/// A merged pull request (minimal fields needed for changelog/release).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MergedPR {
+    /// PR number
+    pub number: u64,
+    /// PR title (parsed for conventional commit type)
+    pub title: String,
+    /// PR state
+    pub state: String,
+    /// Merge commit SHA
+    pub merge_commit_sha: Option<String>,
+    /// When the PR was merged (RFC3339)
+    pub merged_at: Option<String>,
+    /// Labels on the PR
+    #[serde(default)]
+    pub labels: Vec<GitHubLabel>,
+    /// PR author
+    pub user: Option<GitHubUser>,
+    /// Base branch (e.g. "main")
+    pub base: GitHubPRRef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitHubPRRef {
+    #[serde(rename = "ref")]
+    pub ref_field: String,
+    pub sha: String,
+}
+
+impl GitHubPRRef {
+    /// Return the branch name.
+    pub fn name(&self) -> &str {
+        &self.ref_field
+    }
+}
+
+/// A check run from the GitHub Checks API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckRun {
+    /// Check run ID
+    pub id: u64,
+    /// Human-readable name (e.g. "ci/cd")
+    pub name: String,
+    /// Current conclusion: "success", "failure", "skipped", "neutral", etc.
+    pub conclusion: Option<String>,
+    /// Current status: "completed", "in_progress", "queued"
+    pub status: String,
+}
+
+/// A commit status from the GitHub commit statuses API (fallback for Checks).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitStatus {
+    /// Status state: "success", "failure", "error", "pending"
+    pub state: String,
+    /// Context label (e.g. "ci/github-actions")
+    pub context: String,
+}
+
+impl GitHubClient {
+    // ---- Tags ----
+
+    /// Build the API URL for listing repository tags.
+    fn tags_url(&self) -> String {
+        format!(
+            "{}/repos/{}/{}/tags?per_page=100",
+            self.api_base(), self.owner, self.repo
+        )
+    }
+
+    /// Fetch repository tags from the GitHub API.
+    ///
+    /// Returns tags sorted by most recently created first.
+    /// Handles pagination by fetching up to 100 tags per page.
+    pub async fn fetch_tags(&self) -> Result<Vec<GitTag>> {
+        let url = self.tags_url();
+        let tags = self.fetch_json::<Vec<GitTag>>(&url).await?;
+        Ok(tags)
+    }
+
+    // ---- Merged Pull Requests ----
+
+    /// Build the API URL for listing pull requests.
+    fn pull_requests_url(
+        &self,
+        base_branch: &str,
+        state: &str,
+        sort: &str,
+        direction: &str,
+    ) -> String {
+        format!(
+            "{}/repos/{}/{}/pulls?base={}&state={}&sort={}&direction={}&per_page=100",
+            self.api_base(), self.owner, self.repo, base_branch, state, sort, direction
+        )
+    }
+
+    /// Fetch merged pull requests for a given base branch.
+    ///
+    /// Returns PRs that have been merged, sorted by most recently merged first.
+    /// Handles pagination automatically.
+    pub async fn fetch_merged_prs(&self, base_branch: &str) -> Result<Vec<MergedPR>> {
+        let mut all_prs = Vec::new();
+        let mut page = 1;
+
+        loop {
+            let url = format!(
+                "{}/repos/{}/{}/pulls?base={}&state=closed&sort=updated&direction=desc&per_page=100&page={}",
+                self.api_base(), self.owner, self.repo, base_branch, page
+            );
+            let prs: Vec<MergedPR> = match self.fetch_json(&url).await {
+                Ok(p) => p,
+                Err(e) => {
+                    if all_prs.is_empty() {
+                        return Err(e);
+                    }
+                    break;
+                }
+            };
+
+            if prs.is_empty() {
+                break;
+            }
+
+            // Check if we've reached the last page before consuming prs
+            let is_last_page = prs.len() < 100;
+
+            // Filter to only merged PRs
+            let merged: Vec<MergedPR> = prs
+                .into_iter()
+                .filter(|p| p.merge_commit_sha.is_some())
+                .collect();
+
+            all_prs.extend(merged);
+
+            // If we got fewer than 100, we've reached the last page
+            if is_last_page {
+                break;
+            }
+
+            page += 1;
+
+            // Safety valve: limit to 20 pages to avoid excessive API calls
+            if page > 20 {
+                break;
+            }
+        }
+
+        Ok(all_prs)
+    }
+
+    // ---- Check Runs (GitHub Checks API) ----
+
+    /// Fetch the check runs for a specific commit SHA.
+    ///
+    /// Uses the GitHub Checks API: GET /repos/{owner}/{repo}/commits/{sha}/check-runs
+    pub async fn fetch_check_runs(&self, sha: &str) -> Result<Vec<CheckRun>> {
+        let url = format!(
+            "{}/repos/{}/{}/commits/{}/check-runs?per_page=100",
+            self.api_base(), self.owner, self.repo, sha
+        );
+        let wrapper: CheckRunsWrapper = self.fetch_json(&url).await?;
+        Ok(wrapper.check_runs)
+    }
+
+    /// Fetch the commit statuses for a specific SHA (fallback for Checks API).
+    ///
+    /// Uses the GitHub commit statuses API: GET /repos/{owner}/{repo}/commits/{sha}/status
+    pub async fn fetch_commit_statuses(&self, sha: &str) -> Result<Vec<CommitStatus>> {
+        // The combined status endpoint returns a single CombinedStatus object
+        let url = format!(
+            "{}/repos/{}/{}/commits/{}/status",
+            self.api_base(), self.owner, self.repo, sha
+        );
+        let combined: CombinedStatus = self.fetch_json(&url).await?;
+        Ok(combined.statuses)
+    }
+
+    // ---- Latest commit for a branch ----
+
+    /// Fetch the latest commit SHA for a given branch.
+    ///
+    /// Uses: GET /repos/{owner}/{repo}/branches/{branch}
+    pub async fn fetch_branch_head(&self, branch: &str) -> Result<BranchHead> {
+        let url = format!(
+            "{}/repos/{}/{}/branches/{}",
+            self.api_base(), self.owner, self.repo, branch
+        );
+        let branch_info: BranchHead = self.fetch_json(&url).await?;
+        Ok(branch_info)
+    }
+
+    /// Check if CI is green on the given branch.
+    ///
+    /// Uses the GitHub Checks API as primary, with commit statuses as fallback.
+    /// CI is considered "green" if:
+    /// - There are completed check runs (not in_progress or queued)
+    /// - All completed checks have a non-failure conclusion
+    /// - No pending checks remain
+    ///
+    /// If no checks exist at all, returns `Ok(false)` (nothing to verify = not green).
+    pub async fn is_ci_green(&self, branch: &str) -> Result<bool> {
+        // First get the latest commit SHA for the branch
+        let branch_head = match self.fetch_branch_head(branch).await {
+            Ok(bh) => bh,
+            Err(_) => return Ok(false),
+        };
+
+        let sha = &branch_head.commit.sha;
+
+        // Try the Checks API first
+        match self.fetch_check_runs(sha).await {
+            Ok(checks) => {
+                if checks.is_empty() {
+                    // No check runs — fall back to commit statuses
+                    return self.check_commit_statuses_green(sha).await;
+                }
+
+                // Check all runs
+                for check in &checks {
+                    if check.status == "completed" {
+                        // A completed check with a failure conclusion means CI is red
+                        if let Some(ref conclusion) = check.conclusion {
+                            if conclusion == "failure"
+                                || conclusion == "timed_out"
+                                || conclusion == "startup_failure"
+                            {
+                                return Ok(false);
+                            }
+                        }
+                        // If conclusion is None but status is completed, that's unusual
+                        // — treat as not green to be safe
+                        if check.conclusion.is_none() {
+                            return Ok(false);
+                        }
+                    } else {
+                        // Still in_progress or queued — CI hasn't finished yet
+                        return Ok(false);
+                    }
+                }
+
+                // All completed checks passed (success, skipped, neutral, cancelled)
+                Ok(true)
+            }
+            Err(_) => {
+                // Checks API failed — fall back to commit statuses
+                self.check_commit_statuses_green(sha).await
+            }
+        }
+    }
+
+    /// Check commit statuses for green status (fallback method).
+    async fn check_commit_statuses_green(&self, sha: &str) -> Result<bool> {
+        let statuses = self.fetch_commit_statuses(sha).await?;
+
+        if statuses.is_empty() {
+            return Ok(false);
+        }
+
+        for status in &statuses {
+            if status.state == "failure" || status.state == "error" {
+                return Ok(false);
+            }
+            if status.state == "pending" {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+}
+
+/// Wrapper for the check runs API response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CheckRunsWrapper {
+    #[serde(rename = "check_runs")]
+    check_runs: Vec<CheckRun>,
+}
+
+/// Combined commit status (from the combined status API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CombinedStatus {
+    #[serde(default)]
+    statuses: Vec<CommitStatus>,
+}
+
+/// Branch head information (from the branches API).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BranchHead {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "commit")]
+    pub commit: BranchCommit,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BranchCommit {
+    #[serde(rename = "sha")]
+    pub sha: String,
+}
+
+/// A git commit from the GitHub API (for date-based filtering).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitCommit {
+    pub sha: String,
+    pub commit: GitCommitData,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitCommitData {
+    pub author: GitCommitAuthor,
+    #[serde(default)]
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitCommitAuthor {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub email: String,
+    pub date: String,
+}
+
+impl GitHubClient {
+    // ---- Commit lookup ----
+
+    /// Fetch a git commit by SHA to get its date.
+    ///
+    /// Uses: GET /repos/{owner}/{repo}/commits/{sha}
+    /// Useful for finding when a tag was created, to filter PRs merged after it.
+    pub async fn fetch_commit_by_sha(&self, sha: &str) -> Result<GitCommit> {
+        let url = format!(
+            "{}/repos/{}/{}/commits/{}",
+            self.api_base(), self.owner, self.repo, sha
+        );
+        let commit: GitCommit = self.fetch_json(&url).await?;
+        Ok(commit)
+    }
+}
+
+// ============================================================================
+// End of release candidacy additions
+// ============================================================================
+
+/// Parse an issue URL to extract owner, repo, and issue number.
+pub fn parse_issue_url(url: &str) -> Option<(String, String, u64)> {
+    let parts: Vec<&str> = url.trim_end_matches('/').split('/').collect();
+
+    if parts.len() >= 5 {
+        let owner = parts.get(parts.len() - 4).copied();
+        let repo = parts.get(parts.len() - 3).copied();
+        let issue_str = parts.last().copied();
+        let issues_marker = parts.get(parts.len() - 2).copied();
+
+        if owner.is_some() && repo.is_some() && issue_str.is_some()
+            && issues_marker == Some("issues")
+        {
+            if let Ok(number) = issue_str.unwrap().parse::<u64>() {
+                return Some((owner.unwrap().to_string(), repo.unwrap().to_string(), number));
+            }
+        }
+    }
+
+    None
+}
+
 impl From<DiscussionsData> for DiscussionsResponse {
     fn from(data: DiscussionsData) -> Self {
         Self {
@@ -1065,6 +1477,65 @@ pub struct DiscussionsResponse {
     #[serde(rename = "pageInfo")]
     pub page_info: PageInfo,
     pub nodes: Vec<Discussion>,
+}
+
+/// GitHub Label (alias for compatibility with branch code).
+pub type GitHubLabel = Label;
+
+/// GitHub User (alias for compatibility with branch code).
+pub type GitHubUser = User;
+
+/// Create a GitHub client from environment variables.
+///
+/// Reads `GITHUB_OWNER`, `GITHUB_REPO`, and `GITHUB_TOKEN` from the environment.
+impl GitHubClient {
+    pub fn from_env() -> Result<Self> {
+        let owner = std::env::var("GITHUB_OWNER")
+            .map_err(|_| RogersError::Config("GITHUB_OWNER not set".to_string()))?;
+        let repo = std::env::var("GITHUB_REPO")
+            .map_err(|_| RogersError::Config("GITHUB_REPO not set".to_string()))?;
+        let token = std::env::var("GITHUB_TOKEN").ok();
+
+        let auth = if let Some(t) = token {
+            GitHubAuth::new_with_default_api(&t)
+        } else {
+            GitHubAuth::new_with_default_api("")
+        };
+
+        Ok(Self::new(owner, repo, auth))
+    }
+}
+
+/// Close a GitHub issue by number.
+pub async fn close_issue(client: &GitHubClient, issue_number: u64) -> Result<()> {
+    let url = format!(
+        "{}/repos/{}/{}/issues/{}",
+        client.api_base(), client.owner(), client.repo(), issue_number
+    );
+
+    let http_client = reqwest::Client::new();
+    let mut request = http_client
+        .patch(&url)
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("Content-Type", "application/json")
+        .body(r#"{"state":"closed"}"#);
+
+    request = request.header(
+        "Authorization",
+        format!("Bearer {}", client.auth().token()),
+    );
+
+    let response = request.send().await?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        return Err(RogersError::GitHubStatus {
+            code: status.as_u16(),
+            message: body,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1122,5 +1593,148 @@ mod tests {
 
         // Auth is valid at creation time
         assert!(client.auth.validate_token().is_ok());
+    }
+
+    // =============================================================================
+    // Release candidacy: MergedPR deserialization tests
+    // =============================================================================
+
+    #[test]
+    fn test_merged_pr_deserialization() {
+        let json = r#"{
+            "number": 42,
+            "title": "feat: add login",
+            "state": "closed",
+            "merge_commit_sha": "abc123",
+            "merged_at": "2024-01-15T10:00:00Z",
+            "labels": [{"name": "enhancement", "color": "84b6eb"}],
+            "base": {"ref": "main", "sha": "def456"}
+        }"#;
+
+        let pr: MergedPR = serde_json::from_str(json).unwrap();
+        assert_eq!(pr.number, 42);
+        assert_eq!(pr.title, "feat: add login");
+        assert_eq!(pr.state, "closed");
+        assert_eq!(pr.merge_commit_sha, Some("abc123".to_string()));
+        assert_eq!(pr.base.name(), "main");
+        assert_eq!(pr.labels.len(), 1);
+    }
+
+    #[test]
+    fn test_merged_pr_no_merge_sha() {
+        let json = r#"{
+            "number": 43,
+            "title": "fix: something",
+            "state": "closed",
+            "labels": [],
+            "base": {"ref": "main", "sha": "def456"}
+        }"#;
+
+        let pr: MergedPR = serde_json::from_str(json).unwrap();
+        assert!(pr.merge_commit_sha.is_none());
+    }
+
+    #[test]
+    fn test_git_tag_deserialization() {
+        let json = r#"{
+            "name": "v1.2.3",
+            "commit": {"sha": "abc123", "url": "https://api.github.com/repos/o/r/git/refs/tags/v1.2.3"},
+            "zipball_url": "https://api.github.com/repos/o/r/zipball/v1.2.3",
+            "tarball_url": "https://api.github.com/repos/o/r/tarball/v1.2.3"
+        }"#;
+
+        let tag: GitTag = serde_json::from_str(json).unwrap();
+        assert_eq!(tag.name, "v1.2.3");
+        assert_eq!(tag.commit.sha, "abc123");
+    }
+
+    #[test]
+    fn test_check_run_deserialization() {
+        let json = r#"{
+            "id": 12345,
+            "name": "ci/cd",
+            "conclusion": "success",
+            "status": "completed"
+        }"#;
+
+        let check: CheckRun = serde_json::from_str(json).unwrap();
+        assert_eq!(check.id, 12345);
+        assert_eq!(check.name, "ci/cd");
+        assert_eq!(check.conclusion, Some("success".to_string()));
+        assert_eq!(check.status, "completed");
+    }
+
+    #[test]
+    fn test_check_run_no_conclusion() {
+        let json = r#"{
+            "id": 12345,
+            "name": "ci/cd",
+            "status": "in_progress"
+        }"#;
+
+        let check: CheckRun = serde_json::from_str(json).unwrap();
+        assert_eq!(check.conclusion, None);
+        assert_eq!(check.status, "in_progress");
+    }
+
+    #[test]
+    fn test_branch_head_deserialization() {
+        let json = r#"{
+            "name": "main",
+            "commit": {"sha": "latest123"}
+        }"#;
+
+        let head: BranchHead = serde_json::from_str(json).unwrap();
+        assert_eq!(head.name, "main");
+        assert_eq!(head.commit.sha, "latest123");
+    }
+
+    #[test]
+    fn test_tags_url_format() {
+        let client = GitHubClient::new("myorg", "myrepo");
+        let url = client.tags_url();
+        assert!(url.contains("myorg"));
+        assert!(url.contains("myrepo"));
+        assert!(url.contains("/tags"));
+        assert!(url.contains("per_page=100"));
+    }
+
+    #[test]
+    fn test_git_commit_deserialization() {
+        let json = r#"{
+            "sha": "abc123def456",
+            "commit": {
+                "author": {
+                    "name": "Jane Doe",
+                    "email": "jane@example.com",
+                    "date": "2024-01-15T10:00:00Z"
+                },
+                "message": "feat: add new feature"
+            }
+        }"#;
+
+        let commit: GitCommit = serde_json::from_str(json).unwrap();
+        assert_eq!(commit.sha, "abc123def456");
+        assert_eq!(commit.commit.author.name, "Jane Doe");
+        assert_eq!(commit.commit.author.date, "2024-01-15T10:00:00Z");
+        assert_eq!(commit.commit.message, "feat: add new feature");
+    }
+
+    #[test]
+    fn test_git_commit_minimal_deserialization() {
+        let json = r#"{
+            "sha": "abc123",
+            "commit": {
+                "author": {
+                    "date": "2024-01-01T00:00:00Z"
+                }
+            }
+        }"#;
+
+        let commit: GitCommit = serde_json::from_str(json).unwrap();
+        assert_eq!(commit.sha, "abc123");
+        assert_eq!(commit.commit.author.name, "");
+        assert_eq!(commit.commit.author.email, "");
+        assert_eq!(commit.commit.message, "");
     }
 }

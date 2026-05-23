@@ -1,661 +1,862 @@
-//! Release candidacy detector.
+//! Release candidacy detection.
 //!
-//! Detects whether the repository is ready for a new release by evaluating:
-//! - Merged PRs since the last release tag
-//! - CI green status on the source branch
-//! - Blockers: blocker label, priority labels, human-flagged, LLM-judged
-//! - Milestone presence for the target release
+//! This module determines whether a release should be proposed by:
+//! 1. Finding the last semver release tag
+//! 2. Fetching merged PRs to the target branch since that tag
+//! 3. Grouping PRs by conventional commit type
+//! 4. Calculating the semantic version bump
+//! 5. Verifying CI is green on the target branch
+//!
+//! The detection is a standalone module callable by the triage loop.
+//! It does NOT create discussions — that is handled by CRIT-2/CRIT-3.
+//!
+//! ## Conventional commit → version bump rules
+//!
+//! - `BREAKING CHANGE` or `breaking:` → major bump
+//! - `feat:` → minor bump (if no breaking changes)
+//! - `fix:`, `chore:`, `docs:`, `refactor:`, `perf:`, `test:` → patch bump
+//!
+//! ## Edge cases
+//!
+//! - **No tags yet** — initial release, all merged PRs are candidates
+//! - **Non-conventional commit PRs** — categorized as `Chore`
+//! - **No PRs since last tag** — no release proposed
+//! - **CI not green** — no release proposed, even with PRs
+//!
+//! ## Acceptance Criteria (from plan)
+//!
+//! - [x] CRIT-1: Finds merged PRs since last tag
+//! - [x] CRIT-1: Groups PRs by conventional commit type correctly
+//! - [x] CRIT-1: Version bump calculation (BREAKING→major, feat→minor, fix→patch)
+//! - [x] CRIT-1: Skips if CI not green on main
+//! - [x] CRIT-1: Handles no tags gracefully (initial release)
 
-use crate::config::ReleaseConfig;
-use crate::error::{Result, RogersError};
-use crate::github::client::GitHubClient;
-use crate::github::models::{Issue, PullRequest, Release};
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Type of source branch for release.
+use crate::github::client::{GitHubClient, MergedPR};
+use crate::release::changelog::{self, ConventionalCommitType, GroupedPRs, PullRequest};
+
+/// Semantic version triplet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReleaseSource {
-    /// Releasing from the default branch (main/master).
-    Main,
-    /// Releasing from a maintenance branch.
-    Branch(String),
+pub struct SemVer {
+    pub major: u64,
+    pub minor: u64,
+    pub patch: u64,
 }
 
-impl std::fmt::Display for ReleaseSource {
+impl SemVer {
+    /// Parse a tag like "v1.2.3" into a SemVer.
+    ///
+    /// Returns `None` if the string doesn't match the `vX.Y.Z` pattern.
+    pub fn parse(tag: &str) -> Option<Self> {
+        let stripped = tag.strip_prefix('v').unwrap_or(tag);
+        let parts: Vec<&str> = stripped.split('.').collect();
+        if parts.len() != 3 {
+            return None;
+        }
+        let major = parts[0].parse().ok()?;
+        let minor = parts[1].parse().ok()?;
+        let patch = parts[2].parse().ok()?;
+        Some(Self {
+            major,
+            minor,
+            patch,
+        })
+    }
+
+    /// Format as "vX.Y.Z".
+    pub fn to_tag(&self) -> String {
+        format!("v{}.{}.{}", self.major, self.minor, self.patch)
+    }
+
+    /// Compute the next version based on commit types and breaking changes.
+    pub fn bump(&self, commit_types: &[ConventionalCommitType], has_breaking: bool) -> Self {
+        if has_breaking {
+            Self {
+                major: self.major + 1,
+                minor: 0,
+                patch: 0,
+            }
+        } else if commit_types
+            .iter()
+            .any(|t| *t == ConventionalCommitType::Feat)
+        {
+            Self {
+                major: self.major,
+                minor: self.minor + 1,
+                patch: 0,
+            }
+        } else {
+            Self {
+                major: self.major,
+                minor: self.minor,
+                patch: self.patch + 1,
+            }
+        }
+    }
+}
+
+/// The kind of version bump determined by the PRs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VersionBump {
+    /// A major bump is needed (breaking changes present).
+    Major,
+    /// A minor bump is needed (features present, no breaking).
+    Minor,
+    /// A patch bump is needed (fixes, chores, etc.).
+    Patch,
+}
+
+impl std::fmt::Display for VersionBump {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ReleaseSource::Main => write!(f, "main"),
-            ReleaseSource::Branch(name) => write!(f, "release/{}", name),
+            VersionBump::Major => write!(f, "major"),
+            VersionBump::Minor => write!(f, "minor"),
+            VersionBump::Patch => write!(f, "patch"),
         }
     }
 }
 
-/// A blocker that could prevent a release.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Blocker {
-    /// Issue number associated with this blocker.
-    pub issue_number: i32,
-    /// Issue title.
-    pub title: String,
-    /// Why this is considered a blocker.
-    pub reason: BlockerReason,
-}
-
-/// Why something is flagged as a blocker.
+/// Reasons why a release was not proposed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BlockerReason {
-    /// Issue has the `blocker` label.
-    BlockerLabel,
-    /// Issue has a priority label and is in the release milestone.
-    PriorityLabel,
-    /// A human has explicitly flagged this issue.
-    HumanFlagged,
-    /// LLM judged this issue could be a blocker.
-    LlmJudged,
-}
-
-impl std::fmt::Display for BlockerReason {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BlockerReason::BlockerLabel => write!(f, "blocker label"),
-            BlockerReason::PriorityLabel => write!(f, "priority label"),
-            BlockerReason::HumanFlagged => write!(f, "human flagged"),
-            BlockerReason::LlmJudged => write!(f, "LLM judged"),
-        }
-    }
-}
-
-/// A candidate for a new release.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReleaseCandidate {
-    /// Proposed version string (e.g., "1.2.3").
-    pub version: String,
-    /// Source branch.
-    pub source: ReleaseSource,
-    /// Number of merged PRs since last release.
-    pub pr_count: usize,
-    /// Last release tag info, if any.
-    pub last_release: Option<LastRelease>,
-    /// Blockers that should be surfaced before release.
-    pub blockers: Vec<Blocker>,
-    /// Whether CI is green on the source branch.
-    pub ci_green: bool,
-    /// Whether a milestone is set for this release.
-    pub milestone_set: bool,
-}
-
-impl ReleaseCandidate {
-    /// Check if all readiness criteria are met.
-    pub fn is_ready(&self) -> bool {
-        self.ci_green
-            && self.milestone_set
-            && !self.blockers.is_empty()
-            && self.pr_count > 0
-    }
-}
-
-/// Information about the last release tag.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LastRelease {
-    /// Tag name.
-    pub tag: String,
-    /// Release name.
-    pub name: String,
-    /// URL to the release.
-    pub url: String,
-    /// SHA of the release commit.
-    pub commit_sha: String,
-    /// Date of the release.
-    pub created_at: DateTime<Utc>,
-}
-
-impl From<&Release> for LastRelease {
-    fn from(release: &Release) -> Self {
-        Self {
-            tag: release.tag_name.clone(),
-            name: release.name.clone().unwrap_or_default(),
-            url: release.url.clone().unwrap_or_default(),
-            commit_sha: String::new(), // Will be filled by caller
-            created_at: release.created_at,
-        }
-    }
-}
-
-impl From<&Issue> for Blocker {
-    fn from(issue: &Issue) -> Self {
-        Self {
-            issue_number: issue.number,
-            title: issue.title.clone(),
-            reason: BlockerReason::BlockerLabel,
-        }
-    }
+pub enum NoReleaseReason {
+    /// No tags exist and no PRs were found.
+    NoPRs,
+    /// CI is not green on the target branch.
+    CiNotGreen,
+    /// An error occurred during detection.
+    Error(String),
 }
 
 /// Result of a release candidacy detection run.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CandidacyResult {
-    /// Candidates found in this run.
-    pub candidates: Vec<ReleaseCandidate>,
-    /// Source branches that were checked.
-    pub checked_branches: Vec<ReleaseSource>,
-    /// Number of merged PRs evaluated.
-    pub prs_checked: usize,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DetectionResult {
+    /// A release should be proposed.
+    ReleaseCandidate {
+        /// The last release tag (or `None` for initial release).
+        last_tag: Option<String>,
+        /// The computed next version tag.
+        next_version: String,
+        /// The kind of version bump.
+        version_bump: VersionBump,
+        /// PRs grouped by conventional commit type.
+        grouped_prs: GroupedPRs,
+        /// All PRs included in this candidate.
+        prs: Vec<PullRequest>,
+    },
+    /// No release should be proposed at this time.
+    NoRelease(NoReleaseReason),
 }
 
-impl CandidacyResult {
-    /// Add a candidate to the result.
-    pub fn add_candidate(&mut self, candidate: ReleaseCandidate) {
-        self.candidates.push(candidate);
-    }
-
-    /// Add a checked branch.
-    pub fn add_checked_branch(&mut self, source: ReleaseSource) {
-        self.checked_branches.push(source);
-    }
-
-    /// Increment the PR checked count.
-    pub fn pr_checked_one(&mut self) {
-        self.prs_checked += 1;
-    }
-}
-
-/// Release detector.
-///
-/// Evaluates merged PRs, CI status, blockers, and milestones
-/// to determine if a release should be proposed.
+/// Configuration for release candidacy detection.
 #[derive(Debug, Clone)]
+pub struct DetectorConfig {
+    /// Target branch to check (e.g. "main").
+    pub target_branch: String,
+}
+
+impl Default for DetectorConfig {
+    fn default() -> Self {
+        Self {
+            target_branch: "main".to_string(),
+        }
+    }
+}
+
+impl DetectorConfig {
+    /// Create config targeting a specific branch.
+    pub fn for_branch(branch: &str) -> Self {
+        Self {
+            target_branch: branch.to_string(),
+        }
+    }
+}
+
+/// Release candidacy detector.
+///
+/// Orchestrates GitHub API calls and changelog logic to determine whether
+/// a release should be proposed.
 pub struct ReleaseDetector {
-    /// GitHub client.
     github: GitHubClient,
-    /// Release configuration.
-    release_config: ReleaseConfig,
-    /// Blocker label name.
-    blocker_label: String,
-    /// Priority label prefix (e.g., "priority", "priority/high").
-    priority_labels: Vec<String>,
+    config: DetectorConfig,
 }
 
 impl ReleaseDetector {
-    /// Create a new detector.
-    pub fn new(
-        github: GitHubClient,
-        release_config: ReleaseConfig,
-        blocker_label: String,
-    ) -> Self {
-        Self {
-            github,
-            release_config,
-            blocker_label,
-            priority_labels: vec![
-                "priority/critical".to_string(),
-                "priority/high".to_string(),
-                "priority/medium".to_string(),
-                "priority/low".to_string(),
-            ],
-        }
+    /// Create a new detector for the given GitHub client and config.
+    pub fn new(github: GitHubClient, config: DetectorConfig) -> Self {
+        Self { github, config }
     }
 
-    /// Detect release candidates from the configured source branches.
-    ///
-    /// Checks `main` and any configured active release branches.
-    pub async fn detect_candidates(&mut self) -> Result<CandidacyResult> {
-        let mut result = CandidacyResult::default();
+    /// Create a detector from environment with default config (target branch: "main").
+    pub fn from_env() -> crate::error::Result<Self> {
+        let github = GitHubClient::from_env()?;
+        Ok(Self::new(github, DetectorConfig::default()))
+    }
 
-        // Check main branch
-        let main_candidate = self.check_branch(&ReleaseSource::Main).await?;
-        if let Some(candidate) = main_candidate {
-            result.add_candidate(candidate);
-            result.add_checked_branch(ReleaseSource::Main);
+    /// Run the full detection flow.
+    ///
+    /// This is the main entry point. It:
+    /// 1. Finds the last semver tag
+    /// 2. Fetches merged PRs to the target branch since that tag
+    /// 3. Checks CI is green
+    /// 4. Groups PRs and calculates version bump
+    /// 5. Returns `DetectionResult`
+    pub async fn detect(&self) -> DetectionResult {
+        // Step 1: Find last release tag
+        let last_tag = match self.find_last_release_tag().await {
+            Ok(tag) => tag,
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to find last release tag");
+                return DetectionResult::NoRelease(NoReleaseReason::Error(format!(
+                    "failed to find last tag: {}",
+                    e
+                )));
+            }
+        };
+
+        // Step 2: Fetch merged PRs since the last tag
+        let merged_prs = match self.fetch_merged_prs_since_tag(&last_tag).await {
+            Ok(prs) => prs,
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to fetch merged PRs");
+                return DetectionResult::NoRelease(NoReleaseReason::Error(format!(
+                    "failed to fetch PRs: {}",
+                    e
+                )));
+            }
+        };
+
+        // No PRs → no release needed
+        if merged_prs.is_empty() {
+            return DetectionResult::NoRelease(NoReleaseReason::NoPRs);
         }
 
-        // Check active release branches
-        let active_branches: Vec<String> = self.release_config
-            .active_branches
-            .clone()
-            .unwrap_or_default();
-
-        for branch in active_branches {
-            let source = ReleaseSource::Branch(branch.clone());
-            let candidate = self.check_branch(&source).await?;
-            if let Some(c) = candidate {
-                result.add_candidate(c);
-                result.add_checked_branch(source);
+        // Step 3: Check CI is green on the target branch
+        match self.github.is_ci_green(&self.config.target_branch).await {
+            Ok(green) => {
+                if !green {
+                    return DetectionResult::NoRelease(NoReleaseReason::CiNotGreen);
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to check CI status");
+                return DetectionResult::NoRelease(NoReleaseReason::Error(format!(
+                    "failed to check CI: {}",
+                    e
+                )));
             }
         }
 
-        Ok(result)
-    }
+        // Step 4: Convert MergedPRs to PullRequests and group by type
+        let prs: Vec<PullRequest> = self
+            .merged_prs_to_pull_requests(&merged_prs)
+            .into_iter()
+            .filter(|pr| pr.is_for_main_changelog())
+            .collect();
 
-    /// Check a single branch for release candidacy.
-    async fn check_branch(&mut self, source: &ReleaseSource) -> Result<Option<ReleaseCandidate>> {
-        let branch_name = match source {
-            ReleaseSource::Main => "main",
-            ReleaseSource::Branch(name) => name.as_str(),
+        if prs.is_empty() {
+            return DetectionResult::NoRelease(NoReleaseReason::NoPRs);
+        }
+
+        let grouped = changelog::group_prs_by_type(&prs);
+
+        // Step 5: Calculate version bump
+        let commit_types: Vec<ConventionalCommitType> =
+            grouped.groups.iter().map(|(t, _)| t.clone()).collect();
+
+        let has_breaking = merged_prs
+            .iter()
+            .any(|pr| pr.title.to_lowercase().contains("breaking change"));
+
+        let version_bump = determine_version_bump(&commit_types, has_breaking);
+
+        // Step 6: Compute next version
+        let current_version = match &last_tag {
+            Some(tag) => match SemVer::parse(tag) {
+                Some(v) => v,
+                None => SemVer {
+                    major: 0,
+                    minor: 0,
+                    patch: 0,
+                },
+            },
+            None => SemVer {
+                major: 0,
+                minor: 0,
+                patch: 0,
+            },
         };
 
-        // Get the latest release tag to compare against
-        let releases = self.github.list_releases(None, None).await?;
-        let last_release = releases.first().cloned();
+        let next_version = current_version.bump(&commit_types, has_breaking);
 
-        // Get merged PRs since last release (or all merged PRs if no release exists)
-        let prs = self
+        DetectionResult::ReleaseCandidate {
+            last_tag: last_tag.map(|s| s.to_string()),
+            next_version: next_version.to_tag(),
+            version_bump,
+            grouped_prs: grouped,
+            prs,
+        }
+    }
+
+    /// Find the latest semver release tag via the GitHub API.
+    ///
+    /// Returns `Ok(None)` if no tags exist (initial release scenario).
+    /// Prefers tags matching `v*.*.*` pattern.
+    async fn find_last_release_tag(&self) -> crate::error::Result<Option<String>> {
+        let tags = self.github.fetch_tags().await?;
+
+        // Find the first tag matching vX.Y.Z (API returns newest first)
+        for tag in &tags {
+            if SemVer::parse(&tag.name).is_some() {
+                return Ok(Some(tag.name.clone()));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Fetch merged PRs to the target branch since the last tag.
+    ///
+    /// If `last_tag` is `None`, returns all merged PRs (initial release).
+    /// Filters by `merged_at` date from the tag's commit date.
+    async fn fetch_merged_prs_since_tag(
+        &self,
+        last_tag: &Option<String>,
+    ) -> crate::error::Result<Vec<MergedPR>> {
+        let all_prs = self
             .github
-            .list_pull_requests(Some("merged"), None, None)
+            .fetch_merged_prs(&self.config.target_branch)
             .await?;
 
-        let since_cutoff = last_release.as_ref().map(|r| r.created_at);
-        let prs_on_branch: Vec<_> = prs
+        // If no tag, return all merged PRs
+        let tag_name = match last_tag {
+            Some(t) => t,
+            None => return Ok(all_prs),
+        };
+
+        // Find the tag's commit SHA from the tags API
+        let tags = self.github.fetch_tags().await?;
+        let tag_commit_sha = match tags.iter().find(|t| t.name == *tag_name) {
+            Some(tag) => tag.commit.sha.clone(),
+            None => return Ok(all_prs), // Can't find tag commit, return all
+        };
+
+        // Get the commit date for the tag
+        let tag_commit = match self.github.fetch_commit_by_sha(&tag_commit_sha).await {
+            Ok(c) => c,
+            Err(_) => return Ok(all_prs), // Can't date-compare, return all
+        };
+
+        let tag_date = tag_commit.commit.author.date;
+
+        // Filter PRs merged after the tag
+        let since_tag: Vec<MergedPR> = all_prs
             .into_iter()
             .filter(|pr| {
-                pr.merged_at >= since_cutoff
-                    && pr.base.ref_name == branch_name
+                if let Some(merged_at) = &pr.merged_at {
+                    // Simple string comparison works for RFC3339
+                    merged_at > &tag_date
+                } else {
+                    false
+                }
             })
             .collect();
 
-        let pr_count = prs_on_branch.len();
-        if pr_count == 0 {
-            return Ok(None);
-        }
-
-        // Evaluate each PR for candidacy and collect blockers
-        let mut blockers = Vec::new();
-        let mut milestone_set = false;
-        let mut pr_count_internal = 0usize;
-
-        for pr in &prs_on_branch {
-            self.pr_checked_one_inner(&mut pr_count_internal);
-
-            // Check for linked issues
-            if let Some(issue_num) = self.extract_issue_number(pr) {
-                if let Ok(issue) = self.github.get_issue(issue_num).await {
-                    // Check milestone
-                    if issue.milestone.is_some() {
-                        milestone_set = true;
-                    }
-
-                    // Check for blockers
-                    if let Some(blocker) = self.evaluate_blocker(&issue) {
-                        blockers.push(blocker);
-                    }
-                }
-            }
-        }
-
-        // Check if milestone is set (even if PRs don't have linked issues)
-        if !milestone_set {
-            milestone_set = self.has_milestone_issues(since_cutoff.as_ref()).await?;
-        }
-
-        // Check CI status on the branch
-        let ci_green = self.check_ci_status(branch_name).await?;
-
-        // Determine version
-        let version = if let Some(ref last_rel) = last_release {
-            self.next_version(&last_rel.tag_name)
-        } else {
-            "0.1.0".to_string()
-        };
-
-        // Build last_release info
-        let last_release_info = last_release.as_ref().map(|r| {
-            let mut info: LastRelease = r.into();
-            info.commit_sha = r.html_url.clone().unwrap_or_default();
-            info
-        });
-
-        let candidate = ReleaseCandidate {
-            version,
-            source: source.clone(),
-            pr_count,
-            last_release: last_release_info,
-            blockers,
-            ci_green,
-            milestone_set,
-        };
-
-        Ok(Some(candidate))
+        Ok(since_tag)
     }
 
-    /// Internal: increment PR count.
-    fn pr_checked_one_inner(&self, count: &mut usize) {
-        *count += 1;
-    }
-
-    /// Check if there are milestone issues for the release timeframe.
-    async fn has_milestone_issues(&mut self, since: Option<&DateTime<Utc>>) -> Result<bool> {
-        let issues = self.github.list_issues(None, None, None, None, None).await?;
-        let cutoff = since.copied().unwrap_or_else(Utc::now);
-        Ok(issues
+    /// Convert MergedPR list to PullRequest list for changelog grouping.
+    fn merged_prs_to_pull_requests(&self, merged_prs: &[MergedPR]) -> Vec<PullRequest> {
+        merged_prs
             .iter()
-            .any(|i| i.milestone.is_some() && i.created_at > cutoff))
-    }
-
-    /// Check CI status on a branch (simplified: check if last commit has any CI-related labels or status).
-    async fn check_ci_status(&mut self, branch: &str) -> Result<bool> {
-        // Check the latest commits on the branch
-        let commits = self
-            .github
-            .list_commits(Some(branch), None, None, Some(5))
-            .await?;
-
-        if commits.is_empty() {
-            return Ok(false);
-        }
-
-        // Simple heuristic: if the branch has commits and we can reach the API, assume green
-        // In production, this would check GitHub check runs / status checks API
-        Ok(true)
-    }
-
-    /// Evaluate whether an issue is a blocker.
-    fn evaluate_blocker(&self, issue: &Issue) -> Option<Blocker> {
-        let label_names: Vec<&str> = issue.labels.iter().map(|l| l.name.as_str()).collect();
-
-        if label_names.contains(&self.blocker_label.as_str()) {
-            return Some(Blocker {
-                issue_number: issue.number,
-                title: issue.title.clone(),
-                reason: BlockerReason::BlockerLabel,
-            });
-        }
-
-        for priority_label in &self.priority_labels {
-            if label_names.iter().any(|l| *l == priority_label.as_str()) {
-                return Some(Blocker {
-                    issue_number: issue.number,
-                    title: issue.title.clone(),
-                    reason: BlockerReason::PriorityLabel,
-                });
-            }
-        }
-
-        // Check if issue has been manually flagged as a blocker
-        if issue.title.to_lowercase().contains("blocker") || issue.title.to_lowercase().contains("critical") {
-            return Some(Blocker {
-                issue_number: issue.number,
-                title: issue.title.clone(),
-                reason: BlockerReason::HumanFlagged,
-            });
-        }
-
-        None
-    }
-
-    /// Extract issue number from PR body (Closes/Fixes/Resolves #N pattern).
-    fn extract_issue_number(&self, pr: &PullRequest) -> Option<i32> {
-        let body = pr.body.as_deref().unwrap_or("");
-        for pattern in ["closes #", "fixes #", "resolves #"] {
-            if let Some(pos) = body.to_lowercase().find(pattern) {
-                let rest = &body[pos + pattern.len()..];
-                let num_str: String = rest
-                    .chars()
-                    .take_while(|c| c.is_ascii_digit())
-                    .collect();
-                if !num_str.is_empty() {
-                    return num_str.parse().ok();
-                }
-            }
-        }
-        None
-    }
-
-    /// Generate the next version number from the current tag.
-    pub fn next_version(&self, current_tag: &str) -> String {
-        // Strip leading 'v' if present
-        let tag = current_tag.strip_prefix('v').unwrap_or(current_tag);
-        let parts: Vec<u32> = tag
-            .split('.')
-            .filter_map(|p| p.parse().ok())
-            .collect();
-
-        match parts.len() {
-            3 => {
-                // Increment patch
-                format!("{}.{}.{}", parts[0], parts[1], parts[2] + 1)
-            }
-            2 => format!("{}.{}.0", parts[0], parts[1] + 1),
-            _ => "0.1.0".to_string(),
-        }
-    }
-
-    /// Format the approval body for a release proposal.
-    pub fn format_approval_body(
-        &self,
-        candidate: &ReleaseCandidate,
-        discussion_url: Option<&str>,
-    ) -> String {
-        let last_release_ref = candidate
-            .last_release
-            .as_ref()
-            .map(|r| format!("`{}`", r.tag))
-            .unwrap_or_else(|| "none (first release)".to_string());
-
-        let source = match &candidate.source {
-            ReleaseSource::Main => "main".to_string(),
-            ReleaseSource::Branch(name) => format!("release/{}", name),
-        };
-
-        let blockers_section = if candidate.blockers.is_empty() {
-            "None".to_string()
-        } else {
-            candidate
-                .blockers
-                .iter()
-                .map(|b| {
-                    format!(
-                        "- Issue #{}: {} (reason: {})",
-                        b.issue_number, b.title, b.reason
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-
-        format!(
-            r#"## Release {version}
-
-**Proposed by:** Rodgers
-**Source:** {source}
-**Commits since last release:** {pr_count} merged PRs
-**Last release:** {last_release}
-
-### Blockers
-
-{blockers}
-
-### Vote
-
-React with 👍 to approve, 👎 to reject.
-Release will be cut within one triage run of approval unless vetoed.
-"#,
-            version = candidate.version,
-            source = source,
-            pr_count = candidate.pr_count,
-            last_release = last_release_ref,
-            blockers = blockers_section,
-        )
+            .map(|pr| {
+                PullRequest::new(
+                    self.github.owner(),
+                    self.github.repo(),
+                    pr.number,
+                    &pr.title,
+                )
+            })
+            .collect()
     }
 }
 
-/// Helper to get mutable reference through wrapper.
-struct ResultMut<'a, T>(&'a mut T);
+/// Determine the version bump from commit types and breaking change flag.
+pub fn determine_version_bump(
+    commit_types: &[ConventionalCommitType],
+    has_breaking: bool,
+) -> VersionBump {
+    if has_breaking {
+        return VersionBump::Major;
+    }
+
+    if commit_types
+        .iter()
+        .any(|t| *t == ConventionalCommitType::Feat)
+    {
+        return VersionBump::Minor;
+    }
+
+    VersionBump::Patch
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    // =============================================================================
+    // SemVer parsing and formatting tests
+    // =============================================================================
+
     #[test]
-    fn test_next_version_patch() {
-        let detector = ReleaseDetector::new(
-            GitHubClient::new("owner", "repo", crate::github::auth::GitHubAuth::new_with_default_api("ghp_test")),
-            ReleaseConfig::default(),
-            "blocker".to_string(),
-        );
-        assert_eq!(detector.next_version("1.2.3"), "1.2.4");
+    fn test_semver_parse_valid() {
+        let v = SemVer::parse("v1.2.3").unwrap();
+        assert_eq!(v.major, 1);
+        assert_eq!(v.minor, 2);
+        assert_eq!(v.patch, 3);
     }
 
     #[test]
-    fn test_next_version_major() {
-        let detector = ReleaseDetector::new(
-            GitHubClient::new("owner", "repo", crate::github::auth::GitHubAuth::new_with_default_api("ghp_test")),
-            ReleaseConfig::default(),
-            "blocker".to_string(),
-        );
-        assert_eq!(detector.next_version("1.2"), "1.3.0");
+    fn test_semver_parse_without_v() {
+        let v = SemVer::parse("0.1.0").unwrap();
+        assert_eq!(v.major, 0);
+        assert_eq!(v.minor, 1);
+        assert_eq!(v.patch, 0);
     }
 
     #[test]
-    fn test_next_version_strip_v() {
-        let detector = ReleaseDetector::new(
-            GitHubClient::new("owner", "repo", crate::github::auth::GitHubAuth::new_with_default_api("ghp_test")),
-            ReleaseConfig::default(),
-            "blocker".to_string(),
-        );
-        assert_eq!(detector.next_version("v1.2.3"), "1.2.4");
+    fn test_semver_parse_invalid() {
+        assert!(SemVer::parse("latest").is_none());
+        assert!(SemVer::parse("v1.2").is_none());
+        assert!(SemVer::parse("v1.2.3.4").is_none());
+        assert!(SemVer::parse("").is_none());
+        assert!(SemVer::parse("release-1.0").is_none());
     }
 
     #[test]
-    fn test_next_version_empty() {
-        let detector = ReleaseDetector::new(
-            GitHubClient::new("owner", "repo", crate::github::auth::GitHubAuth::new_with_default_api("ghp_test")),
-            ReleaseConfig::default(),
-            "blocker".to_string(),
-        );
-        assert_eq!(detector.next_version(""), "0.1.0");
+    fn test_semver_to_tag() {
+        let v = SemVer {
+            major: 2,
+            minor: 0,
+            patch: 1,
+        };
+        assert_eq!(v.to_tag(), "v2.0.1");
     }
 
     #[test]
-    fn test_release_source_display_main() {
-        assert_eq!(ReleaseSource::Main.to_string(), "main");
+    fn test_semver_roundtrip() {
+        let original = "v3.14.159";
+        let parsed = SemVer::parse(original).unwrap();
+        assert_eq!(parsed.to_tag(), original);
     }
 
+    // =============================================================================
+    // Version bump calculation tests
+    // =============================================================================
+
     #[test]
-    fn test_release_source_display_branch() {
+    fn test_semver_bump_major_breaking() {
+        let v = SemVer {
+            major: 1,
+            minor: 5,
+            patch: 3,
+        };
+        let types = vec![ConventionalCommitType::Fix, ConventionalCommitType::Feat];
+        let next = v.bump(&types, true);
         assert_eq!(
-            ReleaseSource::Branch("1.x".to_string()).to_string(),
-            "release/1.x"
+            next,
+            SemVer {
+                major: 2,
+                minor: 0,
+                patch: 0,
+            }
         );
     }
 
     #[test]
-    fn test_blocker_reason_display() {
-        assert_eq!(BlockerReason::BlockerLabel.to_string(), "blocker label");
-        assert_eq!(BlockerReason::PriorityLabel.to_string(), "priority label");
-        assert_eq!(BlockerReason::HumanFlagged.to_string(), "human flagged");
-        assert_eq!(BlockerReason::LlmJudged.to_string(), "LLM judged");
-    }
-
-    #[test]
-    fn test_candidacy_result_default() {
-        let result = CandidacyResult::default();
-        assert!(result.candidates.is_empty());
-        assert!(result.checked_branches.is_empty());
-        assert_eq!(result.prs_checked, 0);
-    }
-
-    #[test]
-    fn test_candidacy_result_add() {
-        let detector = ReleaseDetector::new(
-            GitHubClient::new("owner", "repo", crate::github::auth::GitHubAuth::new_with_default_api("ghp_test")),
-            ReleaseConfig::default(),
-            "blocker".to_string(),
-        );
-        let mut result = CandidacyResult::default();
-        let mut pr_counter = 0usize;
-
-        result.add_checked_branch(ReleaseSource::Main);
-        detector.pr_checked_one_inner(&mut pr_counter);
-
-        let candidate = ReleaseCandidate {
-            version: "1.0.0".to_string(),
-            source: ReleaseSource::Main,
-            pr_count: 5,
-            last_release: None,
-            blockers: vec![],
-            ci_green: true,
-            milestone_set: true,
+    fn test_semver_bump_minor_feat() {
+        let v = SemVer {
+            major: 1,
+            minor: 5,
+            patch: 3,
         };
-        result.add_candidate(candidate);
-
-        assert_eq!(result.candidates.len(), 1);
-        assert_eq!(result.checked_branches.len(), 1);
-        assert_eq!(pr_counter, 1);
+        let types = vec![ConventionalCommitType::Feat, ConventionalCommitType::Fix];
+        let next = v.bump(&types, false);
+        assert_eq!(
+            next,
+            SemVer {
+                major: 1,
+                minor: 6,
+                patch: 0,
+            }
+        );
     }
 
     #[test]
-    fn test_extract_issue_number_closes() {
-        let detector = ReleaseDetector::new(
-            GitHubClient::new("owner", "repo", crate::github::auth::GitHubAuth::new_with_default_api("ghp_test")),
-            ReleaseConfig::default(),
-            "blocker".to_string(),
-        );
-        let pr = PullRequest {
-            number: 1,
-            title: "test".to_string(),
-            body: Some("Closes #123".to_string()),
-            state: "closed".to_string(),
-            user: crate::github::models::User { login: "test".to_string(), id: 1, node_id: None, avatar_url: None, html_url: None, user_type: None },
-            labels: vec![],
-            assignees: vec![],
-            milestone: None,
-            comments: 0,
-            commits: 1,
-            additions: 1,
-            deletions: 1,
-            changed_files: 1,
-            closed_at: None,
-            merged_at: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            merge_commit_sha: None,
-            head: crate::github::models::RepoRef { ref_name: "test".to_string(), sha: "abc".to_string(), repo: crate::github::models::Repository { id: 1, name: "test".to_string(), node_id: None, full_name: "test/repo".to_string(), private: false, html_url: None, description: None } },
-            base: crate::github::models::RepoRef { ref_name: "main".to_string(), sha: "def".to_string(), repo: crate::github::models::Repository { id: 1, name: "test".to_string(), node_id: None, full_name: "test/repo".to_string(), private: false, html_url: None, description: None } },
-            node_id: None,
-            url: None,
-            html_url: None,
-            draft: false,
-            mergeable: None,
+    fn test_semver_bump_patch_fix() {
+        let v = SemVer {
+            major: 1,
+            minor: 5,
+            patch: 3,
         };
-        assert_eq!(detector.extract_issue_number(&pr), Some(123));
+        let types = vec![ConventionalCommitType::Fix, ConventionalCommitType::Chore];
+        let next = v.bump(&types, false);
+        assert_eq!(
+            next,
+            SemVer {
+                major: 1,
+                minor: 5,
+                patch: 4,
+            }
+        );
     }
 
     #[test]
-    fn test_extract_issue_number_no_match() {
-        let detector = ReleaseDetector::new(
-            GitHubClient::new("owner", "repo", crate::github::auth::GitHubAuth::new_with_default_api("ghp_test")),
-            ReleaseConfig::default(),
-            "blocker".to_string(),
-        );
-        let pr = PullRequest {
-            number: 1,
-            title: "test".to_string(),
-            body: Some("no issue reference".to_string()),
-            state: "closed".to_string(),
-            user: crate::github::models::User { login: "test".to_string(), id: 1, node_id: None, avatar_url: None, html_url: None, user_type: None },
-            labels: vec![],
-            assignees: vec![],
-            milestone: None,
-            comments: 0,
-            commits: 1,
-            additions: 1,
-            deletions: 1,
-            changed_files: 1,
-            closed_at: None,
-            merged_at: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            merge_commit_sha: None,
-            head: crate::github::models::RepoRef { ref_name: "test".to_string(), sha: "abc".to_string(), repo: crate::github::models::Repository { id: 1, name: "test".to_string(), node_id: None, full_name: "test/repo".to_string(), private: false, html_url: None, description: None } },
-            base: crate::github::models::RepoRef { ref_name: "main".to_string(), sha: "def".to_string(), repo: crate::github::models::Repository { id: 1, name: "test".to_string(), node_id: None, full_name: "test/repo".to_string(), private: false, html_url: None, description: None } },
-            node_id: None,
-            url: None,
-            html_url: None,
-            draft: false,
-            mergeable: None,
+    fn test_semver_bump_patch_docs_only() {
+        let v = SemVer {
+            major: 0,
+            minor: 0,
+            patch: 0,
         };
-        assert_eq!(detector.extract_issue_number(&pr), None);
+        let types = vec![ConventionalCommitType::Docs];
+        let next = v.bump(&types, false);
+        assert_eq!(
+            next,
+            SemVer {
+                major: 0,
+                minor: 0,
+                patch: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn test_semver_bump_patch_empty_types() {
+        let v = SemVer {
+            major: 1,
+            minor: 2,
+            patch: 3,
+        };
+        let types: Vec<ConventionalCommitType> = vec![];
+        let next = v.bump(&types, false);
+        assert_eq!(
+            next,
+            SemVer {
+                major: 1,
+                minor: 2,
+                patch: 4,
+            }
+        );
+    }
+
+    #[test]
+    fn test_determine_version_bump_breaking() {
+        let types = vec![ConventionalCommitType::Feat, ConventionalCommitType::Fix];
+        assert_eq!(determine_version_bump(&types, true), VersionBump::Major);
+    }
+
+    #[test]
+    fn test_determine_version_bump_feat() {
+        let types = vec![ConventionalCommitType::Feat, ConventionalCommitType::Chore];
+        assert_eq!(determine_version_bump(&types, false), VersionBump::Minor);
+    }
+
+    #[test]
+    fn test_determine_version_bump_fix_only() {
+        let types = vec![
+            ConventionalCommitType::Fix,
+            ConventionalCommitType::Docs,
+            ConventionalCommitType::Refactor,
+        ];
+        assert_eq!(determine_version_bump(&types, false), VersionBump::Patch);
+    }
+
+    #[test]
+    fn test_determine_version_bump_empty() {
+        let types: Vec<ConventionalCommitType> = vec![];
+        assert_eq!(determine_version_bump(&types, false), VersionBump::Patch);
+    }
+
+    // =============================================================================
+    // VersionBump display tests
+    // =============================================================================
+
+    #[test]
+    fn test_version_bump_display() {
+        assert_eq!(format!("{}", VersionBump::Major), "major");
+        assert_eq!(format!("{}", VersionBump::Minor), "minor");
+        assert_eq!(format!("{}", VersionBump::Patch), "patch");
+    }
+
+    // =============================================================================
+    // DetectorConfig tests
+    // =============================================================================
+
+    #[test]
+    fn test_detector_config_default() {
+        let config = DetectorConfig::default();
+        assert_eq!(config.target_branch, "main");
+    }
+
+    #[test]
+    fn test_detector_config_for_branch() {
+        let config = DetectorConfig::for_branch("develop");
+        assert_eq!(config.target_branch, "develop");
+    }
+
+    // =============================================================================
+    // ReleaseDetector construction tests
+    // =============================================================================
+
+    #[test]
+    fn test_release_detector_new() {
+        let github = GitHubClient::new("myorg", "myrepo");
+        let config = DetectorConfig::for_branch("main");
+        let detector = ReleaseDetector::new(github, config);
+        assert_eq!(detector.config.target_branch, "main");
+    }
+
+    // =============================================================================
+    // Merged PR to PullRequest conversion tests
+    // =============================================================================
+
+    #[test]
+    fn test_merged_prs_to_pull_requests() {
+        let github = GitHubClient::new("myorg", "myrepo");
+        let config = DetectorConfig::default();
+        let detector = ReleaseDetector::new(github, config);
+
+        let merged_prs = vec![
+            MergedPR {
+                number: 1,
+                title: "feat: add login".to_string(),
+                state: "closed".to_string(),
+                merge_commit_sha: Some("abc".to_string()),
+                merged_at: Some("2024-01-15T10:00:00Z".to_string()),
+                labels: vec![],
+                user: None,
+                base: crate::github::client::GitHubPRRef {
+                    ref_field: "main".to_string(),
+                    sha: "def".to_string(),
+                },
+            },
+            MergedPR {
+                number: 2,
+                title: "fix: crash on login".to_string(),
+                state: "closed".to_string(),
+                merge_commit_sha: Some("ghi".to_string()),
+                merged_at: Some("2024-01-16T12:00:00Z".to_string()),
+                labels: vec![],
+                user: None,
+                base: crate::github::client::GitHubPRRef {
+                    ref_field: "main".to_string(),
+                    sha: "jkl".to_string(),
+                },
+            },
+        ];
+
+        let prs = detector.merged_prs_to_pull_requests(&merged_prs);
+        assert_eq!(prs.len(), 2);
+        assert_eq!(prs[0].number, 1);
+        assert_eq!(prs[0].title, "feat: add login");
+        assert_eq!(prs[0].url, "https://github.com/myorg/myrepo/pull/1");
+        assert_eq!(prs[1].number, 2);
+        assert_eq!(prs[1].title, "fix: crash on login");
+    }
+
+    #[test]
+    fn test_merged_prs_to_pull_requests_empty() {
+        let github = GitHubClient::new("myorg", "myrepo");
+        let config = DetectorConfig::default();
+        let detector = ReleaseDetector::new(github, config);
+        let prs = detector.merged_prs_to_pull_requests(&[]);
+        assert!(prs.is_empty());
+    }
+
+    // =============================================================================
+    // Conventional commit detection for breaking changes
+    // =============================================================================
+
+    #[test]
+    fn test_breaking_change_in_title() {
+        // The detector checks for "breaking change" (case-insensitive) in PR titles
+        let title1 = "feat: BREAKING CHANGE: new API";
+        assert!(title1.to_lowercase().contains("breaking change"));
+
+        let title2 = "feat: breaking change in auth";
+        assert!(title2.to_lowercase().contains("breaking change"));
+
+        let title3 = "fix: normal fix without breaking";
+        assert!(!title3.to_lowercase().contains("breaking change"));
+    }
+
+    // =============================================================================
+    // DetectionResult tests
+    // =============================================================================
+
+    #[test]
+    fn test_detection_result_release_candidate() {
+        let result = DetectionResult::ReleaseCandidate {
+            last_tag: Some("v1.0.0".to_string()),
+            next_version: "v1.1.0".to_string(),
+            version_bump: VersionBump::Minor,
+            grouped_prs: GroupedPRs::new(),
+            prs: vec![],
+        };
+
+        match result {
+            DetectionResult::ReleaseCandidate {
+                last_tag,
+                next_version,
+                version_bump,
+                ..
+            } => {
+                assert_eq!(last_tag, Some("v1.0.0".to_string()));
+                assert_eq!(next_version, "v1.1.0");
+                assert_eq!(version_bump, VersionBump::Minor);
+            }
+            _ => panic!("expected ReleaseCandidate"),
+        }
+    }
+
+    #[test]
+    fn test_detection_result_no_release_ci() {
+        let result = DetectionResult::NoRelease(NoReleaseReason::CiNotGreen);
+        match result {
+            DetectionResult::NoRelease(reason) => {
+                assert_eq!(reason, NoReleaseReason::CiNotGreen);
+            }
+            _ => panic!("expected NoRelease"),
+        }
+    }
+
+    #[test]
+    fn test_detection_result_no_release_no_prs() {
+        let result = DetectionResult::NoRelease(NoReleaseReason::NoPRs);
+        match result {
+            DetectionResult::NoRelease(reason) => {
+                assert_eq!(reason, NoReleaseReason::NoPRs);
+            }
+            _ => panic!("expected NoRelease"),
+        }
+    }
+
+    #[test]
+    fn test_detection_result_no_release_error() {
+        let result =
+            DetectionResult::NoRelease(NoReleaseReason::Error("network timeout".to_string()));
+        match result {
+            DetectionResult::NoRelease(NoReleaseReason::Error(msg)) => {
+                assert_eq!(msg, "network timeout");
+            }
+            _ => panic!("expected NoRelease(Error)"),
+        }
+    }
+
+    // =============================================================================
+    // Initial release scenario (no tags)
+    // =============================================================================
+
+    #[test]
+    fn test_initial_release_version_computation() {
+        // When no tags exist, we start from v0.0.0
+        let current = SemVer {
+            major: 0,
+            minor: 0,
+            patch: 0,
+        };
+
+        // Adding a feature → v0.1.0
+        let types = vec![ConventionalCommitType::Feat];
+        let next = current.bump(&types, false);
+        assert_eq!(
+            next,
+            SemVer {
+                major: 0,
+                minor: 1,
+                patch: 0,
+            }
+        );
+
+        // Adding a fix → v0.0.1
+        let types = vec![ConventionalCommitType::Fix];
+        let next = current.bump(&types, false);
+        assert_eq!(
+            next,
+            SemVer {
+                major: 0,
+                minor: 0,
+                patch: 1,
+            }
+        );
+    }
+
+    // =============================================================================
+    // Edge cases
+    // =============================================================================
+
+    #[test]
+    fn test_semver_parse_with_prerelease_returns_none() {
+        // v1.0.0-beta.1 should not match our simple vX.Y.Z pattern
+        assert!(SemVer::parse("v1.0.0-beta.1").is_none());
+    }
+
+    #[test]
+    fn test_semver_parse_zero_version() {
+        let v = SemVer::parse("v0.0.0").unwrap();
+        assert_eq!(v.major, 0);
+        assert_eq!(v.minor, 0);
+        assert_eq!(v.patch, 0);
+    }
+
+    #[test]
+    fn test_semver_bump_major_from_zero() {
+        let v = SemVer {
+            major: 0,
+            minor: 0,
+            patch: 0,
+        };
+        let types = vec![ConventionalCommitType::Feat];
+        let next = v.bump(&types, true);
+        assert_eq!(
+            next,
+            SemVer {
+                major: 1,
+                minor: 0,
+                patch: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn test_multiple_breaking_and_feat_still_major() {
+        let types = vec![
+            ConventionalCommitType::Feat,
+            ConventionalCommitType::Fix,
+            ConventionalCommitType::Feat,
+        ];
+        // Even with features, breaking change takes priority
+        assert_eq!(determine_version_bump(&types, true), VersionBump::Major);
+    }
+
+    // =============================================================================
+    // NoReleaseReason equality tests
+    // =============================================================================
+
+    #[test]
+    fn test_no_release_reason_equality() {
+        assert_eq!(NoReleaseReason::NoPRs, NoReleaseReason::NoPRs);
+        assert_eq!(NoReleaseReason::CiNotGreen, NoReleaseReason::CiNotGreen);
+        assert_ne!(NoReleaseReason::NoPRs, NoReleaseReason::CiNotGreen);
+    }
+
+    #[test]
+    fn test_detection_result_clone() {
+        let result = DetectionResult::NoRelease(NoReleaseReason::NoPRs);
+        let cloned = result.clone();
+        match cloned {
+            DetectionResult::NoRelease(NoReleaseReason::NoPRs) => {}
+            _ => panic!("clone failed"),
+        }
     }
 }

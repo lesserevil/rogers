@@ -13,6 +13,7 @@
 //! ```
 
 use crate::error::{Result, RogersError};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
 
@@ -273,6 +274,65 @@ impl BeadsClient {
     pub fn working_dir(&self) -> &str {
         &self.working_dir
     }
+}
+
+/// Bead status values.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum BeadStatus {
+    Open,
+    InProgress,
+    Closed,
+}
+
+impl std::fmt::Display for BeadStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BeadStatus::Open => write!(f, "open"),
+            BeadStatus::InProgress => write!(f, "in_progress"),
+            BeadStatus::Closed => write!(f, "closed"),
+        }
+    }
+}
+
+/// Bead type values.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum BeadType {
+    Epic,
+    Feature,
+    Bug,
+    Chore,
+    Spike,
+    Decision,
+    Milestone,
+    Task,
+}
+
+impl std::fmt::Display for BeadType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BeadType::Epic => write!(f, "epic"),
+            BeadType::Feature => write!(f, "feature"),
+            BeadType::Bug => write!(f, "bug"),
+            BeadType::Chore => write!(f, "chore"),
+            BeadType::Spike => write!(f, "spike"),
+            BeadType::Decision => write!(f, "decision"),
+            BeadType::Milestone => write!(f, "milestone"),
+            BeadType::Task => write!(f, "task"),
+        }
+    }
+}
+
+/// Request to file a new bead in the database.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileBeadRequest {
+    pub title: String,
+    pub description: String,
+    pub bead_type: BeadType,
+    pub priority: i32,
+    pub is_epic: bool,
+    pub parent_id: Option<String>,
+    pub status: BeadStatus,
+    pub labels: Vec<String>,
 }
 
 #[cfg(test)]

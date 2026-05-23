@@ -13,3 +13,8 @@ pub use auth::{AuthError, GitHubAuth};
 pub use init_client::GitHubClient;
 pub use models::*;
 pub use rate_limit::{RateLimitHandler, DEFAULT_WARNING_THRESHOLD};
+
+pub use client::{
+    BranchHead, CheckRun, CommitStatus, GitTag, MergedPR, GitHubLabel, GitHubUser, close_issue,
+    parse_issue_url,
+};
