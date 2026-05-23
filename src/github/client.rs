@@ -61,9 +61,23 @@ impl GitHubClient {
         &self.owner
     }
 
-    /// Get the configured repo.
+    /// Get the repository owner.
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    /// Get the repository name.
     pub fn repo(&self) -> &str {
         &self.repo
+    }
+
+    /// Build the API URL for fetching issue comments.
+    fn comments_url(&self, issue_number: u64) -> String {
+        format!(
+            "{}/repos/{}/{}/issues/{}/comments",
+            self.api_base, self.owner, self.repo, issue_number
+        )
+    }
     }
 
     /// Get the GitHub API base URL.
@@ -1374,6 +1388,46 @@ pub struct BranchCommit {
     pub sha: String,
 }
 
+/// A git commit from the GitHub API (for date-based filtering).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitCommit {
+    pub sha: String,
+    pub commit: GitCommitData,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitCommitData {
+    pub author: GitCommitAuthor,
+    #[serde(default)]
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitCommitAuthor {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub email: String,
+    pub date: String,
+}
+
+impl GitHubClient {
+    // ---- Commit lookup ----
+
+    /// Fetch a git commit by SHA to get its date.
+    ///
+    /// Uses: GET /repos/{owner}/{repo}/commits/{sha}
+    /// Useful for finding when a tag was created, to filter PRs merged after it.
+    pub async fn fetch_commit_by_sha(&self, sha: &str) -> Result<GitCommit> {
+        let url = format!(
+            "{}/repos/{}/{}/commits/{}",
+            self.api_base, self.owner, self.repo, sha
+        );
+        let commit: GitCommit = self.fetch_json(&url).await?;
+        Ok(commit)
+    }
+}
+
 // ============================================================================
 // End of release candidacy additions
 // ============================================================================
@@ -1381,7 +1435,6 @@ pub struct BranchCommit {
 /// Parse an issue URL to extract owner, repo, and issue number.
 pub fn parse_issue_url(url: &str) -> Option<(String, String, u64)> {
     let parts: Vec<&str> = url.trim_end_matches('/').split('/').collect();
->>>>>>> c658d26 (rogers-p9l: config-driven release schedule and branches)
 
 impl From<DiscussionsData> for DiscussionsResponse {
     fn from(data: DiscussionsData) -> Self {
@@ -1558,5 +1611,44 @@ mod tests {
         assert!(url.contains("myrepo"));
         assert!(url.contains("/tags"));
         assert!(url.contains("per_page=100"));
+    }
+
+    #[test]
+    fn test_git_commit_deserialization() {
+        let json = r#"{
+            "sha": "abc123def456",
+            "commit": {
+                "author": {
+                    "name": "Jane Doe",
+                    "email": "jane@example.com",
+                    "date": "2024-01-15T10:00:00Z"
+                },
+                "message": "feat: add new feature"
+            }
+        }"#;
+
+        let commit: GitCommit = serde_json::from_str(json).unwrap();
+        assert_eq!(commit.sha, "abc123def456");
+        assert_eq!(commit.commit.author.name, "Jane Doe");
+        assert_eq!(commit.commit.author.date, "2024-01-15T10:00:00Z");
+        assert_eq!(commit.commit.message, "feat: add new feature");
+    }
+
+    #[test]
+    fn test_git_commit_minimal_deserialization() {
+        let json = r#"{
+            "sha": "abc123",
+            "commit": {
+                "author": {
+                    "date": "2024-01-01T00:00:00Z"
+                }
+            }
+        }"#;
+
+        let commit: GitCommit = serde_json::from_str(json).unwrap();
+        assert_eq!(commit.sha, "abc123");
+        assert_eq!(commit.commit.author.name, "");
+        assert_eq!(commit.commit.author.email, "");
+        assert_eq!(commit.commit.message, "");
     }
 }

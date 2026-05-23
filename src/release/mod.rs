@@ -1,20 +1,17 @@
-//! Release manager module for Rodgers.
+//! Release management module.
 //!
-//! This module provides the release management system that detects
-//! release candidacy, creates proposal discussions, and executes
-//! releases with human approval. It also includes changelog generation
-//! from PR data using conventional commits and backport trigger detection.
+//! This module handles release proposal, approval, and execution.
+//! It also includes backport trigger detection for merging fixes to release branches.
 //!
-//! ## Overview
+//! ## Modules
 //!
-//! The release manager runs on each scheduler cycle and:
-//! 1. Detects candidate releases from merged PRs since last tag
-//! 2. Surfaces potential blockers (blocker label, priority, human-flagged)
-//! 3. Creates a GitHub Discussion for release approval
-//! 4. Waits for 👍 reaction before executing
-//! 5. Creates the release branch, git tag, and GitHub Release
-//! 6. Posts a notification and closes the discussion
-//! 7. Handles stale proposals (reminder → close + revisit bead)
+//! - `bead` - Release bead creation with full metadata for audit trail
+//! - `changelog` - Changelog generation from PR data
+//! - `detector` - Release candidacy detection from merged PRs since last tag
+//! - `backport_trigger` - Backport label detection and trigger creation
+//! - `config` - Release configuration loading and validation
+//! - `branch` - Release branch creation and version computation
+//! - `tag` - Git tag creation with semantic version
 
 pub mod backport_trigger;
 pub mod bead;
@@ -22,9 +19,6 @@ pub mod branch;
 pub mod changelog;
 pub mod config;
 pub mod detector;
-pub mod execution;
-pub mod manager;
-pub mod proposal;
 pub mod tag;
 
 pub use backport_trigger::{
@@ -44,11 +38,9 @@ pub use changelog::{
     generate_markdown, generate_release_notes, group_prs_by_type, parse_conventional_commit,
 };
 pub use detector::{
-    Blocker, BlockerReason, CandidacyResult, LastRelease, ReleaseCandidate, ReleaseSource,
+    DetectionResult, DetectorConfig, NoReleaseReason, ReleaseDetector, SemVer, VersionBump,
+    determine_version_bump,
 };
-pub use execution::{ReleaseExecutionError, ReleaseExecutor, ReleaseResult};
-pub use manager::{PendingApproval, ReleaseManager, ReleaseRunResult, ReleaseState};
-pub use proposal::{ApprovalResult, ReleaseApproval, ReleaseProposalManager};
 pub use tag::{
     TagConfig, TagResult, build_release_message, build_release_message_with_changelog, create_tag,
     create_tag_local,
