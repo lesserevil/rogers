@@ -18,10 +18,10 @@ pub mod state_machine;
 pub mod triage_loop;
 
 pub use classifier::{
-    ClassificationMethod, ClassifiedIssue, Confidence, IssueType, PreCheckResult,
-    TriageClassification, classify_by_labels, classify_issue, classify_issue as classify,
-    default_llm_classifier, is_bot_author, issue_type_to_workflow, pre_check_classification,
-    resolve_conflicting_labels, validate_classification,
+    ClassificationMethod, Classifier, ClassifiedIssue, Confidence, IssueType, LlmClassificationResult,
+    PreCheckResult, TriageClassification, classify_by_labels, classify_issue,
+    classify_issue as classify, default_llm_classifier, is_bot_author, issue_type_to_workflow,
+    pre_check_classification, resolve_conflicting_labels, validate_classification,
 };
 pub use engine::TriageEngine;
 pub use priority::{Priority, PriorityAssessment, assess_priority, llm_assess_priority};

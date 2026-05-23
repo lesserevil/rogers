@@ -205,7 +205,7 @@ pub fn process_issue(issue: &TriageIssue) -> TriageResult {
             issue_number: issue.number,
             processed: true,
             action: TriageAction::BreakdownComplete,
-            comment_to_post: Some(breakdown.breakdown_comment),
+            comment_to_post: Some(breakdown.body),
             labels_to_add: vec![LABEL_TRIAGED.to_string()],
             labels_to_remove: Vec::new(),
         };

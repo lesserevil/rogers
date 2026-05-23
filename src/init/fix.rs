@@ -455,8 +455,8 @@ mod tests {
     /// Test: label definition count matches required labels.
     #[tokio::test]
     async fn test_label_definition_count() {
-        // 3 triage + 2 routing + 4 workflow = 9
-        assert_eq!(RODGERS_REQUIRED_LABELS.len(), 9);
+        // 3 triage + 2 routing + 4 workflow + 3 additional = 12
+        assert_eq!(RODGERS_REQUIRED_LABELS.len(), 12);
     }
 
     /// Test: label definitions include all three categories.

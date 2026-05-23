@@ -2,10 +2,6 @@
 //!
 //! Determines if an issue is a bug, feature, question, docs, chore, or unknown.
 //!
-//! Provides both:
-//! 1. Label heuristic classification (fast path)
-//! 2. LLM-based classification (fallback path)
-//!
 //! Classification priority:
 //! 1. Label heuristics first: existing labels (bug, enhancement, question, documentation)
 //! 2. LLM classification on title+body for unlabeled issues
@@ -18,19 +14,6 @@ use crate::github::models::Issue;
 use crate::llm::client::{ChatMessage, ChatRequest, LlmClient};
 use crate::llm::prompts::{ClassificationPrompt, IssueMetadata};
 use crate::llm::validator::{ClassificationOutput, OutputValidator, ValidationResult};
-use serde::{Deserialize, Serialize};
-
-//! Issue type classification for Rodgers.
-//!
-//! Determines if an issue is a bug, feature, question, docs, chore, or unknown.
-//!
-//! Classification priority:
-//! 1. Label heuristics first: existing labels (bug, enhancement, question, documentation)
-//! 2. LLM classification on title+body for unlabeled issues
-//! 3. Default to 'question' if LLM cannot determine with confidence
-//!
-//! See plans/triage-workflow-plan.md §Top-Level Classification.
-
 use serde::{Deserialize, Serialize};
 
 /// Issue type classification result.
@@ -130,13 +113,186 @@ impl Confidence {
 ///
 /// This struct represents the structured output from the LLM classifier.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClassificationResult {
+pub struct LlmClassificationResult {
     /// The classified issue type
     pub issue_type: IssueType,
     /// Confidence level of the classification
     pub confidence: Confidence,
     /// Brief rationale for the classification (used in debug logging)
     pub rationale: String,
+}
+
+/// Classification result with raw response for debugging.
+///
+/// Used by the TriageEngine (engine.rs) for LLM-based classification.
+#[derive(Debug, Clone)]
+pub struct ClassificationResult {
+    /// Validated classification output.
+    pub output: ClassificationOutput,
+    /// Raw LLM response for debugging.
+    pub raw_response: String,
+}
+
+/// LLM-based issue classifier.
+///
+/// Uses the LLM to classify GitHub issues and determine completeness.
+/// Wraps the label-heuristic + LLM-fallback classification functions
+/// in an async API suitable for the TriageEngine.
+#[derive(Debug, Clone)]
+pub struct Classifier {
+    /// LLM client.
+    llm: LlmClient,
+    /// Output validator.
+    validator: OutputValidator,
+    /// Model name.
+    model: String,
+}
+
+impl Classifier {
+    /// Create a new classifier from LLM config.
+    pub fn new(llm: LlmClient) -> Self {
+        Self {
+            llm,
+            validator: OutputValidator::new(),
+            model: String::new(),
+        }
+    }
+
+    /// Classify a GitHub issue.
+    pub async fn classify(
+        &self,
+        issue: &Issue,
+        domain_context: Option<&str>,
+    ) -> crate::error::Result<ClassificationResult> {
+        let metadata = Self::issue_to_metadata(issue);
+        let prompt = ClassificationPrompt::for_classification(&metadata, domain_context);
+
+        let request = self.build_request(&prompt);
+        let response = self.llm.chat(request).await?;
+
+        let content = &response.choices[0].message.content;
+        self.validate_and_parse_classification(content)
+    }
+
+    /// Check completeness of an already-classified issue.
+    pub async fn check_completeness(&self, issue: &Issue) -> crate::error::Result<ClassificationResult> {
+        let metadata = Self::issue_to_metadata(issue);
+        let prompt = ClassificationPrompt::for_completeness_check(&metadata);
+
+        let request = self.build_request(&prompt);
+        let response = self.llm.chat(request).await?;
+
+        let content = &response.choices[0].message.content;
+        self.validate_and_parse_classification(content)
+    }
+
+    /// Build a chat request from a prompt.
+    fn build_request(&self, prompt: &ClassificationPrompt) -> ChatRequest {
+        ChatRequest {
+            model: self.model.clone(),
+            messages: vec![
+                ChatMessage::system(&prompt.system_prompt),
+                ChatMessage::user(&prompt.user_prompt),
+            ],
+            temperature: Some(0.3),
+            max_tokens: Some(2048),
+            response_format: Some(crate::llm::ResponseFormat {
+                format_type: "json_object".to_string(),
+                schema: Some(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "issue_type": {
+                            "type": "string",
+                            "enum": ["bug", "feature", "question", "docs", "chore", "unknown"]
+                        },
+                        "completeness": {
+                            "type": "string",
+                            "enum": ["complete", "incomplete"]
+                        },
+                        "missing_fields": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        },
+                        "severity": {
+                            "type": "string",
+                            "enum": ["critical", "high", "medium", "low", "none"]
+                        },
+                        "priority": {
+                            "type": "string",
+                            "enum": ["critical", "high", "medium", "low"]
+                        },
+                        "response_draft": {"type": "string"},
+                        "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+                    },
+                    "required": ["issue_type", "completeness"]
+                })),
+            }),
+        }
+    }
+
+    /// Convert a GitHub issue to metadata for classification.
+    fn issue_to_metadata(issue: &Issue) -> IssueMetadata {
+        let labels: Vec<String> = issue.labels.iter().map(|l| l.name.clone()).collect();
+        let prior_comments: Vec<String> = vec![];
+
+        IssueMetadata {
+            number: issue.number,
+            title: issue.title.clone(),
+            body: issue.body.clone(),
+            author: issue.user.login.clone(),
+            author_type: issue.user.user_type.clone(),
+            labels,
+            prior_comments,
+        }
+    }
+
+    /// Validate and parse LLM classification output.
+    fn validate_and_parse_classification(&self, content: &str) -> crate::error::Result<ClassificationResult> {
+        let json_str = Self::extract_json(content);
+
+        match self.validator.validate_classification(&json_str) {
+            Ok(output) => Ok(ClassificationResult {
+                output,
+                raw_response: content.to_string(),
+            }),
+            Err(result) => {
+                let errors = result
+                    .errors
+                    .iter()
+                    .map(|e| format!("{}: {}", e.field, e.message))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                Err(RogersError::Config(format!(
+                    "LLM output validation failed: {}",
+                    errors
+                )))
+            }
+        }
+    }
+
+    /// Extract JSON from content that might be wrapped in markdown code blocks.
+    fn extract_json(content: &str) -> String {
+        let trimmed = content.trim();
+
+        if trimmed.starts_with("```json") {
+            if let Some(end) = trimmed.find("```\n").or(Some(trimmed.len())) {
+                let json_content = &trimmed[7..end];
+                return json_content.trim().to_string();
+            }
+        } else if trimmed.starts_with("```") {
+            if let Some(end) = trimmed.find("```\n").or(Some(trimmed.len())) {
+                let json_content = &trimmed[3..end];
+                return json_content.trim().to_string();
+            }
+        }
+
+        trimmed.to_string()
+    }
+
+    /// Validate a response draft against warmth principles.
+    pub fn validate_response_draft(&self, draft: &str) -> ValidationResult {
+        self.validator.validate_response_draft(draft)
+    }
 }
 
 /// Label heuristic mapping for classification.
@@ -315,12 +471,12 @@ pub fn is_bot_author(author: &str) -> bool {
 /// 3. Default: if LLM confidence is low, default to question
 ///
 /// The `llm_classify` closure is called only when label heuristics don't match.
-/// It receives the issue title and body, and returns a `ClassificationResult`.
+/// It receives the issue title and body, and returns a `LlmClassificationResult`.
 ///
 /// Returns a `TriageClassification` with the determined issue type and labels to apply.
 pub fn classify_issue<F>(issue: &ClassifiedIssue, llm_classify: F) -> TriageClassification
 where
-    F: FnOnce(&str, &str) -> Option<ClassificationResult>,
+    F: FnOnce(&str, &str) -> Option<LlmClassificationResult>,
 {
     // Step 1: Pre-check (bot detection, already classified)
     match pre_check_classification(issue) {
@@ -405,9 +561,9 @@ where
 fn classify_by_llm<F>(
     issue: &ClassifiedIssue,
     llm_classify: F,
-) -> Result<ClassificationResult, String>
+) -> std::result::Result<LlmClassificationResult, String>
 where
-    F: FnOnce(&str, &str) -> Option<ClassificationResult>,
+    F: FnOnce(&str, &str) -> Option<LlmClassificationResult>,
 {
     // Combine title and body for the LLM
     let content = if issue.body.is_empty() {
@@ -426,7 +582,7 @@ where
 ///
 /// This is used for testing the heuristic path without an LLM.
 /// In production, this would be replaced with an actual LLM call.
-pub fn default_llm_classifier(_title: &str, _body: &str) -> Option<ClassificationResult> {
+pub fn default_llm_classifier(_title: &str, _body: &str) -> Option<LlmClassificationResult> {
     // In production, this would call the actual LLM endpoint
     // For now, return None to trigger heuristic-only or default behavior
     None
@@ -436,7 +592,7 @@ pub fn default_llm_classifier(_title: &str, _body: &str) -> Option<Classificatio
 ///
 /// Ensures the result contains all required fields and the issue_type
 /// is a recognized value.
-pub fn validate_classification(result: &ClassificationResult) -> bool {
+pub fn validate_classification(result: &LlmClassificationResult) -> bool {
     // issue_type must be a known variant (already enforced by type system)
     // confidence must be acceptable for production use
     // rationale should be non-empty
@@ -474,283 +630,13 @@ pub fn issue_type_to_workflow(issue_type: &IssueType) -> &str {
         IssueType::Chore => "internal-tracking",
         IssueType::Unknown => "question-routing-plan",
     }
-
-#[derive(Debug, Clone)]
-pub struct Classifier {
-    /// LLM client.
-    llm: LlmClient,
-    /// Output validator.
-    validator: OutputValidator,
-    /// Model name.
-    model: String,
 }
-
-impl Classifier {
-    /// Create a new classifier from LLM config.
-    pub fn new(llm: LlmClient) -> Self {
-        Self {
-            llm,
-            validator: OutputValidator::new(),
-            model: String::new(),
-        }
-    }
-
-    /// Classify a GitHub issue.
-    pub async fn classify(
-        &self,
-        issue: &Issue,
-        domain_context: Option<&str>,
-    ) -> Result<LlmClassificationResult> {
-        // Convert issue to metadata
-        let metadata = Self::issue_to_metadata(issue);
-
-        // Build the classification prompt
-        let prompt = ClassificationPrompt::for_classification(&metadata, domain_context);
-
-        // Send to LLM
-        let request = self.build_request(&prompt);
-        let response = self.llm.chat(request).await?;
-
-        // Parse and validate the response
-        let content = &response.choices[0].message.content;
-        self.validate_and_parse_classification(content)
-    }
-
-    /// Check completeness of an already-classified issue.
-    pub async fn check_completeness(&self, issue: &Issue) -> Result<LlmClassificationResult> {
-        let metadata = Self::issue_to_metadata(issue);
-        let prompt = ClassificationPrompt::for_completeness_check(&metadata);
-
-        let request = self.build_request(&prompt);
-        let response = self.llm.chat(request).await?;
-
-        let content = &response.choices[0].message.content;
-        self.validate_and_parse_classification(content)
-    }
-
-    /// Build a chat request from a prompt.
-    fn build_request(&self, prompt: &ClassificationPrompt) -> ChatRequest {
-        ChatRequest {
-            model: self.model.clone(),
-            messages: vec![
-                ChatMessage::system(&prompt.system_prompt),
-                ChatMessage::user(&prompt.user_prompt),
-            ],
-            temperature: Some(0.3),
-            max_tokens: Some(2048),
-            response_format: Some(crate::llm::ResponseFormat {
-                format_type: "json_object".to_string(),
-                schema: Some(serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "issue_type": {
-                            "type": "string",
-                            "enum": ["bug", "feature", "question", "docs", "chore", "unknown"]
-                        },
-                        "completeness": {
-                            "type": "string",
-                            "enum": ["complete", "incomplete"]
-                        },
-                        "missing_fields": {
-                            "type": "array",
-                            "items": {"type": "string"}
-                        },
-                        "severity": {
-                            "type": "string",
-                            "enum": ["critical", "high", "medium", "low", "none"]
-                        },
-                        "priority": {
-                            "type": "string",
-                            "enum": ["critical", "high", "medium", "low"]
-                        },
-                        "response_draft": {"type": "string"},
-                        "confidence": {"type": "number", "minimum": 0, "maximum": 1}
-                    },
-                    "required": ["issue_type", "completeness"]
-                })),
-            }),
-        }
-    }
-
-    /// Convert a GitHub issue to metadata for classification.
-    fn issue_to_metadata(issue: &Issue) -> IssueMetadata {
-        let labels: Vec<String> = issue.labels.iter().map(|l| l.name.clone()).collect();
-        let prior_comments: Vec<String> = vec![]; // Comments are fetched separately if needed
-
-        IssueMetadata {
-            number: issue.number,
-            title: issue.title.clone(),
-            body: issue.body.clone(),
-            author: issue.user.login.clone(),
-            author_type: issue.user.user_type.clone(),
-            labels,
-            prior_comments,
-        }
-    }
-
-    /// Validate and parse LLM classification output.
-    fn validate_and_parse_classification(&self, content: &str) -> Result<LlmClassificationResult> {
-        // First, try to extract JSON from markdown code blocks if present
-        let json_str = Self::extract_json(content);
-
-        // Validate the output
-        match self.validator.validate_classification(&json_str) {
-            Ok(output) => Ok(LlmClassificationResult {
-                output,
-                raw_response: content.to_string(),
-            }),
-            Err(result) => {
-                let errors = result
-                    .errors
-                    .iter()
-                    .map(|e| format!("{}: {}", e.field, e.message))
-                    .collect::<Vec<_>>()
-                    .join("; ");
-                Err(RogersError::Config(format!(
-                    "LLM output validation failed: {}",
-                    errors
-                )))
-            }
-        }
-    }
-
-    /// Extract JSON from content that might be wrapped in markdown code blocks.
-    fn extract_json(content: &str) -> String {
-        let trimmed = content.trim();
-
-        // Check for markdown code block
-        if trimmed.starts_with("```json") {
-            // Find the end of the code block
-            if let Some(end) = trimmed.find("```\n").or(Some(trimmed.len())) {
-                let json_content = &trimmed[7..end];
-                return json_content.trim().to_string();
-            }
-        } else if trimmed.starts_with("```") {
-            if let Some(end) = trimmed.find("```\n").or(Some(trimmed.len())) {
-                let json_content = &trimmed[3..end];
-                return json_content.trim().to_string();
-            }
-        }
-
-        trimmed.to_string()
-    }
-
-    /// Validate a response draft against warmth principles.
-    pub fn validate_response_draft(&self, draft: &str) -> ValidationResult {
-        self.validator.validate_response_draft(draft)
-    }
-}
-
-/// Classification result with raw response for debugging.
-#[derive(Debug, Clone)]
-pub struct LlmClassificationResult {
-    /// Validated classification output.
-    pub output: ClassificationOutput,
-    /// Raw LLM response for debugging.
-    pub raw_response: String,
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn test_extract_json_from_markdown() {
-        let content = r#"```json
-{"issue_type": "bug", "completeness": "complete"}
-```"#;
-
-        let json = Classifier::extract_json(content);
-        assert!(json.contains("bug"));
-        assert!(!json.starts_with("```"));
-    }
-
-    #[test]
-    fn test_extract_json_from_plain() {
-        let content = r#"{"issue_type": "feature", "completeness": "incomplete"}"#;
-
-        let json = Classifier::extract_json(content);
-        assert!(json.contains("feature"));
-    }
-
-    #[test]
-    fn test_extract_json_with_extra_text() {
-        let content = "Here's the analysis:\n```json\n{\"issue_type\": \"question\"}\n```\nDoes this look right?";
-
-        let json = Classifier::extract_json(content);
-        assert!(json.contains("question"));
-    }
-
-    #[test]
-    fn test_issue_to_metadata() {
-        let issue = Issue {
-            number: 42,
-            title: "Test Title".to_string(),
-            body: Some("Test body content".to_string()),
-            state: "open".to_string(),
-            user: crate::github::models::User {
-                login: "testuser".to_string(),
-                id: 123,
-                node_id: None,
-                avatar_url: None,
-                html_url: None,
-                user_type: Some("User".to_string()),
-            },
-            labels: vec![crate::github::models::Label {
-                id: 1,
-                name: "bug".to_string(),
-                description: None,
-                color: None,
-                node_id: None,
-            }],
-            assignees: vec![],
-            milestone: None,
-            comments: 0,
-            closed_at: None,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            pull_request: None,
-            node_id: None,
-            url: None,
-            html_url: None,
-        };
-
-        let metadata = Classifier::issue_to_metadata(&issue);
-        assert_eq!(metadata.number, 42);
-        assert_eq!(metadata.title, "Test Title");
-        assert_eq!(metadata.author, "testuser");
-        assert_eq!(metadata.labels, vec!["bug"]);
-    }
-
-    #[test]
-    fn test_issue_to_metadata_bot() {
-        let issue = Issue {
-            number: 43,
-            title: "Bot Issue".to_string(),
-            body: None,
-            state: "open".to_string(),
-            user: crate::github::models::User {
-                login: "snyk-bot".to_string(),
-                id: 456,
-                node_id: None,
-                avatar_url: None,
-                html_url: None,
-                user_type: Some("Bot".to_string()),
-            },
-            labels: vec![],
-            assignees: vec![],
-            milestone: None,
-            comments: 0,
-            closed_at: None,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-            pull_request: None,
-            node_id: None,
-            url: None,
-            html_url: None,
-        };
-
-        let metadata = Classifier::issue_to_metadata(&issue);
-        assert_eq!(metadata.author_type, Some("Bot".to_string()));
-
+    fn create_test_issue(
         number: u64,
         title: &str,
         body: &str,
@@ -1203,7 +1089,7 @@ mod tests {
             llm_calls
                 .borrow_mut()
                 .push((title.to_string(), _body.to_string()));
-            Some(ClassificationResult {
+            Some(LlmClassificationResult {
                 issue_type: IssueType::Bug,
                 confidence: Confidence::High,
                 rationale: "Crash described in title".to_string(),
@@ -1223,7 +1109,7 @@ mod tests {
     fn test_classify_unlabeled_low_confidence_defaults_to_question() {
         // LLM with low confidence should default to question
         let mock_llm = |_title: &str, _body: &str| {
-            Some(ClassificationResult {
+            Some(LlmClassificationResult {
                 issue_type: IssueType::Bug,
                 confidence: Confidence::Low,
                 rationale: "Not sure".to_string(),
@@ -1240,7 +1126,7 @@ mod tests {
     #[test]
     fn test_classify_unlabeled_llm_failure_defaults_to_question() {
         // LLM returning None should default to question
-        let mock_llm: fn(&str, &str) -> Option<ClassificationResult> = |_title, _body| None;
+        let mock_llm: fn(&str, &str) -> Option<LlmClassificationResult> = |_title, _body| None;
 
         let issue = create_test_issue(1, "Something", "Description", vec![], "user1");
         let result = classify_issue(&issue, mock_llm);
@@ -1306,7 +1192,7 @@ mod tests {
             llm_calls
                 .borrow_mut()
                 .push((title.to_string(), body.to_string()));
-            Some(ClassificationResult {
+            Some(LlmClassificationResult {
                 issue_type: IssueType::Bug,
                 confidence: Confidence::High,
                 rationale: "Clear bug description".to_string(),
@@ -1397,7 +1283,7 @@ The settings panel should open without crashing.
 
     #[test]
     fn test_validate_classification_valid() {
-        let result = ClassificationResult {
+        let result = LlmClassificationResult {
             issue_type: IssueType::Bug,
             confidence: Confidence::High,
             rationale: "Clear bug description".to_string(),
@@ -1407,7 +1293,7 @@ The settings panel should open without crashing.
 
     #[test]
     fn test_validate_classification_empty_rationale_fails() {
-        let result = ClassificationResult {
+        let result = LlmClassificationResult {
             issue_type: IssueType::Bug,
             confidence: Confidence::High,
             rationale: String::new(),
@@ -1518,4 +1404,5 @@ The settings panel should open without crashing.
                 name
             );
         }
+    }
 }

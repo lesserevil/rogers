@@ -898,6 +898,8 @@ rogation:
 
         std::fs::write(&config_path, yaml_content).unwrap();
         unsafe {
+            std::env::remove_var("MY_TEST_TOKEN");
+            std::env::remove_var("MY_TEST_API_KEY");
             std::env::set_var("MY_TEST_TOKEN", "token_from_env");
             std::env::set_var("MY_TEST_API_KEY", "api_key_from_env");
         }
