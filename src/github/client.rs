@@ -66,6 +66,16 @@ impl GitHubClient {
         &self.repo
     }
 
+    /// Get the GitHub API base URL.
+    pub fn api_base(&self) -> &str {
+        self.auth.api_url()
+    }
+
+    /// Get the authentication token, if set.
+    pub fn token(&self) -> Option<&str> {
+        Some(self.auth.token())
+    }
+
     /// Get the underlying HTTP client for making raw requests.
     #[allow(dead_code)]
     pub fn client(&self) -> &Client {

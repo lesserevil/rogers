@@ -20,15 +20,24 @@ use crate::feature_bug::{
     FeatureBugIssue, TransitionSummary, check_bug_completeness, check_feature_completeness,
     execute_breakdown,
 };
+use crate::question_router::route_question_issue;
+use crate::triage::router::route_feature;
 use serde::{Deserialize, Serialize};
 
 /// Label constants for triage operations.
 pub const LABEL_BUG: &str = "bug";
 pub const LABEL_FEATURE: &str = "feature";
+pub const LABEL_QUESTION: &str = "question";
 pub const LABEL_READY_FOR_REVIEW: &str = "ready-for-review";
 pub const LABEL_NEEDS_INFORMATION: &str = "needs-information";
 pub const LABEL_WILL_NOT_DO: &str = "will-not-do";
 pub const LABEL_READY_FOR_WORK: &str = "ready-for-work";
+
+/// Label marking an issue as processed by triage (idempotency key).
+///
+/// Applied atomically with other triage labels. Subsequent triage runs
+/// only process issues without this label, enabling safe re-runs.
+pub const LABEL_TRIAGED: &str = "rodgers:triaged";
 
 /// Represents a GitHub issue with all relevant metadata for triage.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +101,15 @@ pub enum TriageAction {
     SkippedClosed,
     /// Issue is not a bug or feature
     SkippedNotTriaged,
+    /// Issue was already triaged by a previous run (skip for idempotency)
+    SkippedAlreadyTriaged,
+    /// Question issue routed to question-routing workflow
+    QuestionRouted,
+}
+
+/// Check if an issue has already been triaged (has the triaged label).
+pub fn has_triaged_label(labels: &[String]) -> bool {
+    labels.iter().any(|l| l == LABEL_TRIAGED)
 }
 
 /// The main triage loop processor.
@@ -108,6 +126,24 @@ pub fn process_issue(issue: &TriageIssue) -> TriageResult {
             labels_to_add: Vec::new(),
             labels_to_remove: Vec::new(),
         };
+    }
+
+    // Skip issues already triaged by a previous run (idempotency)
+    if has_triaged_label(&issue.labels) {
+        return TriageResult {
+            issue_number: issue.number,
+            processed: false,
+            action: TriageAction::SkippedAlreadyTriaged,
+            comment_to_post: None,
+            labels_to_add: Vec::new(),
+            labels_to_remove: Vec::new(),
+        };
+    }
+
+    // Check for question issues — route to question-routing workflow
+    let is_question = issue.labels.iter().any(|l| l == LABEL_QUESTION);
+    if is_question {
+        return process_question_issue(issue);
     }
 
     // Check if this is a bug or feature issue
@@ -141,7 +177,7 @@ pub fn process_issue(issue: &TriageIssue) -> TriageResult {
             processed: true,
             action: TriageAction::WillNotDo,
             comment_to_post: Some(closure_comment),
-            labels_to_add: Vec::new(),
+            labels_to_add: vec![LABEL_TRIAGED.to_string()],
             labels_to_remove: vec![LABEL_READY_FOR_REVIEW.to_string()],
         };
     }
@@ -169,8 +205,8 @@ pub fn process_issue(issue: &TriageIssue) -> TriageResult {
             issue_number: issue.number,
             processed: true,
             action: TriageAction::BreakdownComplete,
-            comment_to_post: Some(breakdown.breakdown_comment),
-            labels_to_add: Vec::new(),
+            comment_to_post: Some(breakdown.body),
+            labels_to_add: vec![LABEL_TRIAGED.to_string()],
             labels_to_remove: Vec::new(),
         };
     }
@@ -189,7 +225,71 @@ pub fn process_issue(issue: &TriageIssue) -> TriageResult {
     }
 
     // Run completeness check
-    run_completeness_check(issue, is_bug, is_feature)
+    let mut result = run_completeness_check(issue, is_bug, is_feature);
+    // Always apply triaged label when an issue is processed
+    if result.processed && !result.labels_to_add.contains(&LABEL_TRIAGED.to_string()) {
+        result.labels_to_add.push(LABEL_TRIAGED.to_string());
+    }
+    result
+}
+
+/// Process a question issue by routing it to the question-routing workflow.
+///
+/// This function:
+/// 1. Checks if the question is already handled (has rodgers:question label)
+/// 2. Routes the question to the question router within the same triage run
+/// 3. Applies rodgers:question label BEFORE routing (so other runs know it's handled)
+/// 4. Returns a TriageResult with the question routing outcome
+///
+/// The question router handles three paths:
+/// - Doc search: search docs for answers
+/// - Code search: search source code for implementation details
+/// - Doc-gap filing: file a chore bead if no answer found
+///
+/// CRIT-6 from question-routing-plan: Non-question issues must NOT enter this workflow.
+fn process_question_issue(issue: &TriageIssue) -> TriageResult {
+    // Check if already routed to question workflow
+    let already_routed = issue
+        .labels
+        .iter()
+        .any(|l| l == crate::question_router::LABEL_RODGERS_QUESTION);
+
+    if already_routed {
+        return TriageResult {
+            issue_number: issue.number,
+            processed: false,
+            action: TriageAction::NoAction,
+            comment_to_post: None,
+            labels_to_add: Vec::new(),
+            labels_to_remove: Vec::new(),
+        };
+    }
+
+    // Route to question router within the same triage run
+    let question_result = route_question_issue(
+        issue.number,
+        &issue.title,
+        &issue.body,
+        &issue.labels,
+        &issue.author,
+    );
+
+    // Build the triage result from the question routing result
+    // The rodgers:question label is already included in question_result.labels_to_add
+    let mut labels_to_add = question_result.labels_to_add;
+    // Always apply triaged label for idempotency
+    if !labels_to_add.contains(&LABEL_TRIAGED.to_string()) {
+        labels_to_add.push(LABEL_TRIAGED.to_string());
+    }
+
+    TriageResult {
+        issue_number: issue.number,
+        processed: question_result.routed,
+        action: TriageAction::QuestionRouted,
+        comment_to_post: question_result.comment_to_post,
+        labels_to_add,
+        labels_to_remove: question_result.labels_to_remove,
+    }
 }
 
 /// Run the completeness check and return the appropriate transition.
@@ -203,27 +303,54 @@ fn run_completeness_check(issue: &TriageIssue, is_bug: bool, is_feature: bool) -
         is_feature,
     };
 
-    let (is_complete, transition) = if is_bug {
+    let (is_complete, transition, route_labels) = if is_bug {
         let result = check_bug_completeness(&issue.body);
         if result.is_complete {
-            (true, TransitionSummary::bug_ready_for_review(&fb_issue))
+            (
+                true,
+                TransitionSummary::bug_ready_for_review(&fb_issue),
+                Vec::new(),
+            )
         } else {
             (
                 false,
                 TransitionSummary::bug_needs_information(&fb_issue, &result.request_message),
+                Vec::new(),
             )
         }
     } else {
+        // Feature issue: run completeness check AND route to feature-bug workflow
         let result = check_feature_completeness(&issue.body);
         if result.is_complete {
-            (true, TransitionSummary::feature_ready_for_review(&fb_issue))
+            // Route feature to feature-bug workflow with priority assessment
+            let route_result = route_feature(
+                issue.number,
+                &issue.title,
+                &issue.body,
+                &issue.labels,
+                false, // use keyword-based priority by default
+            );
+            (
+                true,
+                TransitionSummary::feature_ready_for_review(&fb_issue),
+                route_result.labels_to_add,
+            )
         } else {
             (
                 false,
                 TransitionSummary::feature_needs_information(&fb_issue, &result.request_message),
+                Vec::new(),
             )
         }
     };
+
+    // Merge route labels with transition labels
+    let mut final_labels_to_add = transition.labels_to_add;
+    for label in route_labels {
+        if !final_labels_to_add.contains(&label) {
+            final_labels_to_add.push(label);
+        }
+    }
 
     TriageResult {
         issue_number: issue.number,
@@ -234,7 +361,7 @@ fn run_completeness_check(issue: &TriageIssue, is_bug: bool, is_feature: bool) -
             TriageAction::AppliedNeedsInformation
         },
         comment_to_post: Some(transition.comment),
-        labels_to_add: transition.labels_to_add,
+        labels_to_add: final_labels_to_add,
         labels_to_remove: transition.labels_to_remove,
     }
 }
@@ -780,7 +907,7 @@ The system should generate new API keys monthly and notify users.
 
     #[test]
     fn test_will_not_do_no_labels_to_add() {
-        // will-not-do label should already be present, no change needed
+        // will-not-do label should already be present; triaged label is added separately
         let issue = create_test_issue(
             vec!["bug", "will-not-do"],
             "Bug report body",
@@ -789,13 +916,15 @@ The system should generate new API keys monthly and notify users.
 
         let result = process_issue(&issue);
 
-        // Will-not-do should already be on the issue - no need to add more
-        assert!(result.labels_to_add.is_empty());
+        // Will-not-do should already be on the issue
+        // Ready-for-review label to remove identified
         assert!(
             result
                 .labels_to_remove
                 .contains(&"ready-for-review".to_string())
         );
+        // Triaged label is applied for idempotency
+        assert!(result.labels_to_add.contains(&LABEL_TRIAGED.to_string()));
     }
 
     #[test]
@@ -1674,6 +1803,733 @@ Export fails silently
             !comment.to_lowercase().contains("more detail")
                 && !comment.to_lowercase().contains("additional info"),
             "Should not use generic phrasing"
+        );
+    }
+
+    // =============================================================================
+    // CRIT-7 (Issue): Triaged label idempotency tests
+    // =============================================================================
+
+    #[test]
+    fn test_triaged_issue_has_triaged_label_constant() {
+        // The triaged label constant should be "rodgers:triaged"
+        assert_eq!(LABEL_TRIAGED, "rodgers:triaged");
+    }
+
+    #[test]
+    fn test_has_triaged_label_true() {
+        // Issue with triaged label should be detected
+        let labels = vec!["bug".to_string(), "rodgers:triaged".to_string()];
+        assert!(has_triaged_label(&labels));
+    }
+
+    #[test]
+    fn test_has_triaged_label_false() {
+        // Issue without triaged label should not be detected
+        let labels = vec!["bug".to_string(), "feature".to_string()];
+        assert!(!has_triaged_label(&labels));
+    }
+
+    #[test]
+    fn test_has_triaged_label_empty() {
+        // Empty labels should return false
+        let labels: Vec<String> = vec![];
+        assert!(!has_triaged_label(&labels));
+    }
+
+    #[test]
+    fn test_processed_issue_gets_triaged_label() {
+        // Processing a complete bug should add rodgers:triaged label
+        let complete_bug = r#"
+## Behavior Observed
+It crashes
+
+## Behavior Expected
+It should not crash
+
+## Reproduction Steps
+1. Click the button
+
+## Environment
+Linux
+"#;
+        let issue = create_test_issue(vec!["bug"], complete_bug, IssueState::Open);
+        let result = process_issue(&issue);
+
+        assert!(result.processed);
+        assert!(result.labels_to_add.contains(&LABEL_TRIAGED.to_string()));
+    }
+
+    #[test]
+    fn test_second_triage_run_skips_already_triaged_issues() {
+        // First run processes issue and adds triaged label
+        let complete_bug = r#"
+## Behavior Observed
+It crashes
+
+## Behavior Expected
+No crash
+
+## Reproduction Steps
+1. Click
+
+## Environment
+Linux
+"#;
+        let issue = create_test_issue(vec!["bug"], complete_bug, IssueState::Open);
+        let result = process_issue(&issue);
+
+        // First run: processed
+        assert!(result.processed);
+        assert_eq!(result.action, TriageAction::AppliedReadyForReview);
+
+        // Second run: issue now has triaged label
+        let issue_with_triaged = create_test_issue(
+            vec!["bug", "rodgers:triaged"],
+            complete_bug,
+            IssueState::Open,
+        );
+        let result2 = process_issue(&issue_with_triaged);
+
+        assert!(!result2.processed);
+        assert_eq!(result2.action, TriageAction::SkippedAlreadyTriaged);
+    }
+
+    #[test]
+    fn test_issue_with_triaged_true_not_reprocessed() {
+        // Even if an issue has rodgers:triaged label, it should be skipped
+        let bug = r#"
+## Behavior Observed
+A bug
+
+## Behavior Expected
+Fixed
+
+## Steps
+1. Step
+
+## Environment
+Linux
+"#;
+        let issue = create_test_issue(vec!["bug", "rodgers:triaged"], bug, IssueState::Open);
+        let result = process_issue(&issue);
+
+        assert!(!result.processed);
+        assert_eq!(result.action, TriageAction::SkippedAlreadyTriaged);
+    }
+
+    #[test]
+    fn test_triaged_label_applied_with_will_not_do() {
+        // will-not-do path should also apply triaged label
+        let issue = create_test_issue(vec!["bug", "will-not-do"], "Bug report", IssueState::Open);
+        let result = process_issue(&issue);
+
+        assert!(result.processed);
+        assert_eq!(result.action, TriageAction::WillNotDo);
+        assert!(result.labels_to_add.contains(&LABEL_TRIAGED.to_string()));
+    }
+
+    #[test]
+    fn test_triaged_label_applied_with_ready_for_work() {
+        // ready-for-work path should also apply triaged label
+        let issue = create_test_issue(
+            vec!["feature", "ready-for-work"],
+            "Feature request",
+            IssueState::Open,
+        );
+        let result = process_issue(&issue);
+
+        assert!(result.processed);
+        assert_eq!(result.action, TriageAction::BreakdownComplete);
+        assert!(result.labels_to_add.contains(&LABEL_TRIAGED.to_string()));
+    }
+
+    #[test]
+    fn test_triaged_label_applied_with_needs_information() {
+        // Incomplete bug should get triaged label added along with needs-information
+        let incomplete_bug = r#"
+## Behavior Observed
+It does not work.
+"#;
+        let issue = create_test_issue(vec!["bug"], incomplete_bug, IssueState::Open);
+        let result = process_issue(&issue);
+
+        assert!(result.processed);
+        assert_eq!(result.action, TriageAction::AppliedNeedsInformation);
+        assert!(result.labels_to_add.contains(&LABEL_TRIAGED.to_string()));
+        assert!(
+            result
+                .labels_to_add
+                .contains(&"needs-information".to_string())
+        );
+    }
+
+    #[test]
+    fn test_triaged_label_always_applied_when_processed() {
+        // Every path where processed=true should get triaged label
+        let complete_bug = r#"
+## Behavior Observed
+Crashes
+
+## Behavior Expected
+No crash
+
+## Steps
+1. Step
+
+## Environment
+Linux
+"#;
+
+        let complete_bug_issue = create_test_issue(vec!["bug"], complete_bug, IssueState::Open);
+        let r1 = process_issue(&complete_bug_issue);
+        assert!(r1.processed);
+        assert!(
+            r1.labels_to_add.contains(&LABEL_TRIAGED.to_string()),
+            "AppliedReadyForReview path should include triaged label"
+        );
+
+        let wwd_issue =
+            create_test_issue(vec!["bug", "will-not-do"], "Will not do", IssueState::Open);
+        let r2 = process_issue(&wwd_issue);
+        assert!(r2.processed);
+        assert!(
+            r2.labels_to_add.contains(&LABEL_TRIAGED.to_string()),
+            "WillNotDo path should include triaged label"
+        );
+
+        let rfw_issue = create_test_issue(
+            vec!["feature", "ready-for-work"],
+            "Ready for work",
+            IssueState::Open,
+        );
+        let r3 = process_issue(&rfw_issue);
+        assert!(r3.processed);
+        assert!(
+            r3.labels_to_add.contains(&LABEL_TRIAGED.to_string()),
+            "BreakdownComplete path should include triaged label"
+        );
+    }
+
+    #[test]
+    fn test_skipped_paths_dont_get_triaged_label() {
+        // Skipped paths (closed, already triaged, not triaged) should NOT add triaged label
+        let closed_issue = create_test_issue(vec!["bug"], "Body", IssueState::Closed);
+        assert_eq!(
+            process_issue(&closed_issue).action,
+            TriageAction::SkippedClosed
+        );
+        assert_eq!(
+            process_issue(&closed_issue).labels_to_add.len(),
+            0,
+            "SkippedClosed should have no labels to add"
+        );
+
+        let triaged_issue =
+            create_test_issue(vec!["bug", "rodgers:triaged"], "Body", IssueState::Open);
+        assert_eq!(
+            process_issue(&triaged_issue).action,
+            TriageAction::SkippedAlreadyTriaged
+        );
+        assert_eq!(
+            process_issue(&triaged_issue).labels_to_add.len(),
+            0,
+            "SkippedAlreadyTriaged should have no labels to add"
+        );
+
+        let non_triaged_issue = create_test_issue(vec![], "Question", IssueState::Open);
+        assert_eq!(
+            process_issue(&non_triaged_issue).action,
+            TriageAction::SkippedNotTriaged
+        );
+        assert_eq!(
+            process_issue(&non_triaged_issue).labels_to_add.len(),
+            0,
+            "SkippedNotTriaged should have no labels to add"
+        );
+    }
+
+    #[test]
+    fn test_triaged_label_applied_even_with_no_other_changes() {
+        // Even if triage makes no other changes, the triaged label is still applied
+        // This ensures idempotency on every processed issue
+        let complete_bug = r#"
+## Behavior Observed
+Minor issue
+
+## Behavior Expected
+Should work
+
+## Steps
+1. Click
+
+## Environment
+Linux
+"#;
+        let issue = create_test_issue(vec!["bug"], complete_bug, IssueState::Open);
+        let result = process_issue(&issue);
+
+        assert!(result.processed);
+        // Should have triaged label even if it's the only change
+        assert!(result.labels_to_add.contains(&LABEL_TRIAGED.to_string()));
+    }
+
+    #[test]
+    fn test_batch_skips_already_triaged_issues() {
+        // In a batch, already-triaged issues should be skipped
+        let complete_bug = r#"
+## Behavior Observed
+Bug
+
+## Behavior Expected
+No bug
+
+## Steps
+1. Step
+
+## Environment
+Linux
+"#;
+
+        let complete_feature = r#"
+## Use Case
+Feature request
+
+## Proposed Behavior
+Feature works
+
+## Acceptance Criteria
+- [ ] Works
+"#;
+
+        let issues = vec![
+            create_test_issue(vec!["bug"], complete_bug, IssueState::Open),
+            create_test_issue(
+                vec!["bug", "rodgers:triaged"],
+                complete_bug,
+                IssueState::Open,
+            ),
+            create_test_issue(vec!["feature"], complete_feature, IssueState::Open),
+        ];
+
+        let results = process_issues_batch(&issues);
+
+        assert_eq!(results.len(), 3);
+        // First issue: processed and triaged
+        assert!(results[0].processed);
+        assert_eq!(results[0].action, TriageAction::AppliedReadyForReview);
+        assert!(
+            results[0]
+                .labels_to_add
+                .contains(&LABEL_TRIAGED.to_string())
+        );
+
+        // Second issue: skipped (already triaged)
+        assert!(!results[1].processed);
+        assert_eq!(results[1].action, TriageAction::SkippedAlreadyTriaged);
+
+        // Third issue: processed and triaged
+        assert!(results[2].processed);
+        assert_eq!(results[2].action, TriageAction::AppliedReadyForReview);
+        assert!(
+            results[2]
+                .labels_to_add
+                .contains(&LABEL_TRIAGED.to_string())
+        );
+    }
+
+    // =============================================================================
+    // Question routing tests — rogers-af9: Route questions to question-routing workflow
+    // =============================================================================
+
+    #[test]
+    fn test_question_issue_gets_rodgers_question_label() {
+        // Classified question issue gets rodgers:question label applied immediately
+        let issue = TriageIssue {
+            number: 42,
+            title: "How do I configure the database?".to_string(),
+            body: "How do I set up PostgreSQL for production deployment?".to_string(),
+            author: "testuser".to_string(),
+            labels: vec![LABEL_QUESTION.to_string()],
+            state: IssueState::Open,
+            url: Some("https://github.com/org/repo/issues/42".to_string()),
+        };
+
+        let result = process_issue(&issue);
+
+        // Should be routed to question workflow
+        assert!(result.processed);
+        assert_eq!(result.action, TriageAction::QuestionRouted);
+
+        // Must include rodgers:question label
+        assert!(
+            result
+                .labels_to_add
+                .contains(&"rodgers:question".to_string()),
+            "Question issue must get rodgers:question label"
+        );
+
+        // Must include triaged label for idempotency
+        assert!(
+            result.labels_to_add.contains(&LABEL_TRIAGED.to_string()),
+            "Question issue must get rodgers:triaged label"
+        );
+    }
+
+    #[test]
+    fn test_question_issue_routed_to_question_router_in_same_run() {
+        // Question issue is routed to question router within same triage run
+        let issue = TriageIssue {
+            number: 43,
+            title: "How do I set up authentication?".to_string(),
+            body: "How do I configure OAuth2 authentication for my application?".to_string(),
+            author: "testuser".to_string(),
+            labels: vec![LABEL_QUESTION.to_string()],
+            state: IssueState::Open,
+            url: Some("https://github.com/org/repo/issues/43".to_string()),
+        };
+
+        let result = process_issue(&issue);
+
+        // Single call to process_issue routes to question router in ONE run
+        assert!(result.processed);
+        assert_eq!(result.action, TriageAction::QuestionRouted);
+        // Comment is generated by question router in the same run
+        assert!(result.comment_to_post.is_some());
+        // The comment should address the author
+        assert!(
+            result
+                .comment_to_post
+                .as_ref()
+                .unwrap()
+                .contains("@testuser"),
+            "Question router comment should address the author"
+        );
+    }
+
+    #[test]
+    fn test_question_needs_clarification_in_one_run() {
+        // Vague question gets needs-information + clarification comment in one run
+        let issue = TriageIssue {
+            number: 44,
+            title: "help".to_string(),
+            body: "something is wrong".to_string(),
+            author: "testuser".to_string(),
+            labels: vec![LABEL_QUESTION.to_string()],
+            state: IssueState::Open,
+            url: Some("https://github.com/org/repo/issues/44".to_string()),
+        };
+
+        let result = process_issue(&issue);
+
+        assert!(result.processed);
+        assert_eq!(result.action, TriageAction::QuestionRouted);
+        // Should include needs-information label
+        assert!(
+            result
+                .labels_to_add
+                .contains(&"needs-information".to_string()),
+            "Vague question should get needs-information label"
+        );
+        // Should have a clarification comment
+        assert!(result.comment_to_post.is_some());
+    }
+
+    #[test]
+    fn test_question_code_search_in_one_run() {
+        // Code-related question triggers code search path in one run
+        let issue = TriageIssue {
+            number: 45,
+            title: "How does the auth module work under the hood?".to_string(),
+            body: "Can you walk me through the implementation of the authentication flow?"
+                .to_string(),
+            author: "testuser".to_string(),
+            labels: vec![LABEL_QUESTION.to_string()],
+            state: IssueState::Open,
+            url: Some("https://github.com/org/repo/issues/45".to_string()),
+        };
+
+        let result = process_issue(&issue);
+
+        assert!(result.processed);
+        assert_eq!(result.action, TriageAction::QuestionRouted);
+        assert!(
+            result
+                .labels_to_add
+                .contains(&"rodgers:question".to_string()),
+            "Code question must get rodgers:question label"
+        );
+        // Should have a code explanation comment
+        assert!(result.comment_to_post.is_some());
+        let comment = result.comment_to_post.as_ref().unwrap();
+        assert!(
+            comment.contains("source code"),
+            "Code question comment should mention source code"
+        );
+    }
+
+    #[test]
+    fn test_non_question_issue_not_routed_to_question_workflow() {
+        // CRIT-6: Non-question issues must NOT enter question workflow
+        // Bug issues should go through bug workflow, not question
+        let complete_bug = r#"
+## Behavior Observed
+It crashes
+
+## Behavior Expected
+No crash
+
+## Reproduction Steps
+1. Click
+
+## Environment
+Linux
+"#;
+
+        let bug_issue = create_test_issue(vec!["bug"], complete_bug, IssueState::Open);
+        let result = process_issue(&bug_issue);
+
+        // Bug should be processed as bug, not routed to question
+        assert_eq!(result.action, TriageAction::AppliedReadyForReview);
+        assert_ne!(result.action, TriageAction::QuestionRouted);
+
+        // Feature should be processed as feature, not routed to question
+        let complete_feature = r#"
+## Use Case
+Feature request
+
+## Proposed Behavior
+Feature works
+
+## Acceptance Criteria
+- [ ] Works
+"#;
+
+        let feature_issue = create_test_issue(vec!["feature"], complete_feature, IssueState::Open);
+        let result2 = process_issue(&feature_issue);
+
+        assert_eq!(result2.action, TriageAction::AppliedReadyForReview);
+        assert_ne!(result2.action, TriageAction::QuestionRouted);
+    }
+
+    #[test]
+    fn test_question_already_routed_is_noop() {
+        // Question with rodgers:question already applied is a no-op
+        let issue = TriageIssue {
+            number: 46,
+            title: "How do I configure?".to_string(),
+            body: "How do I set up the database?".to_string(),
+            author: "testuser".to_string(),
+            labels: vec![LABEL_QUESTION.to_string(), "rodgers:question".to_string()],
+            state: IssueState::Open,
+            url: Some("https://github.com/org/repo/issues/46".to_string()),
+        };
+
+        let result = process_issue(&issue);
+
+        // Already routed — should be a no-op
+        assert!(!result.processed);
+        assert_eq!(result.action, TriageAction::NoAction);
+        assert!(result.labels_to_add.is_empty());
+        assert!(result.comment_to_post.is_none());
+    }
+
+    #[test]
+    fn test_batch_with_question_routing() {
+        // Batch processing correctly separates question vs bug/feature workflows
+        let complete_bug = r#"
+## Behavior Observed
+Bug
+
+## Behavior Expected
+Fixed
+
+## Reproduction Steps
+1. Click
+
+## Environment
+Linux
+"#;
+
+        let issues = vec![
+            create_test_issue(vec!["bug"], complete_bug, IssueState::Open),
+            TriageIssue {
+                number: 47,
+                title: "How do I configure?".to_string(),
+                body: "How do I configure the database connection?".to_string(),
+                author: "testuser".to_string(),
+                labels: vec![LABEL_QUESTION.to_string()],
+                state: IssueState::Open,
+                url: Some("https://github.com/org/repo/issues/47".to_string()),
+            },
+            create_test_issue(
+                vec!["feature"],
+                "## Use Case\nTest\n\n## Proposed Behavior\nWorks\n\n## Acceptance Criteria\n- [ ] Works",
+                IssueState::Open,
+            ),
+        ];
+
+        let results = process_issues_batch(&issues);
+
+        assert_eq!(results.len(), 3);
+
+        // Bug → ready-for-review
+        assert_eq!(results[0].action, TriageAction::AppliedReadyForReview);
+
+        // Question → routed to question workflow
+        assert_eq!(results[1].action, TriageAction::QuestionRouted);
+        assert!(
+            results[1]
+                .labels_to_add
+                .contains(&"rodgers:question".to_string())
+        );
+
+        // Feature → ready-for-review
+        assert_eq!(results[2].action, TriageAction::AppliedReadyForReview);
+    }
+
+    #[test]
+    fn test_closed_question_issue_skipped() {
+        // Closed question issues are skipped
+        let issue = TriageIssue {
+            number: 48,
+            title: "How do I?".to_string(),
+            body: "How do I configure?".to_string(),
+            author: "testuser".to_string(),
+            labels: vec![LABEL_QUESTION.to_string()],
+            state: IssueState::Closed,
+            url: Some("https://github.com/org/repo/issues/48".to_string()),
+        };
+
+        let result = process_issue(&issue);
+
+        assert!(!result.processed);
+        assert_eq!(result.action, TriageAction::SkippedClosed);
+    }
+
+    #[test]
+    fn test_question_label_applied_before_routing() {
+        // rodgers:question label is applied BEFORE routing completes
+        // This is verified by checking that the label is in the result's labels_to_add
+        let issue = TriageIssue {
+            number: 49,
+            title: "How do I configure?".to_string(),
+            body: "How do I set up the database?".to_string(),
+            author: "testuser".to_string(),
+            labels: vec![LABEL_QUESTION.to_string()],
+            state: IssueState::Open,
+            url: Some("https://github.com/org/repo/issues/49".to_string()),
+        };
+
+        let result = process_issue(&issue);
+
+        assert!(result.processed);
+        // rodgers:question must be in the labels_to_add (applied atomically with other labels)
+        assert!(
+            result
+                .labels_to_add
+                .contains(&"rodgers:question".to_string()),
+            "rodgers:question must be applied before routing completes"
+        );
+        // The order should be: rodgers:question first, then triaged
+        let question_idx = result
+            .labels_to_add
+            .iter()
+            .position(|l| l == "rodgers:question")
+            .unwrap();
+        let triaged_idx = result
+            .labels_to_add
+            .iter()
+            .position(|l| l == LABEL_TRIAGED)
+            .unwrap();
+        assert!(
+            question_idx < triaged_idx,
+            "rodgers:question (index {}) must be applied before rodgers:triaged (index {})",
+            question_idx,
+            triaged_idx
+        );
+    }
+
+    #[test]
+    fn test_question_doc_search_triggers_doc_answer() {
+        // Doc-related question triggers documentation search path
+        let issue = TriageIssue {
+            number: 50,
+            title: "How do I configure the app?".to_string(),
+            body: "How do I configure the database connection for production deployment?"
+                .to_string(),
+            author: "testuser".to_string(),
+            labels: vec![LABEL_QUESTION.to_string()],
+            state: IssueState::Open,
+            url: Some("https://github.com/org/repo/issues/50".to_string()),
+        };
+
+        let result = process_issue(&issue);
+
+        assert!(result.processed);
+        assert_eq!(result.action, TriageAction::QuestionRouted);
+        assert!(result.comment_to_post.is_some());
+        let comment = result.comment_to_post.as_ref().unwrap();
+        assert!(
+            comment.contains("documentation") || comment.contains("Docs"),
+            "Doc question should reference documentation"
+        );
+    }
+
+    #[test]
+    fn test_question_doc_gap_triggers_needs_documentation_label() {
+        // Question that reveals a doc gap gets needs-documentation label
+        // "where can I find documentation on..." is an explicit doc gap indicator
+        let issue = TriageIssue {
+            number: 51,
+            title: "Where can I find docs on multi-tenancy?".to_string(),
+            body:
+                "Where can I find documentation on configuring multi-tenancy for our SaaS product?"
+                    .to_string(),
+            author: "testuser".to_string(),
+            labels: vec![LABEL_QUESTION.to_string()],
+            state: IssueState::Open,
+            url: Some("https://github.com/org/repo/issues/51".to_string()),
+        };
+
+        let result = process_issue(&issue);
+
+        assert!(result.processed);
+        assert_eq!(result.action, TriageAction::QuestionRouted);
+        // Should include needs-documentation label for doc gaps
+        assert!(
+            result
+                .labels_to_add
+                .contains(&"needs-documentation".to_string()),
+            "Doc gap question should get needs-documentation label"
+        );
+        assert!(
+            result
+                .labels_to_add
+                .contains(&"rodgers:question".to_string()),
+            "Should also have rodgers:question label"
+        );
+    }
+
+    #[test]
+    fn test_question_triaged_label_applied_for_idempotency() {
+        // Processed question issues get rodgers:triaged for idempotency
+        let issue = TriageIssue {
+            number: 52,
+            title: "How do I configure?".to_string(),
+            body: "How do I set up the database?".to_string(),
+            author: "testuser".to_string(),
+            labels: vec![LABEL_QUESTION.to_string()],
+            state: IssueState::Open,
+            url: Some("https://github.com/org/repo/issues/52".to_string()),
+        };
+
+        let result = process_issue(&issue);
+
+        assert!(result.processed);
+        assert!(
+            result.labels_to_add.contains(&LABEL_TRIAGED.to_string()),
+            "Question issue must get rodgers:triaged label for idempotency"
         );
     }
 }

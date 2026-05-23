@@ -60,6 +60,21 @@ pub const RODGERS_REQUIRED_LABELS: &[LabelDefinition] = &[
         color: "1a7f37",
         description: "Work is underway",
     },
+    LabelDefinition {
+        name: "rodgers:triaged",
+        color: "cc317c",
+        description: "Rodgers has processed this issue (idempotency marker)",
+    },
+    LabelDefinition {
+        name: "rodgers:feature",
+        color: "a2eeef",
+        description: "Feature routed to feature-bug workflow with priority assessment",
+    },
+    LabelDefinition {
+        name: "rodgers:question",
+        color: "d876e3",
+        description: "Question routed to question-routing workflow for doc/code search",
+    },
 ];
 
 /// Labels Rodgers creates programmatically.
@@ -76,6 +91,7 @@ pub const RODGERS_RESERVED_LABELS: &[&str] = &[
     "will-not-do",
     "ready-for-work",
     "in-progress",
+    "rodgers:triaged",
 ];
 
 /// Returns true if the given label name is a Rodgers-reserved label.
