@@ -34,6 +34,9 @@ pub enum RogersError {
     #[error("YAML parsing error: {0}")]
     Yaml(#[from] serde_yaml::Error),
 
+    #[error("backport error: {0}")]
+    Backport(String),
+
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 }
@@ -80,6 +83,13 @@ impl From<crate::github::auth::AuthError> for RogersError {
                 ))
             }
         }
+    }
+}
+
+/// Convert backport execution errors to Rodgers errors.
+impl From<crate::backport::execution::BackportExecutionError> for RogersError {
+    fn from(err: crate::backport::execution::BackportExecutionError) -> Self {
+        RogersError::Backport(format!("{}", err))
     }
 }
 

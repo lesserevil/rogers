@@ -2644,7 +2644,7 @@ Linux
             result.labels_to_add.contains(&LABEL_TRIAGED.to_string()),
             "Question issue must get rodgers:triaged label for idempotency"
         );
-    }}
+    }
 
     // Backport triage tests
     // =============================================================================

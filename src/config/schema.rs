@@ -309,6 +309,72 @@ pub fn rodgers_required_label_names() -> &'static [&'static str] {
     ]
 }
 
+impl Default for SchedulerConfig {
+    fn default() -> Self {
+        Self {
+            interval_minutes: 15,
+            enabled: Some(true),
+        }
+    }
+}
+
+impl Default for BeadsConfig {
+    fn default() -> Self {
+        Self {
+            remote: String::new(),
+            database: Some("message.hibernate".to_string()),
+        }
+    }
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self {
+            provider: Some("openai".to_string()),
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            model: String::new(),
+            api_key: String::new(),
+        }
+    }
+}
+
+impl Default for TriageConfig {
+    fn default() -> Self {
+        Self {
+            default_labels: Some(vec![
+                "bug".to_string(),
+                "enhancement".to_string(),
+                "question".to_string(),
+            ]),
+            bot_labels: Some(vec![]),
+            close_labels: Some(vec![
+                "wontfix".to_string(),
+                "duplicate".to_string(),
+                "not planned".to_string(),
+            ]),
+            assignees: Some(vec![]),
+        }
+    }
+}
+
+impl Default for RogationConfig {
+    fn default() -> Self {
+        Self {
+            ignore_labels: Some(vec![]),
+            labels_never_bot_managed: Some(vec![]),
+            custom_type_names: Some(HashMap::new()),
+            format: None,
+            agent_file: None,
+            template_dir: None,
+            security_label: Some("security".to_string()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
     // Helper to safely set env vars in tests
     fn set_env_var(key: &str, value: &str) {
         unsafe { std::env::set_var(key, value) };
@@ -626,60 +692,6 @@ llm:
         match original {
             Some(v) => unsafe { std::env::set_var(key, v) },
             None => unsafe { std::env::remove_var(key) },
->>>>>>> c658d26 (rogers-p9l: config-driven release schedule and branches)
-        }
-    }
-}
-
-impl Default for BeadsConfig {
-    fn default() -> Self {
-        Self {
-            remote: String::new(),
-            database: Some("message.hibernate".to_string()),
-        }
-    }
-}
-
-impl Default for LlmConfig {
-    fn default() -> Self {
-        Self {
-            provider: Some("openai".to_string()),
-            base_url: Some("https://api.openai.com/v1".to_string()),
-            model: String::new(),
-            api_key: String::new(),
-        }
-    }
-}
-
-impl Default for TriageConfig {
-    fn default() -> Self {
-        Self {
-            default_labels: Some(vec![
-                "bug".to_string(),
-                "enhancement".to_string(),
-                "question".to_string(),
-            ]),
-            bot_labels: Some(vec![]),
-            close_labels: Some(vec![
-                "wontfix".to_string(),
-                "duplicate".to_string(),
-                "not planned".to_string(),
-            ]),
-            assignees: Some(vec![]),
-        }
-    }
-}
-
-impl Default for RogationConfig {
-    fn default() -> Self {
-        Self {
-            ignore_labels: Some(vec![]),
-            labels_never_bot_managed: Some(vec![]),
-            custom_type_names: Some(HashMap::new()),
-            format: None,
-            agent_file: None,
-            template_dir: None,
-            security_label: Some("security".to_string()),
         }
     }
 }
