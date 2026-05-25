@@ -1,23 +1,13 @@
 # Documentation
 
-User-facing documentation for this project. Setup guides,
-troubleshooting, operator how-tos, public API references.
+The docs/ directory contains user-facing documentation for the Rogers project, covering setup, command usage, configuration, and troubleshooting.
 
-If you're trying to learn how to **use** this project, you're in
-the right place. If you're trying to learn how it **works inside**
-or how it **might work in the future**, see [`../plans/`](../plans/).
+## Docs files
 
-## Contents
-
-<!-- PROJECT: list canonical user-doc files here as they're added.
-     Common entries:
-     - `installation.md` — toolchain, per-OS deps, build features
-     - `getting-started.md` — quick walkthrough
-     - `configuration.md` — env vars, config files
-     - `troubleshooting.md` — common failures
-     - per-binary pages for each CLI -->
-
-_No docs yet — add files here as user-visible surfaces appear._
+- `getting-started.md` — installation, prerequisites, and quick-start
+- `cli.md` — complete command reference for `rogers init` and `rogers doctor`
+- `configuration.md` — complete config schema reference
+- `troubleshooting.md` — common failure modes and how to resolve them
 
 ## Keeping docs in sync with code
 
