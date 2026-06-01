@@ -9,12 +9,12 @@
 //!
 //! ## Semantic Equivalence Check
 //!
-//! Before filing a backport bead, the detector checks whether the fix
+//! Before filing a backport task, the detector checks whether the fix
 //! is already present on the target branch via a semantic equivalence
 //! analysis using the LLM.
 
 use crate::config::ReleaseConfig;
-use crate::error::{Result, RogersError};
+use crate::error::Result;
 use crate::github::client::GitHubClient;
 use crate::github::models::{Issue, PullRequest};
 use crate::llm::client::LlmClient;
@@ -67,7 +67,7 @@ pub struct BackportCandidate {
     pub pr_url: Option<String>,
     /// The branch the fix landed on (e.g., "main", "release/1.x").
     pub landed_on_branch: String,
-    /// Priority for the backport bead (1=highest for security, 2=normal).
+    /// Priority for the backport task (1=highest for security, 2=normal).
     pub priority: i32,
     /// Commit timestamp.
     pub commit_date: DateTime<Utc>,
@@ -103,16 +103,13 @@ impl BackportCandidate {
         }
     }
 
-    /// Format the backport bead title.
-    pub fn bead_title(&self, target_branch: &str) -> String {
-        format!(
-            "Backport {} to {}",
-            self.commit_sha_short, target_branch
-        )
+    /// Format the backport task title.
+    pub fn task_title(&self, target_branch: &str) -> String {
+        format!("Backport {} to {}", self.commit_sha_short, target_branch)
     }
 
-    /// Format the backport bead description.
-    pub fn bead_description(&self, target_branch: &str) -> String {
+    /// Format the backport task description.
+    pub fn task_description(&self, target_branch: &str) -> String {
         let issue_ref = self
             .issue_number
             .map(|n| format!("#{}", n))
@@ -139,12 +136,9 @@ PITFALLS
 - If the fix requires changes to shared library code that has diverged
   between main and the target branch, the cherry-pick may require
   manual conflict resolution. Document any non-trivial conflicts
-  in the bead before closing.
+  in the task before closing.
 "#,
-            self.commit_sha,
-            self.commit_message,
-            issue_ref,
-            target_branch,
+            self.commit_sha, self.commit_message, issue_ref, target_branch,
         )
     }
 }
@@ -204,12 +198,18 @@ impl BackportDetector {
     /// Detect candidates from merged PRs merged since the given timestamp.
     ///
     /// The `since` parameter limits the scan to PRs merged after this time.
-    /// This is typically the last run timestamp stored in bead state.
-    pub async fn detect_candidates(&mut self, since: Option<DateTime<Utc>>) -> Result<DetectionResult> {
+    /// This is typically the last run timestamp stored in task state.
+    pub async fn detect_candidates(
+        &mut self,
+        since: Option<DateTime<Utc>>,
+    ) -> Result<DetectionResult> {
         let mut result = DetectionResult::default();
 
         // Get merged pull requests
-        let prs = self.github.list_pull_requests(Some("merged"), None, None).await?;
+        let prs = self
+            .github
+            .list_pull_requests(Some("merged"), None, None)
+            .await?;
 
         for pr in prs {
             result.checked_one();
@@ -233,11 +233,7 @@ impl BackportDetector {
     }
 
     /// Check a single merged PR for backport candidacy.
-    async fn check_pr(
-        &mut self,
-        result: &mut DetectionResult,
-        pr: &PullRequest,
-    ) -> Result<()> {
+    async fn check_pr(&mut self, result: &mut DetectionResult, pr: &PullRequest) -> Result<()> {
         // Get the base branch (where the PR landed)
         let landed_on_branch = pr.base.ref_name.clone();
 
@@ -258,7 +254,10 @@ impl BackportDetector {
         };
 
         // Check for backport reasons
-        if let Some(candidate) = self.evaluate_candidate(pr, &issue, &landed_on_branch, &commit_sha).await? {
+        if let Some(candidate) = self
+            .evaluate_candidate(pr, &issue, &landed_on_branch, &commit_sha)
+            .await?
+        {
             result.add_candidate(candidate);
         }
 
@@ -272,10 +271,7 @@ impl BackportDetector {
         for pattern in ["closes #", "closes #", "fixes #", "fixes #", "resolves #"] {
             if let Some(pos) = body.to_lowercase().find(pattern) {
                 let rest = &body[pos + pattern.len()..];
-                let num_str: String = rest
-                    .chars()
-                    .take_while(|c| c.is_ascii_digit())
-                    .collect();
+                let num_str: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
                 if !num_str.is_empty() {
                     return num_str.parse().ok();
                 }
@@ -307,20 +303,13 @@ impl BackportDetector {
 
         // Check 3: Security Advisory (GHSA) - check issue body for GHSA reference
         let has_ghsa = issue
-            .map(|i| {
-                i.body
-                    .as_deref()
-                    .unwrap_or("")
-                    .contains("GHSA-")
-            })
+            .map(|i| i.body.as_deref().unwrap_or("").contains("GHSA-"))
             .unwrap_or(false);
 
         // Check 4: CVE pattern in body
         let has_cve = issue
             .as_ref()
-            .map(|i| {
-                Self::contains_cve(i.body.as_deref().unwrap_or(""))
-            })
+            .map(|i| Self::contains_cve(i.body.as_deref().unwrap_or("")))
             .unwrap_or(false)
             || Self::contains_cve(pr.body.as_deref().unwrap_or(""));
 
@@ -372,9 +361,7 @@ impl BackportDetector {
             // CVE-YYYY-NNNNN+ needs at least 13 chars
             if rest.len() >= 13 {
                 let digits = &rest[4..];
-                if digits[..4].chars().all(|c| c.is_ascii_digit())
-                    && digits.as_bytes()[4] == b'-'
-                {
+                if digits[..4].chars().all(|c| c.is_ascii_digit()) && digits.as_bytes()[4] == b'-' {
                     let after = &digits[5..];
                     return after.len() >= 4 && after.chars().take(4).all(|c| c.is_ascii_digit());
                 }
@@ -425,7 +412,11 @@ impl BackportDetector {
         // Clone the LLM so we can release the self borrow before any awaits
         let llm_clone = self.llm.clone();
         if let Some(llm) = llm_clone {
-            let source_files = self.github.get_commit_files(source_sha).await.unwrap_or_default();
+            let source_files = self
+                .github
+                .get_commit_files(source_sha)
+                .await
+                .unwrap_or_default();
 
             if source_files.is_empty() {
                 return Ok(false);
@@ -463,7 +454,10 @@ impl BackportDetector {
 
             // Check semantic equivalence using LLM (ensure self.llm is not borrowed)
             for (source_diff, recent_diff) in diff_pairs {
-                if self.check_semantic_equivalence_internal(&llm, &source_diff, &recent_diff).await {
+                if self
+                    .check_semantic_equivalence_internal(&llm, &source_diff, &recent_diff)
+                    .await
+                {
                     tracing::debug!(
                         "Commit {} is semantically equivalent to recent work on {}",
                         source_sha,
@@ -542,6 +536,7 @@ Answer only "yes" or "no" with no other text."#,
     }
 
     /// Check semantic equivalence using the LLM.
+    #[allow(dead_code)]
     async fn check_semantic_equivalence(
         &mut self,
         llm: &LlmClient,
@@ -590,12 +585,12 @@ Answer only "yes" or "no" with no other text."#,
 
     /// Get the configured voting window in days.
     pub fn voting_window_days(&self) -> u32 {
-        self.release_config.voting_window_days.unwrap_or(2)
+        self.release_config.voting_window_days.unwrap_or(2).max(0) as u32
     }
 
     /// Get the configured stale threshold in days.
     pub fn stale_threshold_days(&self) -> u32 {
-        self.release_config.stale_threshold_days.unwrap_or(7)
+        self.release_config.stale_threshold_days.unwrap_or(7).max(0) as u32
     }
 
     /// Get the approval discussion category.
@@ -614,7 +609,9 @@ mod tests {
     #[test]
     fn test_contains_cve() {
         assert!(BackportDetector::contains_cve("Fixed in CVE-2024-12345"));
-        assert!(BackportDetector::contains_cve("See CVE-2024-98765 for details"));
+        assert!(BackportDetector::contains_cve(
+            "See CVE-2024-98765 for details"
+        ));
         assert!(BackportDetector::contains_cve("cve-2023-44445"));
         assert!(!BackportDetector::contains_cve("This is not a CVE"));
         assert!(!BackportDetector::contains_cve("CV-2024-12345")); // Wrong prefix
@@ -625,7 +622,10 @@ mod tests {
         assert_eq!(CandidateReason::BugFix.to_string(), "bug_fix");
         assert_eq!(CandidateReason::SecurityPatch.to_string(), "security_patch");
         assert_eq!(CandidateReason::BackportMe.to_string(), "backport_me");
-        assert_eq!(CandidateReason::DocumentationFix.to_string(), "documentation_fix");
+        assert_eq!(
+            CandidateReason::DocumentationFix.to_string(),
+            "documentation_fix"
+        );
     }
 
     #[test]
@@ -666,7 +666,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bead_title() {
+    fn test_task_title() {
         use chrono::Utc;
 
         let candidate = BackportCandidate::new(
@@ -680,7 +680,7 @@ mod tests {
         );
 
         assert_eq!(
-            candidate.bead_title("release/1.x"),
+            candidate.task_title("release/1.x"),
             "Backport abc123d to release/1.x"
         );
     }

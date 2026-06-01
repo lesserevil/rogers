@@ -75,15 +75,15 @@ If you'd like to dig further, the full implementation is at [file:line–line].
 
 - **Close the issue** if the explanation fully answers the question
 - **Leave open** if the requestor may have follow-up questions
-- **Do NOT file a doc-gap bead** — the code is the canonical answer; no documentation gap exists
+- **Do NOT file a doc-gap task** — the code is the canonical answer; no documentation gap exists
 
 ### Step 3b: No Answer Found
 
 **This step applies only when neither documentation nor a code review yields an answer.** If Rodgers found relevant code but the question goes beyond what the code reveals, or the question asks about design intent rather than mechanics, treat as a documentation gap.
 
-If Rodgers cannot answer the question from docs or code, this is a documentation gap. Rodgers files a `chore` bead (`rodgers:type=docs`) to track the gap and proceeds:
+If Rodgers cannot answer the question from docs or code, this is a documentation gap. Rodgers files a `chore` task (`rodgers:type=docs`) to track the gap and proceeds:
 
-1. **File a `chore` bead** (metadata: `rodgers:type=docs`) with:
+1. **File a `chore` task** (metadata: `rodgers:type=docs`) with:
    - Type: `chore`
    - Tag: `rodgers:type=docs`
    - Title: `Answer question: [one-line restatement of the question]`
@@ -101,29 +101,29 @@ Hi @[requestor], thanks for the question! We do not currently have documentation
 
 ### Step 4: Doc Gap Remediation (External Actor Writes the Doc)
 
-Rodgers files a `chore` bead (`rodgers:type=docs`) and the work is done by an **external actor** — not Rodgers. Rodgers tracks the bead but does not write the doc content.
+Rodgers files a `chore` task (`rodgers:type=docs`) and the work is done by an **external actor** — not Rodgers. Rodgers tracks the task but does not write the doc content.
 
-**Who writes the doc:** An external contributor or project member working from the bead description. Rodgers does not draft doc content itself.
+**Who writes the doc:** An external contributor or project member working from the task description. Rodgers does not draft doc content itself.
 
-**Completion detection:** When the bead is closed and a comment is posted on the GitHub issue containing a link to the new or updated doc section, Rodgers considers the doc gap closed. Rodgers also syncs proactively on the next triage run post-bead-close (see Step 5).
+**Completion detection:** When the task is closed and a comment is posted on the GitHub issue containing a link to the new or updated doc section, Rodgers considers the doc gap closed. Rodgers also syncs proactively on the next triage run post-task-close (see Step 5).
 
-**If the doc doesn't fully answer the question:** The requestor replies on the GitHub issue noting what's still missing. Rodgers reopens or creates a new `chore` bead (`rodgers:type=docs`) for the remaining gap and leaves the issue open until the full answer is available.
+**If the doc doesn't fully answer the question:** The requestor replies on the GitHub issue noting what's still missing. Rodgers reopens or creates a new `chore` task (`rodgers:type=docs`) for the remaining gap and leaves the issue open until the full answer is available.
 
-The process for the external actor working the bead:
-1. Read the bead description for the full question text and context
+The process for the external actor working the task:
+1. Read the task description for the full question text and context
 2. Identify the appropriate doc file and section to add or update
 3. Write the section content that answers the question
 4. Check in the doc change (via PR merged to main)
 5. Post the doc link as a comment on the GitHub issue
-6. Close the bead with the doc link in the acceptance evidence
+6. Close the task with the doc link in the acceptance evidence
 
-### Step 5: Sync Bead to GitHub Issue
+### Step 5: Sync Task to GitHub Issue
 
-**Timing:** Passive, checked on every triage run. Rodgers does not verify synchronously when the bead closes — it verifies on the next scheduled run.
+**Timing:** Passive, checked on every triage run. Rodgers does not verify synchronously when the task closes — it verifies on the next scheduled run.
 
-**Verification:** When Rodgers detects a `chore` bead (`rodgers:type=docs`) in `closed` status, it checks the linked GitHub issue for any comment that contains a link to the documentation file added by the chore bead. A comment is considered valid if it contains a URL matching the doc file path referenced in the bead's acceptance criteria.
+**Verification:** When Rodgers detects a `chore` task (`rodgers:type=docs`) in `closed` status, it checks the linked GitHub issue for any comment that contains a link to the documentation file added by the chore task. A comment is considered valid if it contains a URL matching the doc file path referenced in the task's acceptance criteria.
 
-**If a valid link comment is found:** No action. Rodgers closes the loop for this bead+issue pair.
+**If a valid link comment is found:** No action. Rodgers closes the loop for this task+issue pair.
 
 **If the link comment is missing:** Rodgers posts the documentation link as a comment on the GitHub issue, closes the issue if still open, and logs the sync as complete.
 
@@ -142,7 +142,7 @@ flowchart TD
     B -->|"NO"| D["LLM understands the question\nPrompts: what is being asked?\nShould we answer from docs,\ncode, or file a gap?"]
     D -->|"answer in docs"| E["LLM drafts warm reply\nwith doc link\npost and close if complete"]
     D -->|"answer in code"| F["LLM reads source\nExplains implementation\nCite file, function, lines\nClose if fully answered"]
-    D -->|"no answer found"| G["LLM drafts acknowledgment\nFiles doc-gap chore bead\nPosts comment, labels\nneeds-documentation"]
+    D -->|"no answer found"| G["LLM drafts acknowledgment\nFiles doc-gap chore task\nPosts comment, labels\nneeds-documentation"]
 ```
 
 **LLM prompt for question routing (Step 1→2):**
@@ -159,9 +159,9 @@ flowchart TD
 
 **Question is too vague to answer.** Rodgers posts a comment asking for clarification before the doc search. Once clarification is received, it restarts from Step 2.
 
-**Multiple questions in one issue.** Treat as multiple questions. Answer each question in a separate comment. For those questions which require beads, file separate `chore` beads (`rodgers:type=docs`) for each.
+**Multiple questions in one issue.** Treat as multiple questions. Answer each question in a separate comment. For those questions which require tasks, file separate `chore` tasks (`rodgers:type=docs`) for each.
 
-**Doc search returns false positives.** Rodgers presents the most relevant doc link. If the requestor says the linked doc doesn't answer their question, treat as Step 3b — file a `chore` bead (`rodgers:type=docs`).
+**Doc search returns false positives.** Rodgers presents the most relevant doc link. If the requestor says the linked doc doesn't answer their question, treat as Step 3b — file a `chore` task (`rodgers:type=docs`).
 
 **Requestor adds more context after Rodgers responds.** Rodgers processes the new comment as a new triage event — restarts from Step 1.
 
@@ -172,8 +172,8 @@ flowchart TD
 ## Acceptance Criteria
 
 - [ ] CRIT-1: When a `question` issue exists and docs exist that answer it, Rodgers posts a comment within one triage run with the correct doc link
-- [ ] CRIT-2: When a `question` issue exists and no docs answer it, Rodgers searches the source code if the question is about implementation details before filing a doc-gap bead
+- [ ] CRIT-2: When a `question` issue exists and no docs answer it, Rodgers searches the source code if the question is about implementation details before filing a doc-gap task
 - [ ] CRIT-3: When Rodgers finds an answer in the source code, it posts a plain-language explanation citing the relevant file, function, and line numbers, then closes the issue if fully answered
-- [ ] CRIT-4: When a `chore` bead (`rodgers:type=docs`) is closed, Rodgers verifies the GitHub issue has a documentation link comment; if the link is missing, Rodgers posts it within one triage run; if the issue is already closed, Rodgers posts the link comment anyway; on GitHub API read failure, Rodgers retries on the next triage run without alerting
-- [ ] CRIT-5: Rodgers never closes a question issue without either answering it or filing a `chore` bead (`rodgers:type=docs`)
+- [ ] CRIT-4: When a `chore` task (`rodgers:type=docs`) is closed, Rodgers verifies the GitHub issue has a documentation link comment; if the link is missing, Rodgers posts it within one triage run; if the issue is already closed, Rodgers posts the link comment anyway; on GitHub API read failure, Rodgers retries on the next triage run without alerting
+- [ ] CRIT-5: Rodgers never closes a question issue without either answering it or filing a `chore` task (`rodgers:type=docs`)
 - [ ] CRIT-6: Rodgers never routes a non-question issue through this workflow

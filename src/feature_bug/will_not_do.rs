@@ -145,11 +145,9 @@ mod tests {
         assert!(result.will_not_do_detected);
         assert!(result.should_close);
         assert!(result.closure_comment.is_some());
-        assert!(
-            result
-                .labels_to_remove
-                .contains(&"ready-for-review".to_string())
-        );
+        assert!(result
+            .labels_to_remove
+            .contains(&"ready-for-review".to_string()));
     }
 
     #[test]

@@ -15,6 +15,6 @@ pub use models::*;
 pub use rate_limit::{RateLimitHandler, DEFAULT_WARNING_THRESHOLD};
 
 pub use client::{
-    BranchHead, CheckRun, CommitStatus, GitTag, MergedPR, GitHubLabel, GitHubUser, close_issue,
-    parse_issue_url,
+    close_issue, parse_issue_url, BranchHead, CheckRun, CommitStatus, GitHubLabel, GitHubUser,
+    GitTag, MergedPR,
 };

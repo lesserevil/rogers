@@ -77,10 +77,7 @@ impl SemVer {
                 minor: 0,
                 patch: 0,
             }
-        } else if commit_types
-            .iter()
-            .any(|t| *t == ConventionalCommitType::Feat)
-        {
+        } else if commit_types.contains(&ConventionalCommitType::Feat) {
             Self {
                 major: self.major,
                 minor: self.minor + 1,
@@ -390,10 +387,7 @@ pub fn determine_version_bump(
         return VersionBump::Major;
     }
 
-    if commit_types
-        .iter()
-        .any(|t| *t == ConventionalCommitType::Feat)
-    {
+    if commit_types.contains(&ConventionalCommitType::Feat) {
         return VersionBump::Minor;
     }
 
@@ -610,7 +604,11 @@ mod tests {
 
     #[test]
     fn test_release_detector_new() {
-        let github = GitHubClient::new("myorg", "myrepo");
+        let github = GitHubClient::new(
+            "myorg",
+            "myrepo",
+            crate::github::auth::GitHubAuth::new_with_default_api("ghp_test_token"),
+        );
         let config = DetectorConfig::for_branch("main");
         let detector = ReleaseDetector::new(github, config);
         assert_eq!(detector.config.target_branch, "main");
@@ -622,7 +620,11 @@ mod tests {
 
     #[test]
     fn test_merged_prs_to_pull_requests() {
-        let github = GitHubClient::new("myorg", "myrepo");
+        let github = GitHubClient::new(
+            "myorg",
+            "myrepo",
+            crate::github::auth::GitHubAuth::new_with_default_api("ghp_test_token"),
+        );
         let config = DetectorConfig::default();
         let detector = ReleaseDetector::new(github, config);
 
@@ -666,7 +668,11 @@ mod tests {
 
     #[test]
     fn test_merged_prs_to_pull_requests_empty() {
-        let github = GitHubClient::new("myorg", "myrepo");
+        let github = GitHubClient::new(
+            "myorg",
+            "myrepo",
+            crate::github::auth::GitHubAuth::new_with_default_api("ghp_test_token"),
+        );
         let config = DetectorConfig::default();
         let detector = ReleaseDetector::new(github, config);
         let prs = detector.merged_prs_to_pull_requests(&[]);

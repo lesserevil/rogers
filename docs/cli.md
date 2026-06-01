@@ -2,46 +2,59 @@
 
 ## Synopsis
 
-```
-rogers [OPTIONS]
-```
-
-## Options
-
-```
---config PATH          Path to config.yaml (required)
---dry-run              Preview actions without making GitHub API calls
---repo OWNER/REPO      Override the configured repository
--v, --verbose          Enable verbose output
--h, --help             Print help
---version              Print version
+```bash
+rogers <COMMAND> [OPTIONS]
 ```
 
 ## Commands
 
+```bash
+rogers init --repo OWNER/REPO [--fix] [--json] [--github-token TOKEN]
+rogers doctor [--config PATH] [--verbose] [--only CATEGORY[,CATEGORY...]] [--fix] [--json]
 ```
-rogers triage           Run triage on the configured repository
-rogers sync             Sync bead status with resolved GitHub issues
-rogers report           Generate a community health report
-```
+
+## `init`
+
+Audits a GitHub repository for readiness to be managed by Rogers.
+
+Options:
+
+- `--repo OWNER/REPO` target repository.
+- `--fix`, `-f` apply automated fixes where implemented.
+- `--json`, `-j` output JSON.
+- `--github-token TOKEN` repository admin token override. If omitted,
+  Rogers reads `GITHUB_TOKEN`.
+
+## `doctor`
+
+Audits an existing Rogers installation for configuration problems and
+state drift.
+
+Options:
+
+- `--config PATH` path to `config.yaml`; defaults to `./config.yaml`.
+- `--verbose`, `-v` show detailed output including drift events.
+- `--only`, `-o` comma-delimited categories: `config`, `auth`,
+  `backlog`, `plans`, `repo`, `drift`.
+- `--fix`, `-f` attempt supported fixes.
+- `--json`, `-j` output JSON.
 
 ## Exit Codes
 
-```
-0   Success
-1   Configuration error or API failure
-2   Bead database error
-```
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Operational, Backlog.md, plan, or backport error |
+| 2 | Invalid arguments, config file, I/O, YAML, or JSON error |
+| 3 | Authentication, GitHub API, rate limit, or repository access error |
 
-## Examples
+## Backlog.md CLI
+
+Project task tracking is handled outside `rogers` by Backlog.md:
 
 ```bash
-# Run triage against the configured repo
-rogers --config config.yaml triage
-
-# Preview what would be done without making API calls
-rogers --config config.yaml --dry-run triage
-
-# Override the repository from the command line
-rogers --config config.yaml --repo NVIDIA-Omniverse/trickle triage
+make ensure-backlog
+backlog task list --plain
+backlog task view TASK-123 --plain
+backlog task edit TASK-123 --status Done --plain
 ```

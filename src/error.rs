@@ -19,8 +19,8 @@ pub enum RogersError {
     #[error("authentication failed: {0}")]
     Auth(String),
 
-    #[error("beads database error: {0}")]
-    Beads(String),
+    #[error("Backlog.md task store error: {0}")]
+    Backlog(String),
 
     #[error("plan file error: {0}")]
     Plan(String),
@@ -48,8 +48,9 @@ impl RogersError {
             RogersError::GitHub(_) | RogersError::GitHubStatus { .. } => 3,
             RogersError::RateLimitExceeded { .. } => 3,
             RogersError::Auth(_) | RogersError::RepoNotFound => 3,
-            RogersError::Beads(_) => 1,
+            RogersError::Backlog(_) => 1,
             RogersError::Plan(_) => 1,
+            RogersError::Backport(_) => 1,
             RogersError::Io(_) => 2,
             RogersError::Yaml(_) => 2,
             RogersError::Json(_) => 2,

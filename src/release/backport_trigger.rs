@@ -12,7 +12,7 @@
 //!     B -->|Yes| C[Check linked issue labels]
 //!     C --> D{Has backport-me?}
 //!     D -->|Yes| E[Identify target branches]
-//!     E --> F[File backport bead per branch]
+//!     E --> F[File backport task per branch]
 //!     F --> G[Create approval Discussion]
 //!     D -->|No| H[No backport needed]
 //!     B -->|No| H
@@ -56,7 +56,11 @@ impl BackportTriggerEvent {
     ///
     /// Security patches get priority 1, backport-me gets priority 2.
     pub fn priority(&self) -> u8 {
-        if self.is_security_patch() { 1 } else { 2 }
+        if self.is_security_patch() {
+            1
+        } else {
+            2
+        }
     }
 
     /// Check if the event has a CVE reference in the title.
@@ -285,7 +289,7 @@ This issue has been flagged for backport to the following release branches:
 
 {branches}
 
-Backport approval discussions have been created. Once approved, backport beads will be filed for each target branch.",
+Backport approval discussions have been created. Once approved, backport tasks will be filed for each target branch.",
         branches = branches_str.join("\n")
     )
 }

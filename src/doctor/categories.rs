@@ -3,12 +3,12 @@
 //! Each category implements a specific aspect of Rodgers health:
 //! - config: Configuration file validation
 //! - auth: GitHub authentication and token permissions
-//! - beads: Beads database connectivity and schema
+//! - backlog: Backlog.md task store readability and layout
 //! - plans: Plan files validation
 //! - repo: Repository state validation
 
 use super::{
-    CATEGORY_AUTH, CATEGORY_BEADS, CATEGORY_CONFIG, CATEGORY_PLANS, CATEGORY_REPO, CategoryResult,
+    CATEGORY_AUTH, CATEGORY_BACKLOG, CATEGORY_CONFIG, CATEGORY_PLANS, CATEGORY_REPO, CategoryResult,
 };
 use crate::error::RogersError;
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,7 @@ use std::path::Path;
 pub struct RodgersConfig {
     pub github: GitHubConfig,
     pub scheduler: Option<SchedulerConfig>,
-    pub beads: BeadsConfig,
+    pub backlog: BacklogConfig,
     pub llm: LlmConfig,
     pub triage: Option<TriageConfig>,
     pub release: Option<ReleaseConfig>,
@@ -44,9 +44,8 @@ pub struct SchedulerConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BeadsConfig {
-    pub remote: Option<String>,
-    pub database: Option<String>,
+pub struct BacklogConfig {
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,8 +123,8 @@ pub fn check_config(config_path: &Path) -> Result<CategoryResult, RogersError> {
     if config.llm.model.is_none() || config.llm.model.as_ref().is_none_or(|m| m.is_empty()) {
         missing_keys.push("llm.model");
     }
-    if config.beads.remote.is_none() || config.beads.remote.as_ref().is_none_or(|r| r.is_empty()) {
-        missing_keys.push("beads.remote");
+    if config.backlog.path.is_none() || config.backlog.path.as_ref().is_none_or(|r| r.is_empty()) {
+        missing_keys.push("backlog.path");
     }
 
     if !missing_keys.is_empty() {
@@ -251,7 +250,7 @@ pub async fn check_auth(
     let user: serde_json::Value = user_response
         .json()
         .await
-        .map_err(|e| RogersError::Beads(format!("Failed to parse user response: {}", e)))?;
+        .map_err(|e| RogersError::Backlog(format!("Failed to parse user response: {}", e)))?;
     let username = user
         .get("login")
         .and_then(|v| v.as_str())
@@ -309,7 +308,7 @@ pub async fn check_auth(
         let rate_limit: serde_json::Value = rate_response
             .json()
             .await
-            .map_err(|e| RogersError::Beads(format!("Failed to parse rate limit: {}", e)))?;
+            .map_err(|e| RogersError::Backlog(format!("Failed to parse rate limit: {}", e)))?;
         if let Some(limit_obj) = rate_limit.get("rate") {
             let remaining = limit_obj
                 .get("remaining")
@@ -330,29 +329,69 @@ pub async fn check_auth(
     Ok(CategoryResult::pass_with_messages(CATEGORY_AUTH, messages))
 }
 
-/// Check the beads category
+/// Check the backlog category
 ///
-/// Verifies the beads database is reachable and has the correct schema.
-pub async fn check_beads(
-    remote: &str,
-    database: Option<&str>,
-) -> Result<CategoryResult, RogersError> {
+/// Verifies the Backlog.md task directory is readable and has the expected layout.
+pub async fn check_backlog(backlog_path: &Path) -> Result<CategoryResult, RogersError> {
     let mut messages = Vec::new();
-    let _db_name = database.unwrap_or("message.hibernate");
 
-    // For now, beads connectivity check is a placeholder
-    // In a real implementation, this would connect to dolt and verify schema
-    // Since we don't have actual dolt connectivity in the test environment,
-    // we'll do a basic sanity check based on configuration
+    if !backlog_path.exists() {
+        return Ok(CategoryResult::fail(
+            CATEGORY_BACKLOG,
+            format!("Backlog.md task directory not found at {}", backlog_path.display()),
+        ));
+    }
+    if !backlog_path.is_dir() {
+        return Ok(CategoryResult::fail(
+            CATEGORY_BACKLOG,
+            format!("Backlog.md path is not a directory: {}", backlog_path.display()),
+        ));
+    }
+    messages.push(format!("Backlog.md directory found at {}", backlog_path.display()));
 
-    messages.push(format!("Connected to dolt at {}", remote));
+    let config = backlog_path.join("config.yml");
+    if !config.is_file() {
+        return Ok(CategoryResult::fail(
+            CATEGORY_BACKLOG,
+            format!("Backlog.md config file missing: {}", config.display()),
+        ));
+    }
+    messages.push("config.yml found".into());
 
-    // Check required tables exist (would require actual dolt query in production)
-    messages.push("Tables: epics, children, state ✓".into());
-    messages.push("Schema: github_issue_url, github_issue_state, rodgers_type ✓".into());
-    messages.push("Orphan bead count: 0 ✓".into());
+    let tasks = backlog_path.join("tasks");
+    let completed = backlog_path.join("completed");
+    if !tasks.is_dir() && !completed.is_dir() {
+        return Ok(CategoryResult::fail(
+            CATEGORY_BACKLOG,
+            "Backlog.md has neither tasks/ nor completed/ directories",
+        ));
+    }
+    if tasks.is_dir() {
+        messages.push("tasks/ directory found".into());
+    }
+    if completed.is_dir() {
+        messages.push("completed/ directory found".into());
+    }
 
-    Ok(CategoryResult::pass_with_messages(CATEGORY_BEADS, messages))
+    let task_count = count_markdown_files(&tasks)? + count_markdown_files(&completed)?;
+    messages.push(format!("Task files readable: {}", task_count));
+
+    Ok(CategoryResult::pass_with_messages(CATEGORY_BACKLOG, messages))
+}
+
+fn count_markdown_files(path: &Path) -> Result<usize, RogersError> {
+    if !path.is_dir() {
+        return Ok(0);
+    }
+
+    let mut count = 0;
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        if entry.path().extension().and_then(|ext| ext.to_str()) == Some("md") {
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 /// Check the plans category
@@ -441,7 +480,7 @@ pub async fn check_repo(
         let labels: Vec<serde_json::Value> = labels_response
             .json()
             .await
-            .map_err(|e| RogersError::Beads(format!("Failed to parse labels: {}", e)))?;
+            .map_err(|e| RogersError::Backlog(format!("Failed to parse labels: {}", e)))?;
         let existing_names: Vec<&str> = labels
             .iter()
             .filter_map(|l| l.get("name").and_then(|n| n.as_str()))
@@ -541,9 +580,8 @@ github:
   api_url: https://api.github.com
 scheduler:
   interval_minutes: 5
-beads:
-  remote: https://dolt.example.com/test
-  database: test.hibernate
+backlog:
+  path: backlog
 llm:
   provider: openai
   base_url: https://api.openai.com/v1

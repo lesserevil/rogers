@@ -1,55 +1,46 @@
-# bootstrap
+# Rogers
 
-A project template for new repos. Clone it (or copy/paste from it)
-as a starting point and adapt to your project's specifics.
+Rogers is a GitHub-native community relations agent. It audits repository
+setup, triages issues, routes questions, manages backport and release
+workflows, and records implementation work in Backlog.md task files.
 
-## This is a template, not a project
+## Requirements
 
-Don't try to "run" bootstrap. The quality-gate targets in the
-Makefile (`fmt`, `build`, `test`, `lint`, `clean`) are deliberately
-stubbed; there's no application code. Bootstrap ships an opinionated
-baseline (`AGENTS.md`, `Makefile`, `docs/`, `plans/`, githooks) and
-you adapt it to your project.
+- Rust toolchain with Cargo
+- Node.js and npm for the Backlog.md CLI
+- GitHub personal access token for repository operations
 
-## Workflow
+## Setup
 
-1. **Clone or fork** bootstrap into a new directory, or copy the
-   files into an existing repo.
+```bash
+make ensure-backlog
+cp config.example.yaml config.yaml
+```
 
-2. **Run `make init`.** Idempotent — safe to re-run.
-   - `git init` (if the directory isn't already a git repo)
-   - checks that `bd` (beads) is installed and on `PATH` — errors
-     out with an install pointer if not
-   - `bd init` (creating `.beads/`)
-   - points `bd`'s sync remote at git's `origin`, if `origin` is set
+Edit `config.yaml` and set the GitHub repo, token environment variable,
+LLM endpoint, and `backlog.path` if you do not use the default `backlog/`
+directory.
 
-3. **Ask an agent to customize the repo.** Point your agent at
-   `AGENTS.md` § *Customize per project* — that section enumerates
-   the per-project decisions to make: pick a license, fill in the
-   real toolchain commands, wire up the pre-commit hook checks, list
-   canonical user-doc filenames, document the configuration surface,
-   and decide on the opt-ins (commit attribution, plan-ref linting,
-   `CONTRIBUTING.md`, etc.).
+## Build And Test
 
-   A reasonable first prompt to the agent after `make init`:
+```bash
+make fmt-check
+make build
+make test
+make lint
+```
 
-   > Read `AGENTS.md` and walk me through the *Customize per project*
-   > checklist. Ask me one decision at a time so I can update the
-   > right files. When the checklist is done, replace this `README.md`
-   > with a project-specific one describing the project we just set
-   > up — nothing from the template README should remain.
+## CLI
 
-## Layout
+```bash
+rogers init --repo owner/repo
+rogers doctor --config config.yaml
+```
 
-- `AGENTS.md` — operating rules (read this first)
-- `Makefile` — `make init` plus per-project quality-gate stubs
-- `docs/` — user-facing documentation
-- `plans/` — design docs and architecture notes
-- `scripts/githooks/` — pre-commit hook scaffolding
+See `docs/cli.md` and `docs/configuration.md` for details.
 
-## Replace this README
+## Task Tracking
 
-Once you've customized the repo, **replace this file** with a real
-README describing *your* project — what it does, how to install and
-run it, its constraints. Nothing from this template README belongs
-in your downstream README.
+This repo uses Backlog.md from `https://github.com/lesserevil/backlog.md`.
+Task files live in `backlog/`, and the local CLI is installed by
+`make ensure-backlog` into `.tools/backlog`.

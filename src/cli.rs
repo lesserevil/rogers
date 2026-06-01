@@ -42,7 +42,7 @@ pub enum Commands {
         #[arg(long, short = 'v')]
         verbose: bool,
 
-        /// Limit to specific health check categories: config, auth, beads, plans, repo, drift.
+        /// Limit to specific health check categories: config, auth, tasks, plans, repo, drift.
         #[arg(long, short = 'o', value_delimiter = ',')]
         only: Vec<String>,
 

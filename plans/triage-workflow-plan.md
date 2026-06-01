@@ -74,7 +74,7 @@ stateDiagram-v2
     SEARCH_DOCS --> DOC_GAP: no answer exists
 
     DOC_FOUND --> CLOSE_QUESTION: post link comment\nclose issue
-    DOC_GAP --> FILE_DOCS_BEAD: file docs bead\nlabel needs-documentation\npost acknowledgment
+    DOC_GAP --> FILE_DOCS_TASK: file docs task\nlabel needs-documentation\npost acknowledgment
 
     READY_FOR_REVIEW --> WILL_NOT_DO: human applies label
     READY_FOR_REVIEW --> READY_FOR_WORK: human applies label
@@ -83,8 +83,8 @@ stateDiagram-v2
     INFORM_REQUESTOR --> CLOSE_ISSUE: close issue
     CLOSE_ISSUE --> [*]
 
-    READY_FOR_WORK --> FILE_EPIC_BEADS: epic + child beads\npost link comment
-    FILE_EPIC_BEADS --> IN_PROGRESS: label in-progress
+    READY_FOR_WORK --> FILE_EPIC_TASKS: epic + child tasks\npost link comment
+    FILE_EPIC_TASKS --> IN_PROGRESS: label in-progress
     IN_PROGRESS --> [*]
 ```
 
@@ -145,7 +145,7 @@ When Rodgers sees `needs-information` applied, it checks:
 
 **Entry:** Rodgers found no documentation answering the question.
 
-**Action:** Rodgers files a `chore` bead (`rodgers:type=docs`) and applies `needs-documentation` label. Posts acknowledgment comment on the issue. See plans/question-routing-plan.md §Step 3b.
+**Action:** Rodgers files a `chore` task (`rodgers:type=docs`) and applies `needs-documentation` label. Posts acknowledgment comment on the issue. See plans/question-routing-plan.md §Step 3b.
 
 ### READY-FOR-REVIEW
 
@@ -167,17 +167,17 @@ When Rodgers sees `needs-information` applied, it checks:
 
 **Entry:** Human has applied `ready-for-work`.
 
-**Action:** Rodgers prompts the LLM to assess whether the issue is epic-scale (see Epic Bead Breakdown Procedure above). If yes, Rodgers follows the breakdown procedure: files the epic bead + child beads (all `deferred`), posts a breakdown comment linking to each bead, and awaits a human signal before setting children to `open`. If no (standard bug/feature), Rodgers files the epic bead and proceeds to `IN_PROGRESS` with the epic as a single- bead work item following plans/feature-bug-plan.md.
+**Action:** Rodgers prompts the LLM to assess whether the issue is epic-scale (see Epic Task Breakdown Procedure above). If yes, Rodgers follows the breakdown procedure: files the epic task + child tasks (all `deferred`), posts a breakdown comment linking to each task, and awaits a human signal before setting children to `open`. If no (standard bug/feature), Rodgers files the epic task and proceeds to `IN_PROGRESS` with the epic as a single- task work item following plans/feature-bug-plan.md.
 
 ### IN_PROGRESS
 
-**Entry:** Epic bead created, work is underway.
+**Entry:** Epic task created, work is underway.
 
-**Exit (passive, next poll):** On every triage run, Rodgers evaluates all issues in `IN_PROGRESS` — issues labeled `in-progress` or that have an open epic bead with child beads. If Rodgers detects that all child beads are closed **and** the GitHub issue is in a closed state, Rodgers closes the epic bead and the loop terminates for that issue.
+**Exit (passive, next poll):** On every triage run, Rodgers evaluates all issues in `IN_PROGRESS` — issues labeled `in-progress` or that have an open epic task with child tasks. If Rodgers detects that all child tasks are closed **and** the GitHub issue is in a closed state, Rodgers closes the epic task and the loop terminates for that issue.
 
 Rodgers does not force-close the GitHub issue proactively. It relies on the human to close the issue or on a configured automation (e.g., GitHub Actions workflow that closes issues when all linked PRs merge). Rodgers detects the closed state on the next triage run.
 
-**Stalled IN_PROGRESS recovery:** If Rodgers detects an `IN_PROGRESS` issue whose child beads are all closed but the GitHub issue is still open, it posts a comment on the issue asking the human to close it or confirm the work is done. Rodgers does not close the issue on the human's behalf. This is a one-time alert per stalled state — Rodgers does not repeat the ping unless new activity restarts the loop.
+**Stalled IN_PROGRESS recovery:** If Rodgers detects an `IN_PROGRESS` issue whose child tasks are all closed but the GitHub issue is still open, it posts a comment on the issue asking the human to close it or confirm the work is done. Rodgers does not close the issue on the human's behalf. This is a one-time alert per stalled state — Rodgers does not repeat the ping unless new activity restarts the loop.
 
 ---
 
@@ -189,35 +189,35 @@ Rodgers does not force-close the GitHub issue proactively. It relies on the huma
 - The work spans multiple areas of the project (e.g., "UI and API," "backend and docs," "redesign auth system")
 - The description contains sequential or continuation logic ("Do this, and then do this, and then...") that naturally maps to multiple sub-tasks
 
-**Epic Bead Breakdown Procedure:**
+**Epic Task Breakdown Procedure:**
 
 When Rodgers transitions an issue to `READY-FOR-WORK`, it prompts the LLM to analyze whether the work is epic-scale. If yes, Rodgers applies a structured breakdown:
 
 1. **Detect.** LLM reads the issue title, body, all comments, and relevant codebase context (search_code against the affected components) to identify distinct work areas.
 
-2. **File epic bead.** Rodgers files one `epic`-type bead. The title is the GitHub issue title. The description is a LLM-summarized "What and Why" from the issue. Status: `deferred`. Linked to the GitHub issue.
+2. **File epic task.** Rodgers files one `epic`-type task. The title is the GitHub issue title. The description is a LLM-summarized "What and Why" from the issue. Status: `deferred`. Linked to the GitHub issue.
 
-3. **File child beads.** Rodgers prompts the LLM to enumerate the distinct sub-work items. Each child bead:
+3. **File child tasks.** Rodgers prompts the LLM to enumerate the distinct sub-work items. Each child task:
    - Type: whatever makes sense (`feature`, `chore`, `bug` — Rodgers has discretion)
    - Title: self-contained description of the sub-work item
    - Description: LLM-summarized scope, referencing the relevant parts of the epic issue
    - Status: `deferred` (all children start deferred)
-   - Parent: the epic bead ID
-   - All child beads are filed before any are marked `open`
+   - Parent: the epic task ID
+   - All child tasks are filed before any are marked `open`
 
 4. **Post breakdown comment.** Rodgers posts a comment on the GitHub issue:
-   - Links to the epic bead and each child bead
-   - States that all child beads are in `deferred` status pending human review
+   - Links to the epic task and each child task
+   - States that all child tasks are in `deferred` status pending human review
    - Invites the human to adjust types or set children to `open`
 
-5. **Human review gate.** Upon human action — any human modification to a child bead (changing its title, type, description, status, or assignee), or any human comment on the issue or any bead — Rodgers treats that as the human accepting the breakdown. Rodgers sets the reviewed children to `open` as a batch on that signal.
+5. **Human review gate.** Upon human action — any human modification to a child task (changing its title, type, description, status, or assignee), or any human comment on the issue or any task — Rodgers treats that as the human accepting the breakdown. Rodgers sets the reviewed children to `open` as a batch on that signal.
 
-6. **Orphan detection.** On each triage run, Rodgers checks for issues labeled `ready-for-work` that have no linked epic bead. If found (run fail state), Rodgers files the epic and child beads following the procedure above and posts the breakdown comment.
+6. **Orphan detection.** On each triage run, Rodgers checks for issues labeled `ready-for-work` that have no linked epic task. If found (run fail state), Rodgers files the epic and child tasks following the procedure above and posts the breakdown comment.
 
 **What Rodgers does NOT do:**
-- Rodgers does not set any child bead to `open` without a human signal
+- Rodgers does not set any child task to `open` without a human signal
 - Rodgers does not attempt to estimate implementation complexity or assign priority during the breakdown
-- Rodgers does not file an epic bead if the issue is not epic-scale
+- Rodgers does not file an epic task if the issue is not epic-scale
 
 ---
 
@@ -251,11 +251,11 @@ When Rodgers transitions an issue to `READY-FOR-WORK`, it prompts the LLM to ana
 - [ ] CRIT-2: An issue in `INCOMPLETE` state is never moved to `READY-FOR-REVIEW` until the LLM confirms completeness based on issue type requirements
 - [ ] CRIT-3: Rodgers transitions `READY-FOR-REVIEW` → `WILL-NOT-DO` or `READY-FOR-WORK` only on human action (human applies the label)
 - [ ] CRIT-4: When transitioning to `WILL-NOT-DO`, Rodgers drafts and posts an LLM-composed closure comment, then closes the issue within one triage run
-- [ ] CRIT-5: When transitioning to `READY-FOR-WORK`, Rodgers drafts a bead description with the LLM, files the epic+child beads within one triage run, and posts a comment linking to the epic
+- [ ] CRIT-5: When transitioning to `READY-FOR-WORK`, Rodgers drafts a task description with the LLM, files the epic+child tasks within one triage run, and posts a comment linking to the epic
 - [ ] CRIT-6: An issue with `needs-information` that has had no response for more than 14 days receives an LLM-drafted ping. After 28 days total with no response, the issue is closed with an LLM-drafted stale notice.
 - [ ] CRIT-7: Rodgers never makes a human gate decision (`will-not-do`, `ready-for-work`) on its own — it only observes and acts on the human's label applied to the GitHub issue
 - [ ] CRIT-8: All public comments Rodgers posts are LLM-drafted, validated by the Structured Output Validator, and reviewed against Rodger's warmth principle before being sent to GitHub
-- [ ] CRIT-9: On detecting epic-scale work at `READY-FOR-WORK`, Rodgers files the epic bead and all child beads before any bead is set to `open`; all child beads start `deferred`
-- [ ] CRIT-10: Rodgers does not set any child bead to `open` until it detects a human signal (human comment or any human-initiated bead modification); on that signal, Rodgers sets all non-closed child beads to `open` as a batch
-- [ ] CRIT-11: When all child beads of an epic are closed and the GitHub issue is in a closed state, Rodgers closes the epic bead within one triage run of detecting that condition; stalled issues (all children closed, issue still open) receive a one-time alert comment asking the human to close the issue
+- [ ] CRIT-9: On detecting epic-scale work at `READY-FOR-WORK`, Rodgers files the epic task and all child tasks before any task is set to `open`; all child tasks start `deferred`
+- [ ] CRIT-10: Rodgers does not set any child task to `open` until it detects a human signal (human comment or any human-initiated task modification); on that signal, Rodgers sets all non-closed child tasks to `open` as a batch
+- [ ] CRIT-11: When all child tasks of an epic are closed and the GitHub issue is in a closed state, Rodgers closes the epic task within one triage run of detecting that condition; stalled issues (all children closed, issue still open) receive a one-time alert comment asking the human to close the issue
 - [ ] CRIT-12: When Rodgers encounters an issue where `author.type == "Bot"` (detected via `get_issue`), it applies all `triage.bot_labels` labels to the issue and skips triage for that issue for the current run

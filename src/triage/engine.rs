@@ -17,6 +17,7 @@ pub struct TriageEngine {
     /// GitHub client.
     github: GitHubClient,
     /// LLM client.
+    #[allow(dead_code)]
     llm: LlmClient,
     /// Classifier.
     classifier: Classifier,
@@ -55,13 +56,13 @@ pub enum TriageActionType {
     CloseStale,
     /// Post doc answer.
     PostDocAnswer,
-    /// File doc gap bead.
+    /// File doc gap task.
     FileDocGap,
     /// Post will-not-do response.
     PostWillNotDo,
     /// Post ready-for-review summary.
     PostReadyForReview,
-    /// File epic and child beads.
+    /// File epic and child tasks.
     FileEpic,
     /// No action needed.
     NoAction,
@@ -153,34 +154,32 @@ impl TriageEngine {
 
         // Process based on current state
         match state_machine.state() {
-            TriageState::NewUnclassified => {
-                if !Self::has_rodgers_label(issue) {
-                    // Classify the issue
-                    let classify_result = self.classifier.classify(issue, None).await?;
+            TriageState::NewUnclassified if !Self::has_rodgers_label(issue) => {
+                // Classify the issue
+                let classify_result = self.classifier.classify(issue, None).await?;
 
-                    tracing::info!(
-                        "Classified issue #{} as {} (confidence: {:?})",
-                        issue.number,
-                        classify_result.output.issue_type,
-                        classify_result.output.confidence
-                    );
+                tracing::info!(
+                    "Classified issue #{} as {} (confidence: {:?})",
+                    issue.number,
+                    classify_result.output.issue_type,
+                    classify_result.output.confidence
+                );
 
-                    // Transition the state machine
-                    state_machine
-                        .transition_with_classification(
-                            TriageEvent::Classified,
-                            &classify_result.output.issue_type,
-                            &classify_result.output.completeness,
-                        )
-                        .map_err(|e| RogersError::Config(e.to_string()))?;
+                // Transition the state machine
+                state_machine
+                    .transition_with_classification(
+                        TriageEvent::Classified,
+                        &classify_result.output.issue_type,
+                        &classify_result.output.completeness,
+                    )
+                    .map_err(|e| RogersError::Config(e.to_string()))?;
 
-                    // Generate actions based on transition
-                    actions.extend(self.generate_actions_for_transition(
-                        issue,
-                        &state_machine,
-                        &classify_result,
-                    ));
-                }
+                // Generate actions based on transition
+                actions.extend(self.generate_actions_for_transition(
+                    issue,
+                    &state_machine,
+                    &classify_result,
+                ));
             }
             TriageState::BugIncomplete
             | TriageState::FeatureIncomplete
@@ -230,15 +229,13 @@ impl TriageEngine {
                 // Wait for human decision, no action needed
             }
             TriageState::ReadyForWork => {
-                // File epic and child beads
-                state_machine.transition(TriageEvent::BeadsCreated).ok();
+                // File epic and child tasks
+                state_machine.transition(TriageEvent::TasksCreated).ok();
                 actions.push(self.generate_file_epic_action(issue));
             }
-            TriageState::InProgress => {
+            TriageState::InProgress if self.is_work_complete(issue) => {
                 // Check if all work is done
-                if self.is_work_complete(issue) {
-                    state_machine.transition(TriageEvent::IssueClosed).ok();
-                }
+                state_machine.transition(TriageEvent::IssueClosed).ok();
             }
             _ => {
                 // Other states - take no action
@@ -379,9 +376,9 @@ impl TriageEngine {
         }
     }
 
-    /// Generate action for filing epic beads.
+    /// Generate action for filing epic tasks.
     fn generate_file_epic_action(&self, issue: &Issue) -> TriageAction {
-        // In a full implementation, this would file beads via the bead controller
+        // In a full implementation, this would file tasks via the task controller
         // For now, we generate the action for tracking
         TriageAction {
             action_type: TriageActionType::FileEpic,
@@ -403,7 +400,7 @@ impl TriageEngine {
 
     /// Check if the work on an issue is complete.
     fn is_work_complete(&self, issue: &Issue) -> bool {
-        // Check if issue is closed and no open beads linked
+        // Check if issue is closed and no open tasks linked
         issue.state == "closed"
     }
 
@@ -477,7 +474,7 @@ mod tests {
                 api_url: None,
             },
             scheduler: crate::config::SchedulerConfig::default(),
-            beads: crate::config::BeadsConfig::default(),
+            backlog: crate::config::BacklogConfig::default(),
             llm: crate::config::LlmConfig {
                 provider: Some("openai".to_string()),
                 base_url: Some("https://api.openai.com/v1".to_string()),

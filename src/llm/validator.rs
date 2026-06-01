@@ -154,8 +154,7 @@ impl OutputValidator {
             if !self
                 .classification_schema
                 .valid_issue_types
-                .iter()
-                .any(|&v| v == val.as_str())
+                .contains(&val.as_str())
             {
                 result.add_error(ValidationError::with_value(
                     "issue_type",
@@ -176,8 +175,7 @@ impl OutputValidator {
             if !self
                 .classification_schema
                 .valid_completeness
-                .iter()
-                .any(|&v| v == val.as_str())
+                .contains(&val.as_str())
             {
                 result.add_error(ValidationError::with_value(
                     "completeness",
@@ -204,8 +202,7 @@ impl OutputValidator {
             if !self
                 .classification_schema
                 .valid_severity
-                .iter()
-                .any(|&v| v == val.as_str())
+                .contains(&val.as_str())
             {
                 result.add_error(ValidationError::with_value(
                     "severity",
@@ -224,8 +221,7 @@ impl OutputValidator {
             if !self
                 .classification_schema
                 .valid_priority
-                .iter()
-                .any(|&v| v == val.as_str())
+                .contains(&val.as_str())
             {
                 result.add_error(ValidationError::with_value(
                     "priority",

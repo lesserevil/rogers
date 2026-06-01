@@ -42,6 +42,7 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+.tools/
 
 # ─── Go ───────────────────────────────────────────────────────────
 vendor/
@@ -49,20 +50,11 @@ vendor/
 # ─── Logs ─────────────────────────────────────────────────────────
 *.log
 
-# ─── Beads ────────────────────────────────────────────────────────
-# Keep .beads/issues.jsonl (the canonical export) under version
-# control; ignore the local SQLite DB and its sidecar files.
-.beads/*.db
-.beads/*.db-journal
-.beads/*.db-wal
-.beads/*.db-shm
-
-
 # Added by cargo
 
 /target
 
-# Beads / Dolt files (added by bd init)
-.dolt/
+# Backlog.md local files
+.Backlog.md/
 *.db
-.beads-credential-key
+.tasks-credential-key

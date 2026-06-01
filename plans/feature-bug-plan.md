@@ -8,7 +8,7 @@
 
 ## Summary
 
-Feature requests and bug reports follow a shared workflow with two phases: a **completeness check** (is there enough information?) and a **readiness phase** (awaiting human go/no-go). Rodgers acts as an interrogator when information is missing, and an analyst when information is sufficient. All work spawned from accepted issues uses the epic/child bead pattern.
+Feature requests and bug reports follow a shared workflow with two phases: a **completeness check** (is there enough information?) and a **readiness phase** (awaiting human go/no-go). Rodgers acts as an interrogator when information is missing, and an analyst when information is sufficient. All work spawned from accepted issues uses the epic/child task pattern.
 
 This plan documents the completeness check, acceptance criteria requirements, and the ready-for-work handoff. The underlying state machine is defined in plans/triage-workflow-plan.md.
 
@@ -87,39 +87,39 @@ When Rodgers determines the issue is complete, it:
 
 **`ready-for-work` path:**
 - Human applies `ready-for-work` label and removes `ready-for-review`
-- Rodgers creates an epic bead for the work (see Bead Breakdown below)
-- Rodgers posts a comment: "This has been accepted for implementation. Tracking progress in [epic bead title]."
+- Rodgers creates an epic task for the work (see Task Breakdown below)
+- Rodgers posts a comment: "This has been accepted for implementation. Tracking progress in [epic task title]."
 
 ---
 
-## Bead Breakdown
+## Task Breakdown
 
-When `ready-for-work` is applied, Rodgers creates beads as follows:
+When `ready-for-work` is applied, Rodgers creates tasks as follows:
 
-### Epic Bead
+### Epic Task
 - Type: `epic` or the appropriate type matching the issue classification
 - Title: matches the issue title
-- Description: `Plan: plans/feature-bug-plan.md §Bead Breakdown. GitHub Issue: #<number>.`
+- Description: `Plan: plans/feature-bug-plan.md §Task Breakdown. GitHub Issue: #<number>.`
 
 The epic description links to the GitHub issue and includes the full acceptance criteria copied from the issue.
 
-### Child Beads
-Rodgers analyzes the issue and breaks it into **one bead per logical unit of work** (see AGENTS.md §Beads must stand alone — required completeness).
+### Child Backlog
+Rodgers analyzes the issue and breaks it into **one task per logical unit of work** (see AGENTS.md §Backlog must stand alone — required completeness).
 
-Guidelines for child bead scope (two rules of thumb):
-1. **Single codebase part.** Each bead should touch at most one distinct part of the codebase — CLI, UI, API, DB, config, etc. If a bead would require changing both the CLI argument parser and the database schema schema, that's two beads.
-2. **No "...and then..." descriptions.** Each bead's scope should be describable in a single, non-compound sentence. If the description would naturally continue with "and then..." to cover additional work, the bead is too broad and should be split.
+Guidelines for child task scope (two rules of thumb):
+1. **Single codebase part.** Each task should touch at most one distinct part of the codebase — CLI, UI, API, DB, config, etc. If a task would require changing both the CLI argument parser and the database schema schema, that's two tasks.
+2. **No "...and then..." descriptions.** Each task's scope should be describable in a single, non-compound sentence. If the description would naturally continue with "and then..." to cover additional work, the task is too broad and should be split.
 
 Additional guidelines:
-- One section of the acceptance criteria per child bead, or one cohesive implementation concern
-- Each child bead must be self-contained: a naive but competent junior developer could implement it without consulting other beads or the epic description
-- Edge cases and constraints from the issue description belong in the relevant child bead, not the epic
+- One section of the acceptance criteria per child task, or one cohesive implementation concern
+- Each child task must be self-contained: a naive but competent junior developer could implement it without consulting other tasks or the epic description
+- Edge cases and constraints from the issue description belong in the relevant child task, not the epic
 
 ### Labeling Conventions
 
-Beads are typed and labeled consistently:
-- `type=feature` for feature implementation beads
-- `type=bug` for bug fix beads
+Backlog.md tasks are typed and labeled consistently:
+- `type=feature` for feature implementation tasks
+- `type=bug` for bug fix tasks
 - `priority` set based on the issue priority and complexity
 
 ---
@@ -128,7 +128,7 @@ Beads are typed and labeled consistently:
 
 - State machine: plans/triage-workflow-plan.md
 - Architecture: plans/architecture-plan.md
-- Epic/child documentation: AGENTS.md §Beads must stand alone
+- Epic/child documentation: AGENTS.md §Backlog must stand alone
 
 ---
 
@@ -137,7 +137,7 @@ Beads are typed and labeled consistently:
 - [ ] CRIT-1: A `bug` or `feature` issue with all required information fields populated transitions to `ready-for-review` within one triage run
 - [ ] CRIT-2: A `bug` or `feature` issue with any required information field missing applies `needs-information` and requests only the missing specific fields (not a generic request)
 - [ ] CRIT-3: When a human applies `will-not-do`, Rodgers posts a closure comment and closes the issue within one triage run
-- [ ] CRIT-4: When a human applies `ready-for-work`, Rodgers creates an epic bead followed by child beads within one triage run
-- [ ] CRIT-5: Each child bead is self-contained: a developer reading only that bead can implement it without consulting other beads or the parent epic
-- [ ] CRIT-6: All acceptance criteria from the GitHub issue are copied into the epic bead description
+- [ ] CRIT-4: When a human applies `ready-for-work`, Rodgers creates an epic task followed by child tasks within one triage run
+- [ ] CRIT-5: Each child task is self-contained: a developer reading only that task can implement it without consulting other tasks or the parent epic
+- [ ] CRIT-6: All acceptance criteria from the GitHub issue are copied into the epic task description
 - [ ] CRIT-7: Rodgers never moves an issue to `ready-for-review` without the minimum required information for the issue type

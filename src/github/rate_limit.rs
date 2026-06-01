@@ -239,7 +239,6 @@ pub async fn execute_with_rate_limit<T>(
     retry_after_header: Option<u64>,
 ) -> Result<T> {
     let mut attempts = 0u32;
-    let mut last_error = None;
 
     loop {
         attempts += 1;
@@ -256,10 +255,8 @@ pub async fn execute_with_rate_limit<T>(
 
                         tokio::time::sleep(delay).await;
                         continue;
-                    } else {
-                        last_error = Some(e);
-                        break;
                     }
+                    return Err(e);
                 } else {
                     // Non-rate-limit error, don't retry
                     return Err(e);
@@ -267,11 +264,6 @@ pub async fn execute_with_rate_limit<T>(
             }
         }
     }
-
-    Err(last_error.unwrap_or_else(|| RogersError::GitHubStatus {
-        code: 429,
-        message: "Max retries exceeded due to rate limiting".to_string(),
-    }))
 }
 
 /// Check if an error indicates rate limiting.

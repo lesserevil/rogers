@@ -23,6 +23,7 @@ pub struct User {
 /// GitHub Label
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Label {
+    #[serde(default)]
     pub id: i64,
     pub name: String,
     pub description: Option<String>,
@@ -327,7 +328,8 @@ pub struct Discussion {
     pub viewer_subscription: Option<String>,
     #[serde(rename = "viewer_has_handed_of_previous_version")]
     pub viewer_has_heard_of_previous_version: Option<bool>,
-    pub Comments: Option<CommentConnection>,
+    #[serde(rename = "Comments")]
+    pub comments: Option<CommentConnection>,
 }
 
 /// Discussion comment
@@ -345,7 +347,8 @@ pub struct DiscussionComment {
     pub url: String,
     #[serde(rename = "comment_count")]
     pub comment_count: i32,
-    pub Replies: Option<CommentConnection>,
+    #[serde(rename = "Replies")]
+    pub replies: Option<CommentConnection>,
 }
 
 /// Connection type for labels

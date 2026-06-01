@@ -55,7 +55,7 @@ fn merge_config(left: AppConfig, right: AppConfig) -> AppConfig {
     AppConfig {
         github: merge_github(left.github, right.github),
         scheduler: merge_scheduler(left.scheduler, right.scheduler),
-        beads: merge_beads(left.beads, right.beads),
+        backlog: merge_backlog(left.backlog, right.backlog),
         llm: merge_llm(left.llm, right.llm),
         triage: merge_triage(left.triage, right.triage),
         release: merge_release(left.release, right.release),
@@ -73,42 +73,23 @@ fn merge_github(
     left: Option<super::schema::GitHubConfig>,
     right: Option<super::schema::GitHubConfig>,
 ) -> Option<super::schema::GitHubConfig> {
-    match (left, right) {
-        (Some(l), Some(r)) => Some(super::schema::GitHubConfig {
-            owner: r.owner.or(l.owner),
-            repo: r.repo.or(l.repo),
-            token: r.token.or(l.token),
-            api_url: r.api_url.or(l.api_url),
-        }),
-        (Some(l), None) => Some(l),
-        (None, Some(r)) => Some(r),
-        (None, None) => None,
-    }
+    right.or(left)
 }
 
 fn merge_scheduler(
     left: Option<super::schema::SchedulerConfig>,
     right: Option<super::schema::SchedulerConfig>,
 ) -> Option<super::schema::SchedulerConfig> {
-    match (left, right) {
-        (Some(l), Some(r)) => Some(super::schema::SchedulerConfig {
-            interval_minutes: r.interval_minutes.or(l.interval_minutes),
-            enabled: r.enabled.or(l.enabled),
-        }),
-        (Some(l), None) => Some(l),
-        (None, Some(r)) => Some(r),
-        (None, None) => None,
-    }
+    right.or(left)
 }
 
-fn merge_beads(
-    left: Option<super::schema::BeadsConfig>,
-    right: Option<super::schema::BeadsConfig>,
-) -> Option<super::schema::BeadsConfig> {
+fn merge_backlog(
+    left: Option<super::schema::BacklogConfig>,
+    right: Option<super::schema::BacklogConfig>,
+) -> Option<super::schema::BacklogConfig> {
     match (left, right) {
-        (Some(l), Some(r)) => Some(super::schema::BeadsConfig {
-            remote: r.remote.or(l.remote),
-            database: r.database.or(l.database),
+        (Some(l), Some(r)) => Some(super::schema::BacklogConfig {
+            path: r.path.or(l.path),
         }),
         (Some(l), None) => Some(l),
         (None, Some(r)) => Some(r),
@@ -120,17 +101,7 @@ fn merge_llm(
     left: Option<super::schema::LlmConfig>,
     right: Option<super::schema::LlmConfig>,
 ) -> Option<super::schema::LlmConfig> {
-    match (left, right) {
-        (Some(l), Some(r)) => Some(super::schema::LlmConfig {
-            provider: r.provider.or(l.provider),
-            base_url: r.base_url.or(l.base_url),
-            model: r.model.or(l.model),
-            api_key: r.api_key.or(l.api_key),
-        }),
-        (Some(l), None) => Some(l),
-        (None, Some(r)) => Some(r),
-        (None, None) => None,
-    }
+    right.or(left)
 }
 
 fn merge_triage(

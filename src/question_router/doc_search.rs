@@ -83,7 +83,7 @@ impl DocSearcher {
                             relative_path.clone(),
                             DocContent {
                                 path: relative_path,
-                                title,
+                                _title: title,
                                 content,
                             },
                         );
@@ -111,7 +111,7 @@ impl DocSearcher {
         let keywords = extract_keywords(query);
         let mut results: Vec<DocSearchResult> = Vec::new();
 
-        for (_path, doc) in &self.documents {
+        for doc in self.documents.values() {
             let relevance = calculate_relevance(&keywords, &doc.content, query);
 
             if relevance > 0.0 {
@@ -156,7 +156,7 @@ struct DocContent {
     /// Relative path to the document.
     path: String,
     /// Document title.
-    title: String,
+    _title: String,
     /// Full document content.
     content: String,
 }
@@ -197,9 +197,6 @@ fn calculate_relevance(keywords: &[String], content: &str, original_query: &str)
     let mut keyword_matches = 0;
     let mut keyword_positions = 0.0;
     let mut total_weight = 0.0;
-
-    // Track position for recency bonus
-    let mut position = 0;
 
     for keyword in keywords {
         let mut keyword_weight = 1.0;
@@ -318,7 +315,6 @@ fn remove_markdown_formatting(text: &str) -> String {
 
 /// Extract section heading if keywords appear in a section.
 fn extract_section_heading(content: &str, keywords: &[String]) -> Option<String> {
-    let content_lower = content.to_lowercase();
     let keyword_set: std::collections::HashSet<_> = keywords.iter().cloned().collect();
 
     // Look for headings (lines starting with # or ===)

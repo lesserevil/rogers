@@ -5,8 +5,7 @@
 //!
 //! Plan: plans/question-routing-plan.md §Question Router Decision Tree
 
-use crate::beads::client::BeadsClient;
-use crate::beads::controller::BeadController;
+use crate::backlog::controller::TaskController;
 use crate::error::{Result, RogersError};
 use crate::github::client::GitHubClient;
 use crate::github::models::Issue;
@@ -30,7 +29,7 @@ pub enum RouterActionType {
     PostDocAnswer,
     /// Post a code explanation answer.
     PostCodeAnswer,
-    /// File a documentation gap bead.
+    /// File a documentation gap task.
     FileDocGap,
     /// No action needed (already handled or not a question).
     NoAction,
@@ -56,13 +55,14 @@ pub struct RoutingResult {
     /// Code search result (if applicable).
     pub code_result: Option<CodeSearchResult>,
     /// Doc gap result (if applicable).
-    pub doc_gap_bead_id: Option<String>,
+    pub doc_gap_task_id: Option<String>,
     /// Explanation for code answers (plain language).
     pub code_explanation: Option<String>,
 }
 
 /// Question router for processing question-labeled issues.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct QuestionRouter {
     /// GitHub client for posting comments and labels.
     github: GitHubClient,
@@ -85,7 +85,7 @@ impl QuestionRouter {
     pub fn new(
         github: GitHubClient,
         llm: LlmClient,
-        bead_controller: BeadController,
+        task_controller: TaskController,
         owner: impl Into<String>,
         repo: impl Into<String>,
     ) -> Self {
@@ -97,7 +97,7 @@ impl QuestionRouter {
             llm,
             doc_searcher: Arc::new(std::sync::Mutex::new(DocSearcher::standard())),
             code_searcher: Arc::new(std::sync::Mutex::new(CodeSearcher::standard())),
-            doc_gap_filer: DocGapFiler::new(bead_controller, owner.clone(), repo.clone()),
+            doc_gap_filer: DocGapFiler::new(task_controller, owner.clone(), repo.clone()),
             owner,
             repo,
         }
@@ -142,7 +142,7 @@ impl QuestionRouter {
                 close_issue: false,
                 doc_result: None,
                 code_result: None,
-                doc_gap_bead_id: None,
+                doc_gap_task_id: None,
                 code_explanation: None,
             });
         }
@@ -181,7 +181,7 @@ impl QuestionRouter {
                 close_issue: true, // Doc answer fully answers the question
                 doc_result: doc_result.clone(),
                 code_result: None,
-                doc_gap_bead_id: None,
+                doc_gap_task_id: None,
                 code_explanation: None,
             });
         }
@@ -233,7 +233,7 @@ impl QuestionRouter {
                     close_issue: true, // Code answer fully answers implementation questions
                     doc_result: None,
                     code_result: Some(best_result.clone()),
-                    doc_gap_bead_id: None,
+                    doc_gap_task_id: None,
                     code_explanation: Some(explanation),
                 });
             }
@@ -248,7 +248,7 @@ impl QuestionRouter {
         let doc_gap_request = DocGapRequest::from_issue(issue);
         let doc_gap_result = self.doc_gap_filer.file_doc_gap(doc_gap_request).await?;
 
-        let comment = generate_doc_gap_comment(&issue.user.login, &doc_gap_result.bead_id);
+        let comment = generate_doc_gap_comment(&issue.user.login, &doc_gap_result.task_id);
 
         Ok(RoutingResult {
             action: RouterActionType::FileDocGap,
@@ -259,12 +259,13 @@ impl QuestionRouter {
             close_issue: false,
             doc_result: None,
             code_result: None,
-            doc_gap_bead_id: Some(doc_gap_result.bead_id),
+            doc_gap_task_id: Some(doc_gap_result.task_id),
             code_explanation: None,
         })
     }
 
     /// Check if this is a genuine question that can be answered.
+    #[allow(dead_code)]
     async fn classify_question_type(&self, issue: &Issue) -> Result<QuestionClassification> {
         let metadata = IssueMetadata {
             number: issue.number,
@@ -296,7 +297,7 @@ impl QuestionRouter {
         // Parse the response as question classification
         let content = &response.choices[0].message.content;
         let parsed: QuestionClassification =
-            serde_json::from_str(content).map_err(|e| RogersError::Json(e))?;
+            serde_json::from_str(content).map_err(RogersError::Json)?;
 
         Ok(parsed)
     }
@@ -310,23 +311,6 @@ impl QuestionRouter {
         if results.is_empty() {
             return Ok("The relevant implementation was not found.".to_string());
         }
-
-        // Use LLM to generate a plain-language explanation from the code snippets
-        let context = results
-            .iter()
-            .take(3)
-            .map(|r| {
-                format!(
-                    "File: {}\nLine: {}\nSymbol: {}\nSnippet: {}\nContext: {:?}\n---\n",
-                    r.file_path,
-                    r.line_number,
-                    r.symbol_name.as_deref().unwrap_or("unknown"),
-                    r.snippet,
-                    r.context_lines.iter().take(3).collect::<Vec<_>>()
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
 
         Ok(format!(
             "I found the relevant code. Here's how it works:\n\nThe implementation is primarily in `{}` at line {}, in the `{}` function/module.\n\nFor the most accurate understanding, the full implementation spans multiple locations including the symbols: {}",
@@ -428,7 +412,7 @@ fn build_search_query(issue: &Issue) -> String {
         } else {
             body.clone()
         };
-        query.push_str(" ");
+        query.push(' ');
         query.push_str(&body_context);
     }
 
@@ -460,6 +444,7 @@ fn contains_impl_keywords(query: &str) -> bool {
 }
 
 /// Check if this is actually a question (vs bug/feature disguised as question).
+#[allow(dead_code)]
 fn is_genuine_question(title: &str, body: Option<&str>) -> bool {
     // Check for question indicators
     let question_words = [
@@ -603,7 +588,7 @@ mod tests {
             close_issue: true,
             doc_result: None,
             code_result: None,
-            doc_gap_bead_id: None,
+            doc_gap_task_id: None,
             code_explanation: None,
         };
 

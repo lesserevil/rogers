@@ -1,16 +1,18 @@
 //! Drift detection module
 //!
-//! Detects state divergence between GitHub and beads database.
+//! Detects state divergence between GitHub and Backlog.md tasks.
 //! Drift events include:
-//! - Closed beads with open GitHub issues
-//! - In-progress beads with closed GitHub issues
-//! - Orphan beads (no GitHub issue link)
+//! - Closed tasks with open GitHub issues
+//! - In-progress tasks with closed GitHub issues
+//! - Orphan tasks (no GitHub issue link)
 
 use super::{CATEGORY_DRIFT, CategoryResult, CategoryStatus, DriftEvent, DriftSeverity};
-use crate::beads::{Bead, BeadsClient};
+use crate::backlog::{BacklogClient, Task};
 use crate::error::Result;
+use crate::github::auth::GitHubAuth;
 use crate::github::GitHubClient;
 use crate::github::client::{issue_state, parse_issue_url};
+use std::path::Path;
 
 /// Result of drift check including any detected drift events
 pub struct DriftCheckResult {
@@ -22,31 +24,30 @@ pub struct DriftCheckResult {
 
 /// Check the drift category
 ///
-/// Detects GitHub ↔ beads state divergence.
+/// Detects GitHub ↔ tasks state divergence.
 pub async fn check_drift(
     _owner: &str,
     _repo: &str,
     token: &str,
     api_url: Option<&str>,
     verbose: bool,
-    beads_remote: &str,
-    beads_database: Option<&str>,
+    backlog_path: &Path,
 ) -> Result<DriftCheckResult> {
     let mut messages = Vec::new();
 
-    // Create the beads client (per-issue GitHub clients are built inside the
-    // loop below, since each bead's issue may live in a different repo).
-    let beads_client = BeadsClient::new(beads_remote, beads_database);
+    // Create the tasks client (per-issue GitHub clients are built inside the
+    // loop below, since each task's issue may live in a different repo).
+    let backlog_client = BacklogClient::new(backlog_path);
 
-    // Fetch closed beads from the database
-    let closed_beads: Vec<Bead> = match beads_client.get_closed_beads().await {
-        Ok(beads) => beads,
+    // Fetch closed tasks from Backlog.md.
+    let closed_tasks: Vec<Task> = match backlog_client.get_closed_tasks().await {
+        Ok(tasks) => tasks,
         Err(e) => {
-            messages.push(format!("Failed to fetch closed beads: {}", e));
+            messages.push(format!("Failed to fetch closed tasks: {}", e));
             return Ok(DriftCheckResult {
                 category_result: CategoryResult::fail(
                     CATEGORY_DRIFT,
-                    format!("Failed to fetch beads: {}", e),
+                    format!("Failed to fetch tasks: {}", e),
                 ),
                 drift_events: Vec::new(),
             });
@@ -55,18 +56,18 @@ pub async fn check_drift(
 
     if verbose {
         messages.push(format!(
-            "Fetching GitHub issue states for {} closed beads...",
-            closed_beads.len()
+            "Fetching GitHub issue states for {} closed tasks...",
+            closed_tasks.len()
         ));
     }
 
-    // For each closed bead with a GitHub issue URL, fetch the issue state
+    // For each closed task with a GitHub issue URL, fetch the issue state
     let mut github_issue_states: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     let mut uncertain_count = 0;
 
-    for bead in &closed_beads {
-        let Some(issue_url) = &bead.github_issue_url else {
+    for task in &closed_tasks {
+        let Some(issue_url) = &task.github_issue_url else {
             // No GitHub issue URL - will be caught by detect_drift_events as orphan
             continue;
         };
@@ -78,9 +79,14 @@ pub async fn check_drift(
         };
 
         // Build a per-repo client for the target issue (may differ from owner/repo)
-        let mut issue_client = GitHubClient::new(&issue_owner, &issue_repo).with_token(token);
+        let mut issue_client = GitHubClient::new(
+            &issue_owner,
+            &issue_repo,
+            GitHubAuth::new_with_default_api(token),
+        );
         if let Some(url) = api_url {
-            issue_client = issue_client.with_api_base(url);
+            issue_client =
+                GitHubClient::new(&issue_owner, &issue_repo, GitHubAuth::new(token, url));
         }
 
         // Fetch the issue state from GitHub
@@ -89,7 +95,7 @@ pub async fn check_drift(
                 github_issue_states.insert(issue_url.clone(), state.to_string());
             }
             Ok(None) => {
-                // Issue not found (404) - treat as closed (no drift for this bead)
+                // Issue not found (404) - treat as closed (no drift for this task)
                 // We still record it as "closed" to avoid false drift
                 github_issue_states.insert(issue_url.clone(), "closed".to_string());
             }
@@ -108,8 +114,8 @@ pub async fn check_drift(
         ));
     }
 
-    // Build bead statuses for drift detection
-    let bead_statuses: Vec<(String, String, Option<String>)> = closed_beads
+    // Build task statuses for drift detection
+    let task_statuses: Vec<(String, String, Option<String>)> = closed_tasks
         .iter()
         .map(|b| {
             (
@@ -121,43 +127,43 @@ pub async fn check_drift(
         .collect();
 
     // Detect drift events
-    let drift_events = detect_drift_events(&bead_statuses, &github_issue_states);
+    let drift_events = detect_drift_events(&task_statuses, &github_issue_states);
 
     // Count by type for summary messages
-    let closed_beads_open_issues = drift_events
+    let closed_tasks_open_issues = drift_events
         .iter()
-        .filter(|e| e.event_type == "closed_bead_open_issue")
+        .filter(|e| e.event_type == "closed_task_open_issue")
         .count();
-    let in_progress_beads_closed_issues = drift_events
+    let in_progress_tasks_closed_issues = drift_events
         .iter()
-        .filter(|e| e.event_type == "in_progress_bead_closed_issue")
+        .filter(|e| e.event_type == "in_progress_task_closed_issue")
         .count();
-    let orphan_beads = drift_events
+    let orphan_tasks = drift_events
         .iter()
-        .filter(|e| e.event_type == "orphan_bead")
+        .filter(|e| e.event_type == "orphan_task")
         .count();
     let unlabeled_issues = 0; // Not implemented in this version
 
     messages.push(format!(
-        "Closed beads with open GitHub issues: {} ✓",
-        closed_beads_open_issues
+        "Closed tasks with open GitHub issues: {} ✓",
+        closed_tasks_open_issues
     ));
     messages.push(format!(
-        "In-progress beads with closed GitHub issues: {} ✓",
-        in_progress_beads_closed_issues
+        "In-progress tasks with closed GitHub issues: {} ✓",
+        in_progress_tasks_closed_issues
     ));
     messages.push(format!(
-        "Orphan beads (no GitHub issue link): {} ✓",
-        orphan_beads
+        "Orphan tasks (no GitHub issue link): {} ✓",
+        orphan_tasks
     ));
     messages.push(format!(
-        "Issues labeled 'ready-for-work' with no linked bead: {} ✓",
+        "Issues labeled 'ready-for-work' with no linked task: {} ✓",
         unlabeled_issues
     ));
 
-    let total_events = closed_beads_open_issues
-        + in_progress_beads_closed_issues
-        + orphan_beads
+    let total_events = closed_tasks_open_issues
+        + in_progress_tasks_closed_issues
+        + orphan_tasks
         + unlabeled_issues;
 
     if total_events > 0 {
@@ -174,7 +180,7 @@ pub async fn check_drift(
             messages.push("Run 'rogers doctor --verbose' to see drift details".into());
         }
     } else {
-        messages.push("No drift detected — GitHub and beads state are synchronized ✓".into());
+        messages.push("No drift detected — GitHub and tasks state are synchronized ✓".into());
     }
 
     let status = if total_events > 0 {
@@ -206,27 +212,27 @@ pub async fn check_drift(
     })
 }
 
-/// Compare GitHub issue state with bead state
+/// Compare GitHub issue state with task state
 ///
-/// Returns drift events if there's a mismatch between GitHub and beads state.
+/// Returns drift events if there's a mismatch between GitHub and tasks state.
 pub fn detect_drift_events(
-    bead_statuses: &[(String, String, Option<String>)], // (bead_id, status, github_issue_url)
+    task_statuses: &[(String, String, Option<String>)], // (task_id, status, github_issue_url)
     github_issue_states: &std::collections::HashMap<String, String>, // issue_url -> state
 ) -> Vec<DriftEvent> {
     let mut events = Vec::new();
 
-    for (bead_id, bead_status, github_issue_url) in bead_statuses {
+    for (task_id, task_status, github_issue_url) in task_statuses {
         let Some(issue_url) = github_issue_url else {
-            // Orphan bead - no GitHub issue link
-            if bead_status != "open" {
+            // Orphan task - no GitHub issue link
+            if task_status != "open" {
                 events.push(DriftEvent {
-                    event_type: "orphan_bead".into(),
+                    event_type: "orphan_task".into(),
                     description: format!(
-                        "Bead {} is '{}' but has no GitHub issue link",
-                        bead_id, bead_status
+                        "Task {} is '{}' but has no GitHub issue link",
+                        task_id, task_status
                     ),
                     github_issue_url: None,
-                    bead_id: Some(bead_id.clone()),
+                    task_id: Some(task_id.clone()),
                     severity: DriftSeverity::Warning,
                 });
             }
@@ -237,30 +243,30 @@ pub fn detect_drift_events(
             .get(issue_url)
             .map_or("unknown", |s| s.as_str());
 
-        // Closed beads with open GitHub issues - drift
-        if bead_status == "closed" && github_state == "open" {
+        // Closed tasks with open GitHub issues - drift
+        if task_status == "closed" && github_state == "open" {
             events.push(DriftEvent {
-                event_type: "closed_bead_open_issue".into(),
+                event_type: "closed_task_open_issue".into(),
                 description: format!(
-                    "Bead {} is closed but linked GitHub issue '{}' is open",
-                    bead_id, issue_url
+                    "Task {} is closed but linked GitHub issue '{}' is open",
+                    task_id, issue_url
                 ),
                 github_issue_url: Some(issue_url.clone()),
-                bead_id: Some(bead_id.clone()),
+                task_id: Some(task_id.clone()),
                 severity: DriftSeverity::Error,
             });
         }
 
-        // In-progress beads with closed GitHub issues - drift
-        if bead_status == "in_progress" && github_state == "closed" {
+        // In-progress tasks with closed GitHub issues - drift
+        if task_status == "in_progress" && github_state == "closed" {
             events.push(DriftEvent {
-                event_type: "in_progress_bead_closed_issue".into(),
+                event_type: "in_progress_task_closed_issue".into(),
                 description: format!(
-                    "Bead {} is in-progress but linked GitHub issue '{}' is closed",
-                    bead_id, issue_url
+                    "Task {} is in-progress but linked GitHub issue '{}' is closed",
+                    task_id, issue_url
                 ),
                 github_issue_url: Some(issue_url.clone()),
-                bead_id: Some(bead_id.clone()),
+                task_id: Some(task_id.clone()),
                 severity: DriftSeverity::Warning,
             });
         }
@@ -275,78 +281,78 @@ mod tests {
 
     // ===== AC-5: Unit tests for drift detection =====
 
-    /// AC-5 Unit test: Closed bead + open GitHub issue → drift detected
+    /// AC-5 Unit test: Closed task + open GitHub issue → drift detected
     #[test]
-    fn test_detect_closed_bead_open_issue() {
+    fn test_detect_closed_task_open_issue() {
         let mut github_states = std::collections::HashMap::new();
         github_states.insert(
             "https://github.com/owner/repo/issues/123".into(),
             "open".into(),
         );
 
-        let bead_statuses = vec![(
+        let task_statuses = vec![(
             "b-001".into(),
             "closed".into(),
             Some("https://github.com/owner/repo/issues/123".into()),
         )];
 
-        let events = detect_drift_events(&bead_statuses, &github_states);
+        let events = detect_drift_events(&task_statuses, &github_states);
 
         assert_eq!(events.len(), 1, "Should detect 1 drift event");
-        assert_eq!(events[0].event_type, "closed_bead_open_issue");
+        assert_eq!(events[0].event_type, "closed_task_open_issue");
         assert_eq!(events[0].severity, DriftSeverity::Error);
     }
 
-    /// AC-5 Unit test: Closed bead + closed GitHub issue → no drift
+    /// AC-5 Unit test: Closed task + closed GitHub issue → no drift
     #[test]
-    fn test_detect_closed_bead_closed_issue() {
+    fn test_detect_closed_task_closed_issue() {
         let mut github_states = std::collections::HashMap::new();
         github_states.insert(
             "https://github.com/owner/repo/issues/123".into(),
             "closed".into(),
         );
 
-        let bead_statuses = vec![(
+        let task_statuses = vec![(
             "b-001".into(),
             "closed".into(),
             Some("https://github.com/owner/repo/issues/123".into()),
         )];
 
-        let events = detect_drift_events(&bead_statuses, &github_states);
+        let events = detect_drift_events(&task_statuses, &github_states);
 
         assert!(
             events.is_empty(),
-            "No drift when bead and issue are both closed"
+            "No drift when task and issue are both closed"
         );
     }
 
-    /// AC-5 Unit test: Open bead + open GitHub issue → no drift
+    /// AC-5 Unit test: Open task + open GitHub issue → no drift
     #[test]
-    fn test_detect_open_bead_open_issue() {
+    fn test_detect_open_task_open_issue() {
         let mut github_states = std::collections::HashMap::new();
         github_states.insert(
             "https://github.com/owner/repo/issues/123".into(),
             "open".into(),
         );
 
-        let bead_statuses = vec![(
+        let task_statuses = vec![(
             "b-001".into(),
             "open".into(),
             Some("https://github.com/owner/repo/issues/123".into()),
         )];
 
-        let events = detect_drift_events(&bead_statuses, &github_states);
+        let events = detect_drift_events(&task_statuses, &github_states);
 
         assert!(
             events.is_empty(),
-            "No drift when bead and issue are both open"
+            "No drift when task and issue are both open"
         );
     }
 
     /// AC-5 Unit test: Missing GitHub issue (404) → treat as closed, no drift
     ///
     /// When a GitHub issue is deleted (returns 404), we treat it as "closed"
-    /// to avoid false drift events. The bead was closed, and the issue being
+    /// to avoid false drift events. The task was closed, and the issue being
     /// deleted means there's no longer a mismatch to fix.
     #[test]
     fn test_detect_missing_issue_treated_as_closed() {
@@ -357,13 +363,13 @@ mod tests {
             "closed".into(),
         );
 
-        let bead_statuses = vec![(
+        let task_statuses = vec![(
             "b-001".into(),
             "closed".into(),
             Some("https://github.com/owner/repo/issues/123".into()),
         )];
 
-        let events = detect_drift_events(&bead_statuses, &github_states);
+        let events = detect_drift_events(&task_statuses, &github_states);
 
         // No drift event because we treat missing issue as closed
         assert!(
@@ -372,25 +378,25 @@ mod tests {
         );
     }
 
-    /// AC-5 Unit test: Drift event has issue URL, bead ID
+    /// AC-5 Unit test: Drift event has issue URL, task ID
     ///
     /// Verifies that when drift is detected, the event contains the
-    /// GitHub issue URL and bead ID for remediation.
+    /// GitHub issue URL and task ID for remediation.
     #[test]
-    fn test_drift_event_has_issue_url_and_bead_id() {
+    fn test_drift_event_has_issue_url_and_task_id() {
         let mut github_states = std::collections::HashMap::new();
         github_states.insert(
             "https://github.com/owner/repo/issues/456".into(),
             "open".into(),
         );
 
-        let bead_statuses = vec![(
+        let task_statuses = vec![(
             "b-789".into(),
             "closed".into(),
             Some("https://github.com/owner/repo/issues/456".into()),
         )];
 
-        let events = detect_drift_events(&bead_statuses, &github_states);
+        let events = detect_drift_events(&task_statuses, &github_states);
 
         assert_eq!(events.len(), 1);
         assert_eq!(
@@ -399,38 +405,38 @@ mod tests {
             "Event should contain GitHub issue URL"
         );
         assert_eq!(
-            events[0].bead_id.as_deref(),
+            events[0].task_id.as_deref(),
             Some("b-789"),
-            "Event should contain bead ID"
+            "Event should contain task ID"
         );
         assert_eq!(events[0].severity, DriftSeverity::Error);
     }
 
     // ===== Additional drift detection tests =====
 
-    /// Test: In-progress bead with closed GitHub issue → drift detected
+    /// Test: In-progress task with closed GitHub issue → drift detected
     #[test]
-    fn test_detect_in_progress_bead_closed_issue() {
+    fn test_detect_in_progress_task_closed_issue() {
         let mut github_states = std::collections::HashMap::new();
         github_states.insert(
             "https://github.com/owner/repo/issues/123".into(),
             "closed".into(),
         );
 
-        let bead_statuses = vec![(
+        let task_statuses = vec![(
             "b-001".into(),
             "in_progress".into(),
             Some("https://github.com/owner/repo/issues/123".into()),
         )];
 
-        let events = detect_drift_events(&bead_statuses, &github_states);
+        let events = detect_drift_events(&task_statuses, &github_states);
 
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type, "in_progress_bead_closed_issue");
+        assert_eq!(events[0].event_type, "in_progress_task_closed_issue");
         assert_eq!(events[0].severity, DriftSeverity::Warning);
     }
 
-    /// Test: No drift with matching states (closed bead + closed issue, in_progress + in-progress, etc.)
+    /// Test: No drift with matching states (closed task + closed issue, in_progress + in-progress, etc.)
     #[test]
     fn test_no_drift() {
         let mut github_states = std::collections::HashMap::new();
@@ -439,38 +445,38 @@ mod tests {
             "open".into(),
         );
 
-        let bead_statuses = vec![(
+        let task_statuses = vec![(
             "b-001".into(),
             "open".into(),
             Some("https://github.com/owner/repo/issues/123".into()),
         )];
 
-        let events = detect_drift_events(&bead_statuses, &github_states);
+        let events = detect_drift_events(&task_statuses, &github_states);
 
         assert!(events.is_empty());
     }
 
-    /// Test: Orphan bead (no GitHub issue link) → drift event
+    /// Test: Orphan task (no GitHub issue link) → drift event
     #[test]
-    fn test_orphan_bead() {
+    fn test_orphan_task() {
         let github_states = std::collections::HashMap::new();
 
-        let bead_statuses = vec![("b-001".into(), "closed".into(), None)];
+        let task_statuses = vec![("b-001".into(), "closed".into(), None)];
 
-        let events = detect_drift_events(&bead_statuses, &github_states);
+        let events = detect_drift_events(&task_statuses, &github_states);
 
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_type, "orphan_bead");
-        assert_eq!(events[0].bead_id, Some("b-001".into()));
+        assert_eq!(events[0].event_type, "orphan_task");
+        assert_eq!(events[0].task_id, Some("b-001".into()));
     }
 
-    /// Test: Multiple beads with mixed drift scenarios
+    /// Test: Multiple tasks with mixed drift scenarios
     #[test]
-    fn test_multiple_beads_mixed_drift() {
+    fn test_multiple_tasks_mixed_drift() {
         let mut github_states = std::collections::HashMap::new();
         github_states.insert(
             "https://github.com/owner/repo/issues/123".into(),
-            "open".into(), // Drift: closed bead, open issue
+            "open".into(), // Drift: closed task, open issue
         );
         github_states.insert(
             "https://github.com/owner/repo/issues/456".into(),
@@ -478,47 +484,47 @@ mod tests {
         );
         github_states.insert(
             "https://github.com/owner/repo/issues/789".into(),
-            "closed".into(), // Drift: closed bead, closed issue - no wait, states match so no drift
+            "closed".into(), // Drift: closed task, closed issue - no wait, states match so no drift
         );
         github_states.insert(
             "https://github.com/owner/repo/issues/012".into(),
-            "closed".into(), // Drift: in_progress bead, closed issue
+            "closed".into(), // Drift: in_progress task, closed issue
         );
         github_states.insert(
             "https://github.com/owner/repo/issues/345".into(),
-            "open".into(), // No drift: in_progress bead, open issue
+            "open".into(), // No drift: in_progress task, open issue
         );
 
-        let bead_statuses = vec![
-            // b-001: closed bead, issue 123 is open → DRIFT
+        let task_statuses = vec![
+            // b-001: closed task, issue 123 is open → DRIFT
             (
                 "b-001".into(),
                 "closed".into(),
                 Some("https://github.com/owner/repo/issues/123".into()),
             ),
-            // b-002: in_progress bead, issue 456 is open → OK, no drift
+            // b-002: in_progress task, issue 456 is open → OK, no drift
             (
                 "b-002".into(),
                 "in_progress".into(),
                 Some("https://github.com/owner/repo/issues/456".into()),
             ),
-            // b-003: closed bead, issue 789 is closed → OK, no drift (states match)
+            // b-003: closed task, issue 789 is closed → OK, no drift (states match)
             (
                 "b-003".into(),
                 "closed".into(),
                 Some("https://github.com/owner/repo/issues/789".into()),
             ),
-            // b-004: closed bead, no issue → orphan drift (non-open status with no link)
+            // b-004: closed task, no issue → orphan drift (non-open status with no link)
             ("b-004".into(), "closed".into(), None),
-            // b-005: in_progress bead, issue 012 is closed → DRIFT
+            // b-005: in_progress task, issue 012 is closed → DRIFT
             (
                 "b-005".into(),
                 "in_progress".into(),
                 Some("https://github.com/owner/repo/issues/012".into()),
             ),
-            // b-006: open bead, no issue → OK, no orphan warning for open beads
+            // b-006: open task, no issue → OK, no orphan warning for open tasks
             ("b-006".into(), "open".into(), None),
-            // b-007: in_progress bead, issue 345 is open → OK, no drift
+            // b-007: in_progress task, issue 345 is open → OK, no drift
             (
                 "b-007".into(),
                 "in_progress".into(),
@@ -526,23 +532,23 @@ mod tests {
             ),
         ];
 
-        let events = detect_drift_events(&bead_statuses, &github_states);
+        let events = detect_drift_events(&task_statuses, &github_states);
 
         // Expected drift events:
-        // - b-001: closed bead with open issue (123)
-        // - b-004: closed orphan bead (no issue URL)
-        // - b-005: in_progress bead with closed issue (012)
+        // - b-001: closed task with open issue (123)
+        // - b-004: closed orphan task (no issue URL)
+        // - b-005: in_progress task with closed issue (012)
         assert_eq!(events.len(), 3, "Should detect 3 drift events");
         assert!(
-            events.iter().any(|e| e.bead_id.as_deref() == Some("b-001")),
+            events.iter().any(|e| e.task_id.as_deref() == Some("b-001")),
             "b-001 should be drifted"
         );
         assert!(
-            events.iter().any(|e| e.bead_id.as_deref() == Some("b-004")),
+            events.iter().any(|e| e.task_id.as_deref() == Some("b-004")),
             "b-004 orphan should be drifted"
         );
         assert!(
-            events.iter().any(|e| e.bead_id.as_deref() == Some("b-005")),
+            events.iter().any(|e| e.task_id.as_deref() == Some("b-005")),
             "b-005 should be drifted"
         );
     }

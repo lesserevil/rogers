@@ -32,14 +32,14 @@
 use crate::error::{Result, RogersError};
 use crate::github::client::GitHubClient;
 use crate::triage::triage_loop::{
-    IssueState, TriageIssue, has_triaged_label, process_issues_batch,
+    has_triaged_label, process_issues_batch, IssueState, TriageIssue,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, warn};
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -237,7 +237,7 @@ impl TriageScheduler {
     pub fn enqueue_event(&self, event: WebhookEvent) -> Result<()> {
         self.event_tx
             .send(event)
-            .map_err(|_| RogersError::Beads("scheduler event channel closed".into()))
+            .map_err(|_| RogersError::Backlog("scheduler event channel closed".into()))
     }
 
     /// Start the scheduler run loop.
@@ -425,9 +425,8 @@ impl TriageScheduler {
         let response = self.do_get(&url).await?;
 
         // Parse the JSON response as a vector of Issue structs.
-        let github_issues: Vec<crate::github::models::Issue> =
-            serde_json::from_str(&response)
-                .map_err(|e| RogersError::Beads(format!("Failed to parse issues JSON: {}", e)))?;
+        let github_issues: Vec<crate::github::models::Issue> = serde_json::from_str(&response)
+            .map_err(|e| RogersError::Backlog(format!("Failed to parse issues JSON: {}", e)))?;
 
         let triage_issues: Vec<TriageIssue> = github_issues
             .into_iter()
@@ -446,10 +445,7 @@ impl TriageScheduler {
     }
 
     /// Fetch a single issue by number.
-    async fn fetch_issue(
-        &self,
-        issue_number: u64,
-    ) -> Result<Option<crate::github::models::Issue>> {
+    async fn fetch_issue(&self, issue_number: u64) -> Result<Option<crate::github::models::Issue>> {
         let url = format!(
             "{}/repos/{}/{}/issues/{}",
             self.client.api_base(),
@@ -465,7 +461,7 @@ impl TriageScheduler {
         }
 
         let issue: crate::github::models::Issue = serde_json::from_str(&response)
-            .map_err(|e| RogersError::Beads(format!("Failed to parse issue JSON: {}", e)))?;
+            .map_err(|e| RogersError::Backlog(format!("Failed to parse issue JSON: {}", e)))?;
 
         Ok(Some(issue))
     }
@@ -651,14 +647,28 @@ mod tests {
             interval_minutes: 5,
             enabled: true,
         };
-        let scheduler = TriageScheduler::new(GitHubClient::new("test", "test", crate::github::GitHubAuth::new_with_default_api("test")), config.clone());
+        let scheduler = TriageScheduler::new(
+            GitHubClient::new(
+                "test",
+                "test",
+                crate::github::GitHubAuth::new_with_default_api("test"),
+            ),
+            config.clone(),
+        );
         assert_eq!(scheduler.interval(), Duration::from_secs(300)); // 5 min * 60
     }
 
     #[test]
     fn test_scheduler_interval_one_hour() {
         let config = SchedulerConfig::default();
-        let scheduler = TriageScheduler::new(GitHubClient::new("test", "test", crate::github::GitHubAuth::new_with_default_api("test")), config.clone());
+        let scheduler = TriageScheduler::new(
+            GitHubClient::new(
+                "test",
+                "test",
+                crate::github::GitHubAuth::new_with_default_api("test"),
+            ),
+            config.clone(),
+        );
         assert_eq!(scheduler.interval(), Duration::from_secs(3600)); // 60 min * 60
     }
 
@@ -704,7 +714,14 @@ mod tests {
     #[tokio::test]
     async fn test_enqueue_webhook_event_opened() {
         let config = SchedulerConfig::default();
-        let scheduler = TriageScheduler::new(GitHubClient::new("test", "test", crate::github::GitHubAuth::new_with_default_api("test")), config);
+        let scheduler = TriageScheduler::new(
+            GitHubClient::new(
+                "test",
+                "test",
+                crate::github::GitHubAuth::new_with_default_api("test"),
+            ),
+            config,
+        );
         scheduler
             .enqueue_event(WebhookEvent::IssueOpened { issue_number: 42 })
             .unwrap();
@@ -714,7 +731,14 @@ mod tests {
     #[tokio::test]
     async fn test_enqueue_webhook_event_edited() {
         let config = SchedulerConfig::default();
-        let scheduler = TriageScheduler::new(GitHubClient::new("test", "test", crate::github::GitHubAuth::new_with_default_api("test")), config);
+        let scheduler = TriageScheduler::new(
+            GitHubClient::new(
+                "test",
+                "test",
+                crate::github::GitHubAuth::new_with_default_api("test"),
+            ),
+            config,
+        );
         scheduler
             .enqueue_event(WebhookEvent::IssueEdited { issue_number: 42 })
             .unwrap();
@@ -723,7 +747,14 @@ mod tests {
     #[tokio::test]
     async fn test_enqueue_webhook_event_labeled() {
         let config = SchedulerConfig::default();
-        let scheduler = TriageScheduler::new(GitHubClient::new("test", "test", crate::github::GitHubAuth::new_with_default_api("test")), config);
+        let scheduler = TriageScheduler::new(
+            GitHubClient::new(
+                "test",
+                "test",
+                crate::github::GitHubAuth::new_with_default_api("test"),
+            ),
+            config,
+        );
         scheduler
             .enqueue_event(WebhookEvent::IssueLabeled { issue_number: 42 })
             .unwrap();
@@ -732,7 +763,14 @@ mod tests {
     #[tokio::test]
     async fn test_enqueue_webhook_event_unlabeled() {
         let config = SchedulerConfig::default();
-        let scheduler = TriageScheduler::new(GitHubClient::new("test", "test", crate::github::GitHubAuth::new_with_default_api("test")), config);
+        let scheduler = TriageScheduler::new(
+            GitHubClient::new(
+                "test",
+                "test",
+                crate::github::GitHubAuth::new_with_default_api("test"),
+            ),
+            config,
+        );
         scheduler
             .enqueue_event(WebhookEvent::IssueUnlabeled { issue_number: 42 })
             .unwrap();
@@ -741,7 +779,14 @@ mod tests {
     #[tokio::test]
     async fn test_enqueue_webhook_event_all_types() {
         let config = SchedulerConfig::default();
-        let scheduler = TriageScheduler::new(GitHubClient::new("test", "test", crate::github::GitHubAuth::new_with_default_api("test")), config);
+        let scheduler = TriageScheduler::new(
+            GitHubClient::new(
+                "test",
+                "test",
+                crate::github::GitHubAuth::new_with_default_api("test"),
+            ),
+            config,
+        );
         let events = vec![
             WebhookEvent::IssueOpened { issue_number: 1 },
             WebhookEvent::IssueEdited { issue_number: 2 },
@@ -904,8 +949,15 @@ mod tests {
             max_retries: 3,
             base_delay_secs: 1,
         };
-        let _scheduler = TriageScheduler::new(GitHubClient::new("test", "test", crate::github::GitHubAuth::new_with_default_api("test")), config)
-            .with_retry_policy(policy);
+        let _scheduler = TriageScheduler::new(
+            GitHubClient::new(
+                "test",
+                "test",
+                crate::github::GitHubAuth::new_with_default_api("test"),
+            ),
+            config,
+        )
+        .with_retry_policy(policy);
         // Custom retry policy is set.
         // We can't easily verify the private field, but we can check the
         // scheduler was created without panicking.
@@ -1029,7 +1081,14 @@ Linux
             interval_minutes: 15,
             enabled: true,
         };
-        let scheduler = TriageScheduler::new(GitHubClient::new("test", "test", crate::github::GitHubAuth::new_with_default_api("test")), config);
+        let scheduler = TriageScheduler::new(
+            GitHubClient::new(
+                "test",
+                "test",
+                crate::github::GitHubAuth::new_with_default_api("test"),
+            ),
+            config,
+        );
         assert_eq!(scheduler.interval(), Duration::from_secs(900)); // 15 min
     }
 
@@ -1043,7 +1102,14 @@ Linux
             interval_minutes: 1,
             enabled: true,
         };
-        let scheduler = TriageScheduler::new(GitHubClient::new("test", "test", crate::github::GitHubAuth::new_with_default_api("test")), config);
+        let scheduler = TriageScheduler::new(
+            GitHubClient::new(
+                "test",
+                "test",
+                crate::github::GitHubAuth::new_with_default_api("test"),
+            ),
+            config,
+        );
         assert_eq!(scheduler.interval(), Duration::from_secs(60));
     }
 

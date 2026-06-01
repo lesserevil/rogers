@@ -48,8 +48,8 @@ impl std::fmt::Display for ApprovalResult {
 /// Approval record for a backport discussion.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackportApproval {
-    /// Bead ID associated with this approval.
-    pub bead_id: String,
+    /// Task ID associated with this approval.
+    pub task_id: String,
     /// GitHub Discussion number.
     pub discussion_number: i32,
     /// GitHub Discussion global ID (for GraphQL reactions).
@@ -73,14 +73,14 @@ pub struct BackportApproval {
 impl BackportApproval {
     /// Create a new approval record.
     pub fn new(
-        bead_id: String,
+        task_id: String,
         discussion_number: i32,
         discussion_id: String,
         target_branch: String,
         commit_sha: String,
     ) -> Self {
         Self {
-            bead_id,
+            task_id,
             discussion_number,
             discussion_id,
             target_branch,
@@ -148,7 +148,7 @@ impl BackportApprovalManager {
         }
     }
 
-    /// Create an approval Discussion for a backport bead.
+    /// Create an approval Discussion for a backport task.
     ///
     /// Posts the approval request as a GitHub Discussion and returns
     /// the discussion details.
@@ -164,15 +164,17 @@ impl BackportApprovalManager {
             .iter()
             .find(|c| c.name == self.category)
             .map(|c| c.id.clone())
-            .ok_or_else(|| {
-                RogersError::GitHubStatus {
-                    code: 404,
-                    message: format!(
-                        "Discussion category '{}' not found. Available: {}",
-                        self.category,
-                        categories.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", ")
-                    ),
-                }
+            .ok_or_else(|| RogersError::GitHubStatus {
+                code: 404,
+                message: format!(
+                    "Discussion category '{}' not found. Available: {}",
+                    self.category,
+                    categories
+                        .iter()
+                        .map(|c| c.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
             })?;
 
         let discussion = self
@@ -199,10 +201,7 @@ impl BackportApprovalManager {
     /// Evaluate the approval result from a list of reactions.
     ///
     /// Rule: Most recent vote wins. 👎 always halts.
-    fn evaluate_reactions(
-        &self,
-        reactions: &[crate::github::models::Reaction],
-    ) -> ApprovalResult {
+    fn evaluate_reactions(&self, reactions: &[crate::github::models::Reaction]) -> ApprovalResult {
         if reactions.is_empty() {
             return ApprovalResult::Pending;
         }
@@ -257,18 +256,9 @@ impl BackportApprovalManager {
     }
 
     /// Post a reminder comment on a GitHub discussion.
-    pub async fn post_reminder(
-        &mut self,
-        discussion_number: i32,
-        body: &str,
-    ) -> Result<()> {
-        use crate::github::models::Discussion;
-
+    pub async fn post_reminder(&mut self, discussion_number: i32, _body: &str) -> Result<()> {
         // Fetch discussion to get URL for the comment
-        let discussions = self
-            .github
-            .get_discussions(None, Some(100), None)
-            .await?;
+        let discussions = self.github.get_discussions(None, Some(100), None).await?;
 
         let disc = discussions
             .nodes
@@ -291,14 +281,14 @@ impl BackportApprovalManager {
     /// Monitor multiple pending approvals.
     ///
     /// For each approval with a Pending status, checks for new votes.
-    /// Returns a map of bead_id -> ApprovalResult for decided approvals.
+    /// Returns a map of task_id -> ApprovalResult for decided approvals.
     pub async fn monitor_pending(
         &mut self,
         approvals: HashMap<String, BackportApproval>,
     ) -> Result<HashMap<String, ApprovalResult>> {
         let mut results = HashMap::new();
 
-        for (bead_id, approval) in approvals {
+        for (task_id, approval) in approvals {
             if approval.is_pending() {
                 match self.check_approval(approval.discussion_number).await {
                     Ok(result) => {
@@ -309,7 +299,7 @@ impl BackportApprovalManager {
                                 approval.target_branch,
                                 result
                             );
-                            results.insert(bead_id, result);
+                            results.insert(task_id, result);
                         }
                     }
                     Err(e) => {
@@ -353,14 +343,14 @@ mod tests {
     #[test]
     fn test_backport_approval_new() {
         let approval = BackportApproval::new(
-            "bead-1".to_string(),
+            "task-1".to_string(),
             42,
             "gid://github/Discussion/123".to_string(),
             "release/1.x".to_string(),
             "abc123".to_string(),
         );
 
-        assert_eq!(approval.bead_id, "bead-1");
+        assert_eq!(approval.task_id, "task-1");
         assert_eq!(approval.discussion_number, 42);
         assert_eq!(approval.target_branch, "release/1.x");
         assert!(approval.is_pending());
@@ -372,7 +362,7 @@ mod tests {
     #[test]
     fn test_backport_approval_approved() {
         let approval = BackportApproval::new(
-            "bead-1".to_string(),
+            "task-1".to_string(),
             42,
             "gid://github/Discussion/123".to_string(),
             "release/1.x".to_string(),
@@ -390,7 +380,7 @@ mod tests {
     #[test]
     fn test_backport_approval_rejected() {
         let mut approval = BackportApproval::new(
-            "bead-1".to_string(),
+            "task-1".to_string(),
             42,
             "gid://github/Discussion/123".to_string(),
             "release/1.x".to_string(),
@@ -406,7 +396,11 @@ mod tests {
     #[test]
     fn test_evaluate_reactions_empty() {
         let manager = BackportApprovalManager::new(
-            GitHubClient::new("owner", "repo", crate::github::auth::GitHubAuth::new_with_default_api("ghp_test")),
+            GitHubClient::new(
+                "owner",
+                "repo",
+                crate::github::auth::GitHubAuth::new_with_default_api("ghp_test"),
+            ),
             "Announcements".to_string(),
             2,
             7,
@@ -419,7 +413,11 @@ mod tests {
     #[test]
     fn test_evaluate_reactions_thumbs_up_only() {
         let manager = BackportApprovalManager::new(
-            GitHubClient::new("owner", "repo", crate::github::auth::GitHubAuth::new_with_default_api("ghp_test")),
+            GitHubClient::new(
+                "owner",
+                "repo",
+                crate::github::auth::GitHubAuth::new_with_default_api("ghp_test"),
+            ),
             "Announcements".to_string(),
             2,
             7,
@@ -443,7 +441,11 @@ mod tests {
     #[test]
     fn test_evaluate_reactions_thumbs_down_only() {
         let manager = BackportApprovalManager::new(
-            GitHubClient::new("owner", "repo", crate::github::auth::GitHubAuth::new_with_default_api("ghp_test")),
+            GitHubClient::new(
+                "owner",
+                "repo",
+                crate::github::auth::GitHubAuth::new_with_default_api("ghp_test"),
+            ),
             "Announcements".to_string(),
             2,
             7,
@@ -467,7 +469,11 @@ mod tests {
     #[test]
     fn test_evaluate_reactions_recent_thumbs_down_wins() {
         let manager = BackportApprovalManager::new(
-            GitHubClient::new("owner", "repo", crate::github::auth::GitHubAuth::new_with_default_api("ghp_test")),
+            GitHubClient::new(
+                "owner",
+                "repo",
+                crate::github::auth::GitHubAuth::new_with_default_api("ghp_test"),
+            ),
             "Announcements".to_string(),
             2,
             7,
@@ -506,7 +512,11 @@ mod tests {
     #[test]
     fn test_evaluate_reactions_recent_thumbs_up_wins() {
         let manager = BackportApprovalManager::new(
-            GitHubClient::new("owner", "repo", crate::github::auth::GitHubAuth::new_with_default_api("ghp_test")),
+            GitHubClient::new(
+                "owner",
+                "repo",
+                crate::github::auth::GitHubAuth::new_with_default_api("ghp_test"),
+            ),
             "Announcements".to_string(),
             2,
             7,
@@ -545,7 +555,11 @@ mod tests {
     #[test]
     fn test_stale_threshold_days() {
         let manager = BackportApprovalManager::new(
-            GitHubClient::new("owner", "repo", crate::github::auth::GitHubAuth::new_with_default_api("ghp_test")),
+            GitHubClient::new(
+                "owner",
+                "repo",
+                crate::github::auth::GitHubAuth::new_with_default_api("ghp_test"),
+            ),
             "Announcements".to_string(),
             2,
             7,

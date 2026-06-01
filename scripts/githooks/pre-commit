@@ -39,12 +39,12 @@ fi
 #     warn "code under src/ staged but no plans/*.md updated — confirm this is a non-design change"
 # fi
 
-# Plan-ref lint — every open bead carries a `Plan:` line (or an
+# Plan-ref lint — every open task carries a `Plan:` line (or an
 # exemption label). Opt-in; uncomment once the script is in place.
 #
-# if [[ -x scripts/bd-plan-ref-lint.sh ]]; then
-#     scripts/bd-plan-ref-lint.sh --quiet || \
-#         warn "open beads missing 'Plan:' reference — run scripts/bd-plan-ref-lint.sh for details"
+# if [[ -x scripts/backlog-plan-ref-lint.sh ]]; then
+#     scripts/backlog-plan-ref-lint.sh --quiet || \
+#         warn "open tasks missing 'Plan:' reference — run scripts/backlog-plan-ref-lint.sh for details"
 # fi
 
 exit 0

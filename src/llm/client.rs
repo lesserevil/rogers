@@ -55,7 +55,7 @@ impl LlmClient {
     pub async fn chat(&self, request: ChatRequest) -> Result<ChatResponse> {
         let request = self
             .client
-            .post(&self.chat_url())
+            .post(self.chat_url())
             .header(
                 reqwest::header::AUTHORIZATION,
                 format!("Bearer {}", self.api_key),
@@ -87,7 +87,7 @@ impl LlmClient {
     ) -> Result<T> {
         let request = self
             .client
-            .post(&self.chat_url())
+            .post(self.chat_url())
             .header(
                 reqwest::header::AUTHORIZATION,
                 format!("Bearer {}", self.api_key),

@@ -3,17 +3,33 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
+use std::path::PathBuf;
 
 /// Top-level configuration structure.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub github: GitHubConfig,
     pub scheduler: SchedulerConfig,
-    pub beads: BeadsConfig,
+    pub backlog: BacklogConfig,
     pub llm: LlmConfig,
     pub triage: Option<TriageConfig>,
     pub release: Option<ReleaseConfig>,
     pub rogation: Option<RogationConfig>,
+    pub log_level: Option<String>,
+    pub error_channel: Option<String>,
+}
+
+/// Partial configuration used for layered config loading.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AppConfig {
+    pub github: Option<GitHubConfig>,
+    pub scheduler: Option<SchedulerConfig>,
+    pub backlog: Option<BacklogConfig>,
+    pub llm: Option<LlmConfig>,
+    pub triage: Option<TriageConfig>,
+    pub release: Option<ReleaseConfig>,
+    pub rogation: Option<RogationConfig>,
+    pub question_routing: Option<QuestionRoutingConfig>,
     pub log_level: Option<String>,
     pub error_channel: Option<String>,
 }
@@ -62,9 +78,8 @@ pub fn apply_env_interpolation(config: &mut Config) {
         config.github.api_url = Some(interpolate_env_var(api_url));
     }
 
-    config.beads.remote = interpolate_env_var(&config.beads.remote);
-    if let Some(database) = &config.beads.database {
-        config.beads.database = Some(interpolate_env_var(database));
+    if let Some(path) = &config.backlog.path {
+        config.backlog.path = Some(interpolate_env_var(path));
     }
 
     if let Some(base_url) = &config.llm.base_url {
@@ -97,11 +112,35 @@ pub struct SchedulerConfig {
     pub enabled: Option<bool>,
 }
 
-/// Beads (dolt) configuration.
+/// Backlog.md task store configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BeadsConfig {
-    pub remote: String,
-    pub database: Option<String>,
+pub struct BacklogConfig {
+    pub path: Option<String>,
+}
+
+/// Question routing configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct QuestionRoutingConfig {
+    pub code_search_keywords: Vec<String>,
+    pub doc_search_path: PathBuf,
+    pub code_search_path: String,
+}
+
+impl QuestionRoutingConfig {
+    pub fn keywords(&self) -> &[String] {
+        &self.code_search_keywords
+    }
+
+    pub fn has_keywords(&self) -> bool {
+        !self.code_search_keywords.is_empty()
+    }
+
+    pub fn matches_question(&self, text: &str) -> bool {
+        let text = text.to_ascii_lowercase();
+        self.code_search_keywords
+            .iter()
+            .any(|keyword| text.contains(&keyword.to_ascii_lowercase()))
+    }
 }
 
 /// LLM configuration.
@@ -123,17 +162,17 @@ pub struct TriageConfig {
 }
 
 /// Default values for release configuration.
-pub const DEFAULT_APPROVAL_DISCUSSION_CATEGORY: &str = "Announcements";
-pub const DEFAULT_VOTING_WINDOW_DAYS: u32 = 2;
-pub const DEFAULT_STALE_THRESHOLD_DAYS: u32 = 7;
+pub const DEFAULT_APPROVAL_DISCUSSION_CATEGORY: &str = "Release Proposals";
+pub const DEFAULT_VOTING_WINDOW_DAYS: i32 = 2;
+pub const DEFAULT_STALE_THRESHOLD_DAYS: i32 = 7;
 
 /// Release configuration.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReleaseConfig {
     pub approval_discussion_category: Option<String>,
     pub active_branches: Option<Vec<String>>,
-    pub voting_window_days: Option<u32>,
-    pub stale_threshold_days: Option<u32>,
+    pub voting_window_days: Option<i32>,
+    pub stale_threshold_days: Option<i32>,
 }
 
 impl ReleaseConfig {
@@ -141,8 +180,8 @@ impl ReleaseConfig {
     pub fn new(
         approval_discussion_category: Option<String>,
         active_branches: Option<Vec<String>>,
-        voting_window_days: Option<u32>,
-        stale_threshold_days: Option<u32>,
+        voting_window_days: Option<i32>,
+        stale_threshold_days: Option<i32>,
     ) -> Self {
         Self {
             approval_discussion_category,
@@ -175,13 +214,13 @@ impl ReleaseConfig {
         let mut errors = Vec::new();
 
         if let Some(days) = self.voting_window_days {
-            if days == 0 {
-                errors.push("release.voting_window_days must be positive".to_string());
+            if days < 0 {
+                errors.push("release.voting_window_days must be non-negative".to_string());
             }
         }
         if let Some(days) = self.stale_threshold_days {
-            if days == 0 {
-                errors.push("release.stale_threshold_days must be positive".to_string());
+            if days < 0 {
+                errors.push("release.stale_threshold_days must be non-negative".to_string());
             }
         }
 
@@ -217,10 +256,10 @@ pub struct ResolvedReleaseConfig {
     pub active_branches: Vec<String>,
 
     /// Days before reminder ping for stale proposals.
-    pub voting_window_days: u32,
+    pub voting_window_days: i32,
 
     /// Days before closing a stale proposal.
-    pub stale_threshold_days: u32,
+    pub stale_threshold_days: i32,
 }
 
 impl ResolvedReleaseConfig {
@@ -241,12 +280,12 @@ impl ResolvedReleaseConfig {
 
     /// Check if a proposal is stale.
     pub fn is_stale_after_days(&self, days_since_creation: i32) -> bool {
-        days_since_creation > self.stale_threshold_days as i32
+        days_since_creation > self.stale_threshold_days
     }
 
     /// Check if a proposal should be nudged.
     pub fn should_nudge_after_days(&self, days_since_creation: i32) -> bool {
-        days_since_creation > self.voting_window_days as i32
+        days_since_creation > self.voting_window_days
             && !self.is_stale_after_days(days_since_creation)
     }
 }
@@ -318,11 +357,30 @@ impl Default for SchedulerConfig {
     }
 }
 
-impl Default for BeadsConfig {
+impl Default for BacklogConfig {
     fn default() -> Self {
         Self {
-            remote: String::new(),
-            database: Some("message.hibernate".to_string()),
+            path: Some("backlog".to_string()),
+        }
+    }
+}
+
+impl Default for QuestionRoutingConfig {
+    fn default() -> Self {
+        Self {
+            code_search_keywords: vec![
+                "how does".to_string(),
+                "what function".to_string(),
+                "which module".to_string(),
+                "internals".to_string(),
+                "implementation".to_string(),
+                "source code".to_string(),
+                "walk me through".to_string(),
+                "flow of".to_string(),
+                "under the hood".to_string(),
+            ],
+            doc_search_path: PathBuf::from("docs/"),
+            code_search_path: "**/*".to_string(),
         }
     }
 }

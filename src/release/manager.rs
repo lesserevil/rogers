@@ -7,10 +7,10 @@
 //! 3. Creates Release Proposal Discussions
 //! 4. Checks approval status on existing Discussions
 //! 5. Executes approved releases (branch + tag + GitHub Release)
-//! 6. Handles stale proposals (reminder, then close + revisit bead)
+//! 6. Handles stale proposals (reminder, then close + revisit task)
 
-use crate::beads::controller::BeadController;
-use crate::beads::schema::bead_type;
+use crate::backlog::controller::TaskController;
+use crate::backlog::schema::task_type;
 use crate::error::{Result, RogersError};
 use crate::github::auth::GitHubAuth;
 use crate::github::client::GitHubClient;
@@ -96,8 +96,8 @@ impl PendingApproval {
 pub struct ReleaseManager {
     /// GitHub client.
     github: GitHubClient,
-    /// Bead controller.
-    bead_controller: BeadController,
+    /// Task controller.
+    task_controller: TaskController,
     /// Approval manager.
     approval_manager: ReleaseProposalManager,
     /// Executor.
@@ -114,7 +114,7 @@ impl ReleaseManager {
     /// Create a new release manager from configuration.
     pub fn new(
         github: GitHubClient,
-        bead_controller: BeadController,
+        task_controller: TaskController,
         release_config: &crate::config::ReleaseConfig,
         blocker_label: String,
     ) -> Self {
@@ -123,8 +123,10 @@ impl ReleaseManager {
             .clone()
             .unwrap_or_default();
 
-        let voting_window = release_config.voting_window_days.unwrap_or(2);
-        let stale_threshold = release_config.stale_threshold_days.unwrap_or(7);
+        let voting_window_days = release_config.voting_window_days.unwrap_or(2);
+        let stale_threshold_days = release_config.stale_threshold_days.unwrap_or(7);
+        let voting_window = voting_window_days.max(0) as u32;
+        let stale_threshold = stale_threshold_days.max(0) as u32;
 
         let approval_category = release_config
             .approval_discussion_category
@@ -142,15 +144,15 @@ impl ReleaseManager {
             crate::config::ReleaseConfig {
                 approval_discussion_category: Some(approval_category.clone()),
                 active_branches: Some(active_branches.clone()),
-                voting_window_days: Some(voting_window),
-                stale_threshold_days: Some(stale_threshold),
+                voting_window_days: Some(voting_window_days),
+                stale_threshold_days: Some(stale_threshold_days),
             },
             blocker_label.clone(),
         );
 
         Self {
             github: github.clone(),
-            bead_controller,
+            task_controller,
             approval_manager: ReleaseProposalManager::new(
                 GitHubClient::new(
                     github_owner.clone(),
@@ -331,20 +333,20 @@ impl ReleaseManager {
                 match approval_result {
                     ApprovalResult::Approved => {
                         if let Some(approval) = state.pending_approvals.remove(&version) {
-                            // File a release bead first
+                            // File a release task first
                             if let Some(candidate) = detection_result
                                 .candidates
                                 .iter()
                                 .find(|c| c.version == version)
                             {
-                                let bead_request = self.executor
-                                    .file_release_bead(&version, &approval.source, candidate.pr_count);
+                                let task_request = self.executor
+                                    .file_release_task(&version, &approval.source, candidate.pr_count);
                                 if let Err(e) = self
-                                    .bead_controller
-                                    .file_children("", vec![bead_request])
+                                    .task_controller
+                                    .file_children("", vec![task_request])
                                     .await
                                 {
-                                    tracing::warn!("Failed to file release bead: {}", e);
+                                    tracing::warn!("Failed to file release task: {}", e);
                                 }
                             }
 
@@ -479,8 +481,8 @@ impl ReleaseManager {
                 if let Err(e) = self.close_discussion(approval.discussion_number).await {
                     tracing::warn!("Failed to close discussion #{}: {}", approval.discussion_number, e);
                 }
-                if let Err(e) = self.file_revisit_bead(&approval).await {
-                    tracing::warn!("Failed to file revisit bead for {}: {}", version, e);
+                if let Err(e) = self.file_revisit_task(&approval).await {
+                    tracing::warn!("Failed to file revisit task for {}: {}", version, e);
                 }
                 tracing::info!("Stale release proposal for {} handled", version);
             }
@@ -582,9 +584,9 @@ impl ReleaseManager {
         Ok(())
     }
 
-    /// File a revisit bead for a stale release.
-    async fn file_revisit_bead(&self, approval: &PendingApproval) -> Result<()> {
-        let request = crate::beads::controller::CreateChildRequest {
+    /// File a revisit task for a stale release.
+    async fn file_revisit_task(&self, approval: &PendingApproval) -> Result<()> {
+        let request = crate::backlog::controller::CreateChildRequest {
             title: format!(
                 "Revisit: release {} (stale proposal)",
                 approval.version
@@ -599,13 +601,13 @@ APPROVAL DISCUSSION: #{} (may be closed)
 
 WHAT TO DO
 Re-evaluate whether this release is still needed. If so, manually
-trigger a new release proposal or close this bead.
+trigger a new release proposal or close this task.
 "#,
                 approval.version,
                 approval.source,
                 approval.discussion_number,
             )),
-            bead_type: Some(bead_type::CHORE.to_string()),
+            task_type: Some(task_type::CHORE.to_string()),
             rodgers_type: Some("release".to_string()),
             rodgers_labels: None,
             acceptance_criteria: Some(
@@ -614,7 +616,7 @@ trigger a new release proposal or close this bead.
             priority: Some(3), // Lower priority for stales
         };
 
-        self.bead_controller
+        self.task_controller
             .file_children("", vec![request])
             .await?;
 

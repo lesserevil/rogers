@@ -483,21 +483,15 @@ There should be some way to make this work.
             "Bug missing expected, reproduction, and environment should be incomplete"
         );
         assert!(!result.missing_bug_fields.is_empty());
-        assert!(
-            result
-                .missing_bug_fields
-                .contains(&"behavior_expected".to_string())
-        );
-        assert!(
-            result
-                .missing_bug_fields
-                .contains(&"reproduction_steps".to_string())
-        );
-        assert!(
-            result
-                .missing_bug_fields
-                .contains(&"environment".to_string())
-        );
+        assert!(result
+            .missing_bug_fields
+            .contains(&"behavior_expected".to_string()));
+        assert!(result
+            .missing_bug_fields
+            .contains(&"reproduction_steps".to_string()));
+        assert!(result
+            .missing_bug_fields
+            .contains(&"environment".to_string()));
     }
 
     #[test]
@@ -586,16 +580,12 @@ I need a way to do something nice.
             "Feature missing proposed behavior and acceptance criteria should be incomplete"
         );
         assert!(!result.missing_feature_fields.is_empty());
-        assert!(
-            result
-                .missing_feature_fields
-                .contains(&"proposed_behavior".to_string())
-        );
-        assert!(
-            result
-                .missing_feature_fields
-                .contains(&"acceptance_criteria".to_string())
-        );
+        assert!(result
+            .missing_feature_fields
+            .contains(&"proposed_behavior".to_string()));
+        assert!(result
+            .missing_feature_fields
+            .contains(&"acceptance_criteria".to_string()));
     }
 
     #[test]
@@ -675,11 +665,9 @@ No environment details provided.
 "#;
         let result = check_bug_completeness(body);
         assert!(!result.is_complete);
-        assert!(
-            result
-                .missing_bug_fields
-                .contains(&"environment".to_string())
-        );
+        assert!(result
+            .missing_bug_fields
+            .contains(&"environment".to_string()));
         assert!(result.missing_bug_fields.len() == 1);
         // Request message should mention environment only
         assert!(result.request_message.contains("Environment"));
@@ -696,16 +684,12 @@ The form submitted twice instead of once
 "#;
         let result = check_bug_completeness(body);
         assert!(!result.is_complete);
-        assert!(
-            result
-                .missing_bug_fields
-                .contains(&"behavior_expected".to_string())
-        );
-        assert!(
-            result
-                .missing_bug_fields
-                .contains(&"reproduction_steps".to_string())
-        );
+        assert!(result
+            .missing_bug_fields
+            .contains(&"behavior_expected".to_string()));
+        assert!(result
+            .missing_bug_fields
+            .contains(&"reproduction_steps".to_string()));
         assert!(result.missing_bug_fields.len() >= 2);
         // Request message should mention both
         assert!(result.request_message.contains("Behavior expected"));
@@ -726,11 +710,9 @@ No acceptance criteria provided.
 "#;
         let result = check_feature_completeness(body);
         assert!(!result.is_complete);
-        assert!(
-            result
-                .missing_feature_fields
-                .contains(&"acceptance_criteria".to_string())
-        );
+        assert!(result
+            .missing_feature_fields
+            .contains(&"acceptance_criteria".to_string()));
         assert!(result.missing_feature_fields.len() == 1);
         // Request message should mention acceptance criteria only
         assert!(result.request_message.contains("Acceptance criteria"));
@@ -744,24 +726,18 @@ No acceptance criteria provided.
         let result = check_bug_completeness(body);
         assert!(!result.is_complete);
         // Should NOT contain generic phrases
-        assert!(
-            !result
-                .request_message
-                .to_lowercase()
-                .contains("more detail")
-        );
-        assert!(
-            !result
-                .request_message
-                .to_lowercase()
-                .contains("need more info")
-        );
-        assert!(
-            !result
-                .request_message
-                .to_lowercase()
-                .contains("additional info")
-        );
+        assert!(!result
+            .request_message
+            .to_lowercase()
+            .contains("more detail"));
+        assert!(!result
+            .request_message
+            .to_lowercase()
+            .contains("need more info"));
+        assert!(!result
+            .request_message
+            .to_lowercase()
+            .contains("additional info"));
         // Should contain specific field requests
         assert!(result.request_message.contains("Behavior observed"));
         assert!(result.request_message.contains("Behavior expected"));
@@ -813,11 +789,9 @@ Windows 10, Chrome 120
         // Using the result with bug_needs_information transition
         let transition = TransitionSummary::bug_needs_information(&issue, &result.request_message);
         assert!(transition.applied_needs_information);
-        assert!(
-            transition
-                .labels_to_add
-                .contains(&"needs-information".to_string())
-        );
+        assert!(transition
+            .labels_to_add
+            .contains(&"needs-information".to_string()));
     }
 
     #[test]
@@ -846,10 +820,8 @@ I want to export my data to CSV
         let transition =
             TransitionSummary::feature_needs_information(&issue, &result.request_message);
         assert!(transition.applied_needs_information);
-        assert!(
-            transition
-                .labels_to_add
-                .contains(&"needs-information".to_string())
-        );
+        assert!(transition
+            .labels_to_add
+            .contains(&"needs-information".to_string()));
     }
 }

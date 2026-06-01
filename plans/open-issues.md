@@ -7,7 +7,7 @@
 3. ✅ LLM tool signatures absent — FIXED: LLM Tool Registry with 14 tools in architecture-plan.md
 4. ✅ No backport approval Discussion AC — FIXED: CRIT-7 through CRIT-10 added to backport-plan.md
 
-5. ✅ **ISSUE 5 — Epic-scale assessment bead has no procedure** — FIXED: Full procedure added to triage-workflow-plan.md (epic detection at READY-FOR-WORK, LLM-driven breakdown, children deferred with human review gate, CRIT-9/CRIT-10 added)
+5. ✅ **ISSUE 5 — Epic-scale assessment task has no procedure** — FIXED: Full procedure added to triage-workflow-plan.md (epic detection at READY-FOR-WORK, LLM-driven breakdown, children deferred with human review gate, CRIT-9/CRIT-10 added)
 6. ✅ **ISSUE 6 — IN_PROGRESS state has no exit criteria** — FIXED: Passive/next-poll mechanism made explicit in triage-workflow-plan.md; stalled recovery with one-time alert; CRIT-11 added
 7. ✅ **ISSUE 7 — Step 5 sync verification is described but not defined** — FIXED: Full procedure added to question-routing-plan.md (timing, verification method, if-missing path, already-closed path, API error retry path); CRIT-4 updated
 
@@ -25,8 +25,8 @@
     - question-routing-plan.md §Step 2 lists *.rs, *.py, *.js, *.ts, *.go
     - Missing: C#, Java, Kotlin, Swift, Ruby, PHP
 
-13. **Child bead granularity has no definition**
-    - feature-bug-plan.md §Bead Breakdown: "one bead per logical unit of work"
+13. **Child task granularity has no definition**
+    - feature-bug-plan.md §Task Breakdown: "one task per logical unit of work"
     - No examples, no thresholds for too-granular vs too-coarse
 
 14. **`blocker` defined by label only**
@@ -49,8 +49,8 @@
 18. **LLM prompt strategy is scattered**
     - No centralized prompt library; prompts ad hoc per state transition
 
-19. **`bd` is never defined as a dependency**
-    - Rodgers runs bd create/list/close throughout but no install procedure, no version requirement
+19. **`backlog` is never defined as a dependency**
+    - Rodgers runs backlog create/list/close throughout but no install procedure, no version requirement
 
 20. **init-plan.md AC-5 and AC-6 are missing**
     - Lines 11-12 list AC-1 through AC-4, then skip to AC-7

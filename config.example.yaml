@@ -12,9 +12,8 @@ scheduler:
   interval_minutes: 5              # minimum: 1
   enabled: true                    # set to false to run ad-hoc only
 
-beads:
-  remote:                           # dolt remote URL — set before first run
-  database: message.hibernate       # dolt database name
+backlog:
+  path: backlog                      # Backlog.md task directory, relative to this config file unless absolute
 
 llm:
   provider: openai
@@ -44,7 +43,7 @@ rogation:
   ignore_labels: []               # labels that suppress Rodgers' processing entirely
   labels_never_bot_managed: []   # labels Rodgers will never manage — humans own these
   custom_type_names: {}           # project-specific type aliases: display_name → rodgers:type
-  format:                         # override bead description format
+  format:                         # override task description format
   agent_file:                     # explicit path to per-project agent instructions
   template_dir:                    # per-project override for embedded issue templates (optional)
   security_label: security         # label name Rodgers checks for security patch detection

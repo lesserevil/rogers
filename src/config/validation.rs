@@ -1,8 +1,7 @@
 //! Configuration validation logic for Rodgers.
 
 use crate::config::schema::{
-    apply_env_interpolation, interpolate_env_var, rodgers_required_label_names, Config,
-    PLACEHOLDER_TOKEN_PATTERNS,
+    apply_env_interpolation, rodgers_required_label_names, Config, PLACEHOLDER_TOKEN_PATTERNS,
 };
 use crate::error::{Result, RogersError};
 use std::path::Path;
@@ -37,8 +36,8 @@ pub fn validate_config(config: &Config) -> Result<ValidationResult> {
     // Validate scheduler config
     validate_scheduler_config(&config.scheduler)?;
 
-    // Validate beads config
-    validate_beads_config(&config.beads)?;
+    // Validate Backlog.md config
+    validate_backlog_config(&config.backlog)?;
 
     // Validate LLM config
     validate_llm_config(&config.llm, &mut result)?;
@@ -118,11 +117,18 @@ fn validate_scheduler_config(scheduler: &crate::config::schema::SchedulerConfig)
     Ok(())
 }
 
-/// Validate beads configuration.
-fn validate_beads_config(beads: &crate::config::schema::BeadsConfig) -> Result<()> {
-    if beads.remote.trim().is_empty() {
+/// Validate Backlog.md configuration.
+fn validate_backlog_config(backlog: &crate::config::schema::BacklogConfig) -> Result<()> {
+    if backlog
+        .path
+        .as_deref()
+        .unwrap_or("backlog")
+        .trim()
+        .is_empty()
+    {
         return Err(RogersError::Config(
-            "beads.remote: required key missing or empty. Set the Dolt remote URL for bead storage (e.g., 'doltremote://user@host/db' or 'ssh://user@host/path'). Run 'dolt remote add origin <url>' first.".to_string(),
+            "backlog.path: required key missing or empty. Set the Backlog.md task directory path."
+                .to_string(),
         ));
     }
 
@@ -373,9 +379,8 @@ mod tests {
                 interval_minutes: 5,
                 enabled: Some(true),
             },
-            beads: BeadsConfig {
-                remote: "doltremote://user@host/db".to_string(),
-                database: Some("message.hibernate".to_string()),
+            backlog: BacklogConfig {
+                path: Some("backlog".to_string()),
             },
             llm: LlmConfig {
                 provider: Some("openai".to_string()),
@@ -468,13 +473,13 @@ mod tests {
     }
 
     #[test]
-    fn test_missing_beads_remote_fails() {
+    fn test_missing_backlog_path_fails() {
         let mut config = valid_config();
-        config.beads.remote = "".to_string();
+        config.backlog.path = Some(String::new());
         let result = validate_config(&config);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("beads.remote"));
+        assert!(err.contains("backlog.path"));
         assert!(err.contains("required"));
     }
 
@@ -672,7 +677,7 @@ mod tests {
         assert!(config.github.owner.len() > 0);
         assert!(config.github.repo.len() > 0);
         assert!(config.github.token.len() > 0);
-        assert!(config.beads.remote.len() > 0);
+        assert!(config.backlog.path.as_deref().unwrap_or("").len() > 0);
         assert!(config.llm.model.len() > 0);
     }
 
@@ -690,15 +695,15 @@ mod tests {
 
     #[test]
     fn test_release_config_types() {
-        let config = ReleaseConfig::default();
+        let config = ReleaseConfig::default().apply_defaults();
         // approval_discussion_category is String
-        assert!(config.approval_discussion_category.is_some());
+        assert!(!config.approval_discussion_category.is_empty());
         // active_branches is Vec<String>
-        assert!(config.active_branches.is_some());
-        // voting_window_days is u32
-        assert!(config.voting_window_days.unwrap() >= 1);
-        // stale_threshold_days is u32
-        assert!(config.stale_threshold_days.unwrap() >= 1);
+        assert!(config.active_branches.is_empty());
+        // voting_window_days is a non-negative integer
+        assert!(config.voting_window_days >= 1);
+        // stale_threshold_days is a non-negative integer
+        assert!(config.stale_threshold_days >= 1);
     }
 
     #[test]
@@ -766,9 +771,9 @@ mod tests {
     }
 
     #[test]
-    fn test_beads_defaults() {
-        let default = BeadsConfig::default();
-        assert_eq!(default.database, Some("message.hibernate".to_string()));
+    fn test_backlog_defaults() {
+        let default = BacklogConfig::default();
+        assert_eq!(default.path, Some("backlog".to_string()));
     }
 
     // === Env var interpolation tests ===
@@ -870,9 +875,8 @@ github:
 scheduler:
   interval_minutes: 10
   enabled: true
-beads:
-  remote: doltremote://localhost/myorg/rogers
-  database: test.hibernate
+backlog:
+  path: backlog
 llm:
   provider: openai
   base_url: https://api.openai.com/v1
@@ -917,7 +921,7 @@ rogation:
         assert_eq!(config.github.owner, "myorg");
         assert_eq!(config.github.repo, "myrepo");
         assert_eq!(config.scheduler.interval_minutes, 10);
-        assert_eq!(config.beads.remote, "doltremote://localhost/myorg/rogers");
+        assert_eq!(config.backlog.path, Some("backlog".to_string()));
         assert_eq!(config.llm.model, "gpt-4o-mini");
 
         // Verify structure types
@@ -980,8 +984,8 @@ github:
   token: ""
 scheduler:
   interval_minutes: 5
-beads:
-  remote: doltremote://localhost/db
+backlog:
+  path: backlog
 llm:
   model: gpt-4o-mini
   api_key: ""
@@ -1010,8 +1014,8 @@ unknown_key:
   foo: bar
 scheduler:
   interval_minutes: 5
-beads:
-  remote: doltremote://localhost/db
+backlog:
+  path: backlog
 llm:
   model: gpt-4o-mini
   api_key: "${MY_TEST_API_KEY}"

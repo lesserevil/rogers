@@ -1,14 +1,14 @@
 //! Epic breakdown logic for feature/bug work.
 //!
-//! Implements the epic/child bead breakdown workflow as defined in
-//! plans/feature-bug-plan.md §Bead Breakdown.
+//! Implements the epic/child task breakdown workflow as defined in
+//! plans/feature-bug-plan.md §Task Breakdown.
 //!
 //! ## Workflow
 //!
 //! 1. **Detect epic-scale** - LLM analyzes issue for multi-area or sequential work
-//! 2. **File epic bead** - Create deferred epic linked to GitHub issue
-//! 3. **File child beads** - Create deferred children, one per logical unit
-//! 4. **Post breakdown comment** - Link to created beads
+//! 2. **File epic task** - Create deferred epic linked to GitHub issue
+//! 3. **File child tasks** - Create deferred children, one per logical unit
+//! 4. **Post breakdown comment** - Link to created tasks
 //! 5. **Wait for human signal** - Any child modification or issue comment
 //! 6. **Batch open children** - Open all children when human signal received
 
@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 /// Epic breakdown analyzer.
 ///
 /// Analyzes GitHub issues to determine if they represent epic-scale work
-/// and generates appropriate child bead breakdowns.
+/// and generates appropriate child task breakdowns.
 #[derive(Debug, Clone)]
 pub struct BreakdownAnalyzer {
     /// LLM client for epic assessment.
@@ -83,19 +83,19 @@ impl BreakdownAnalyzer {
         }
     }
 
-    /// Generate child bead requests from an epic breakdown.
+    /// Generate child task requests from an epic breakdown.
     ///
-    /// Each child bead follows the AGENTS.md standalone rules:
+    /// Each child task follows the AGENTS.md standalone rules:
     /// - Single codebase part
     /// - No "and then"
     /// - Self-contained (What, Why, How, Edge, Terms)
     /// - One acceptance criterion or cohesive concern
-    pub fn generate_child_beads(
+    pub fn generate_child_tasks(
         &self,
         issue: &Issue,
         breakdown: &EpicBreakdown,
         plan_ref: &str,
-    ) -> Vec<ChildBeadRequest> {
+    ) -> Vec<ChildTaskRequest> {
         let issue_num = issue.number;
 
         breakdown
@@ -104,7 +104,7 @@ impl BreakdownAnalyzer {
             .enumerate()
             .map(|(idx, item)| {
                 let child_num = idx + 1;
-                ChildBeadRequest {
+                ChildTaskRequest {
                     title: item.title.clone(),
                     description: Self::format_child_description(
                         issue,
@@ -123,10 +123,10 @@ impl BreakdownAnalyzer {
             .collect()
     }
 
-    /// Format a child bead description following AGENTS.md standalone rules.
+    /// Format a child task description following AGENTS.md standalone rules.
     fn format_child_description(
         issue: &Issue,
-        title: &str,
+        _title: &str,
         scope: &str,
         plan_ref: &str,
     ) -> Option<String> {
@@ -139,7 +139,7 @@ impl BreakdownAnalyzer {
 {}
 
 **WHY**
-This is part of the epic work tracked in the parent bead. Completing this child bead should result in a working, testable implementation of this scope.
+This is part of the epic work tracked in the parent task. Completing this child task should result in a working, testable implementation of this scope.
 
 **HOW TO VERIFY**
 - Code compiles successfully
@@ -152,14 +152,14 @@ This is part of the epic work tracked in the parent bead. Completing this child 
 - Test edge cases specific to this implementation area
 
 **PROJECT-SPECIFIC TERMINOLOGY**
-- 'Standalone bead': A self-contained unit that can be implemented without consulting other beads or the epic description
+- 'Standalone task': A self-contained unit that can be implemented without consulting other tasks or the epic description
 "#,
             plan_ref, issue.number, issue.title, scope
         ))
     }
 
     /// Infer priority based on position and total work items.
-    fn infer_priority(issue_num: i32, child_num: usize, total: usize) -> i32 {
+    fn infer_priority(_issue_num: i32, child_num: usize, total: usize) -> i32 {
         // First child or critical path gets higher priority
         if child_num == 0 {
             1
@@ -192,7 +192,7 @@ NOT EPIC-SCALE:
 
 ANALYSIS APPROACH:
 1. Identify distinct work areas (UI, API, DB, CLI, config, docs, etc.)
-2. For each area, determine if the scope is significant enough for a separate bead
+2. For each area, determine if the scope is significant enough for a separate task
 3. Look for phrases like "and then", "also needs", "should also update", "in addition"
 4. Consider if work items depend on each other or can be parallelized
 
@@ -201,8 +201,8 @@ Respond with valid JSON (no markdown code blocks) with these fields:
 - is_epic: boolean (true if epic-scale work detected)
 - primary_areas: array of strings (distinct work areas: ui, api, backend, database, cli, docs, config, etc.)
 - sub_work_items: array of objects with:
-  - title: string (concise title for the child bead)
-  - scope_description: string (detailed description of what this child bead covers)
+  - title: string (concise title for the child task)
+  - scope_description: string (detailed description of what this child task covers)
 - complexity_notes: string (optional notes about the breakdown and dependencies)"#
             .to_string();
 
@@ -234,7 +234,7 @@ Respond with valid JSON (no markdown code blocks) with these fields:
             r#"
 Assess whether this issue is epic-scale work.
 If yes, identify the distinct work areas and break it into sub-items.
-Consider the AGENTS.md rule: each child bead should be implementable by a naive but competent junior developer."#,
+Consider the AGENTS.md rule: each child task should be implementable by a naive but competent junior developer."#,
         );
 
         EpicAssassmentPrompt {
@@ -357,9 +357,9 @@ struct EpicAssessmentResult {
     complexity_notes: Option<String>,
 }
 
-/// Sub-work item for child bead.
+/// Sub-work item for child task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct SubWorkItem {
+pub struct SubWorkItem {
     title: String,
     scope_description: String,
 }
@@ -371,18 +371,18 @@ pub struct EpicBreakdown {
     pub is_epic: bool,
     /// Primary work areas identified.
     pub primary_areas: Vec<String>,
-    /// Sub-work items for child beads.
+    /// Sub-work items for child tasks.
     pub sub_work_items: Vec<SubWorkItem>,
     /// Complexity notes from LLM.
     pub complexity_notes: Option<String>,
 }
 
-/// Request for creating a child bead.
+/// Request for creating a child task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ChildBeadRequest {
-    /// Child bead title.
+pub struct ChildTaskRequest {
+    /// Child task title.
     pub title: String,
-    /// Child bead description.
+    /// Child task description.
     pub description: Option<String>,
     /// Scope description from LLM analysis.
     pub scope: String,
@@ -395,9 +395,9 @@ pub struct ChildBeadRequest {
 pub struct BreakdownComment {
     /// Comment body.
     pub body: String,
-    /// Epic bead info for reference.
+    /// Epic task info for reference.
     pub epic_title: String,
-    /// Child bead titles.
+    /// Child task titles.
     pub child_titles: Vec<String>,
 }
 
@@ -405,8 +405,8 @@ impl BreakdownComment {
     /// Generate the breakdown comment body.
     pub fn generate(
         issue_num: i32,
-        epic: &crate::beads::schema::Epic,
-        children: &[crate::beads::schema::Child],
+        epic: &crate::backlog::schema::Epic,
+        children: &[crate::backlog::schema::Child],
     ) -> Self {
         let mut body = String::new();
 
@@ -422,8 +422,8 @@ impl BreakdownComment {
         }
         body.push('\n');
 
-        body.push_str("### 📝 Child Beads\n");
-        body.push_str("The following child beads have been created (all currently deferred):\n\n");
+        body.push_str("### 📝 Child Backlog\n");
+        body.push_str("The following child tasks have been created (all currently deferred):\n\n");
 
         for (idx, child) in children.iter().enumerate() {
             body.push_str(&format!("{}. **{}**\n", idx + 1, child.title));
@@ -442,12 +442,12 @@ impl BreakdownComment {
         body.push_str("\n---\n\n");
         body.push_str("### ⏳ Next Steps\n\n");
         body.push_str(
-            "These child beads are currently **deferred** (not started). To begin work:\n\n",
+            "These child tasks are currently **deferred** (not started). To begin work:\n\n",
         );
         body.push_str("1. Review the breakdown above\n");
-        body.push_str("2. Modify any child bead OR add a comment to this issue\n");
-        body.push_str("3. Rodgers will batch-open all child beads\n\n");
-        body.push_str("This ensures human review before work begins. Each child bead can be implemented independently once opened.\n");
+        body.push_str("2. Modify any child task OR add a comment to this issue\n");
+        body.push_str("3. Rodgers will batch-open all child tasks\n\n");
+        body.push_str("This ensures human review before work begins. Each child task can be implemented independently once opened.\n");
 
         let child_titles: Vec<String> = children.iter().map(|c| c.title.clone()).collect();
 
@@ -500,8 +500,8 @@ mod tests {
     }
 
     #[test]
-    fn test_child_bead_request_structure() {
-        let request = ChildBeadRequest {
+    fn test_child_task_request_structure() {
+        let request = ChildTaskRequest {
             title: "API endpoint".to_string(),
             description: Some("Implement the API endpoint".to_string()),
             scope: "Create REST endpoint for the feature".to_string(),
@@ -540,7 +540,7 @@ mod tests {
         };
 
         // Note: These tests verify the structure, actual priority calculation
-        // is done in generate_child_beads which references the actual issue
+        // is done in generate_child_tasks which references the actual issue
         assert_eq!(breakdown.sub_work_items.len(), 4);
     }
 }

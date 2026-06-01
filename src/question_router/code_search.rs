@@ -94,7 +94,7 @@ impl CodeSearcher {
                                         path_str.to_string(),
                                         SourceFile {
                                             path: path_str.to_string(),
-                                            language: detect_language(ext),
+                                            _language: detect_language(ext),
                                             content,
                                             symbols: symbol_map,
                                         },
@@ -129,7 +129,7 @@ impl CodeSearcher {
         let keywords = extract_code_keywords(query);
         let mut results: Vec<CodeSearchResult> = Vec::new();
 
-        for (_path, file) in &self.files {
+        for file in self.files.values() {
             // Search file content for matches
             let content_lower = file.content.to_lowercase();
             let query_lower = query.to_lowercase();
@@ -139,7 +139,7 @@ impl CodeSearcher {
             let mut best_relevance: f32 = 0.0;
 
             // Check symbol matches first (higher relevance)
-            for (symbol_name, symbol_line) in &file.symbols {
+            for (symbol_name, _symbol_line) in &file.symbols {
                 let symbol_lower = symbol_name.to_lowercase();
                 for keyword in &keywords {
                     if symbol_lower.contains(&keyword.to_lowercase())
@@ -238,9 +238,7 @@ impl CodeSearcher {
 
         for result in results {
             let key = result.file_path.clone();
-            if !file_map.contains_key(&key) {
-                file_map.insert(key, result);
-            }
+            file_map.entry(key).or_insert(result);
         }
 
         let mut sorted: Vec<_> = file_map.into_values().collect();
@@ -256,8 +254,8 @@ impl CodeSearcher {
     pub fn find_symbol_implementation(&self, symbol_name: &str) -> Vec<CodeSearchResult> {
         let mut results = Vec::new();
 
-        for (_path, file) in &self.files {
-            if let Some((name, line_num)) = file
+        for file in self.files.values() {
+            if let Some((_name, line_num)) = file
                 .symbols
                 .iter()
                 .find(|(n, _)| n.to_lowercase() == symbol_name.to_lowercase())
@@ -297,7 +295,7 @@ struct SourceFile {
     /// Full file path.
     path: String,
     /// Programming language.
-    language: String,
+    _language: String,
     /// Full file content.
     content: String,
     /// Extracted function/struct names with line numbers.
@@ -345,7 +343,7 @@ fn extract_code_keywords(query: &str) -> Vec<String> {
     lower
         .split(|c: char| !c.is_alphanumeric() && c != '-')
         .filter(|w| w.len() > 2)
-        .filter(|w| !stop_words.contains(&w))
+        .filter(|w| !stop_words.contains(w))
         .map(|w| w.to_string())
         .collect()
 }

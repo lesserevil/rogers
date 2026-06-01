@@ -7,7 +7,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Result, RogersError};
-use crate::github::auth::{AuthError, GitHubAuth};
+use crate::github::auth::GitHubAuth;
 use crate::github::models::*;
 use crate::github::rate_limit::RateLimitHandler;
 
@@ -67,10 +67,14 @@ impl GitHubClient {
     }
 
     /// Build the API URL for fetching issue comments.
+    #[allow(dead_code)]
     fn comments_url(&self, issue_number: u64) -> String {
         format!(
             "{}/repos/{}/{}/issues/{}/comments",
-            self.api_base(), self.owner, self.repo, issue_number
+            self.api_base(),
+            self.owner,
+            self.repo,
+            issue_number
         )
     }
 
@@ -500,7 +504,7 @@ impl GitHubClient {
 
         let request = self
             .client
-            .post(&self.graphql_url())
+            .post(self.graphql_url())
             .headers(self.auth.auth_headers())
             .header(reqwest::header::CONTENT_TYPE, "application/json")
             .json(&request_body);
@@ -819,7 +823,6 @@ impl GitHubClient {
         struct FileContent {
             #[serde(rename = "contents")]
             contents: Option<FileContents>,
-            pub sha: Option<String>,
         }
 
         #[derive(Deserialize)]
@@ -1009,7 +1012,6 @@ impl GitHubClient {
 
         #[derive(Deserialize)]
         struct DiscWithReactions {
-            id: String,
             reactions: ReactionNodes,
         }
 
@@ -1049,9 +1051,7 @@ impl GitHubClient {
                     .map_err(|e| RogersError::Auth(e.to_string()))?;
                 Ok(())
             }
-            Err(e) => {
-                return Err(e);
-            }
+            Err(e) => Err(e),
         }
     }
 }
@@ -1163,7 +1163,9 @@ impl GitHubClient {
     fn tags_url(&self) -> String {
         format!(
             "{}/repos/{}/{}/tags?per_page=100",
-            self.api_base(), self.owner, self.repo
+            self.api_base(),
+            self.owner,
+            self.repo
         )
     }
 
@@ -1180,6 +1182,7 @@ impl GitHubClient {
     // ---- Merged Pull Requests ----
 
     /// Build the API URL for listing pull requests.
+    #[allow(dead_code)]
     fn pull_requests_url(
         &self,
         base_branch: &str,
@@ -1189,7 +1192,13 @@ impl GitHubClient {
     ) -> String {
         format!(
             "{}/repos/{}/{}/pulls?base={}&state={}&sort={}&direction={}&per_page=100",
-            self.api_base(), self.owner, self.repo, base_branch, state, sort, direction
+            self.api_base(),
+            self.owner,
+            self.repo,
+            base_branch,
+            state,
+            sort,
+            direction
         )
     }
 
@@ -1255,7 +1264,10 @@ impl GitHubClient {
     pub async fn fetch_check_runs(&self, sha: &str) -> Result<Vec<CheckRun>> {
         let url = format!(
             "{}/repos/{}/{}/commits/{}/check-runs?per_page=100",
-            self.api_base(), self.owner, self.repo, sha
+            self.api_base(),
+            self.owner,
+            self.repo,
+            sha
         );
         let wrapper: CheckRunsWrapper = self.fetch_json(&url).await?;
         Ok(wrapper.check_runs)
@@ -1268,7 +1280,10 @@ impl GitHubClient {
         // The combined status endpoint returns a single CombinedStatus object
         let url = format!(
             "{}/repos/{}/{}/commits/{}/status",
-            self.api_base(), self.owner, self.repo, sha
+            self.api_base(),
+            self.owner,
+            self.repo,
+            sha
         );
         let combined: CombinedStatus = self.fetch_json(&url).await?;
         Ok(combined.statuses)
@@ -1282,7 +1297,10 @@ impl GitHubClient {
     pub async fn fetch_branch_head(&self, branch: &str) -> Result<BranchHead> {
         let url = format!(
             "{}/repos/{}/{}/branches/{}",
-            self.api_base(), self.owner, self.repo, branch
+            self.api_base(),
+            self.owner,
+            self.repo,
+            branch
         );
         let branch_info: BranchHead = self.fetch_json(&url).await?;
         Ok(branch_info)
@@ -1430,7 +1448,10 @@ impl GitHubClient {
     pub async fn fetch_commit_by_sha(&self, sha: &str) -> Result<GitCommit> {
         let url = format!(
             "{}/repos/{}/{}/commits/{}",
-            self.api_base(), self.owner, self.repo, sha
+            self.api_base(),
+            self.owner,
+            self.repo,
+            sha
         );
         let commit: GitCommit = self.fetch_json(&url).await?;
         Ok(commit)
@@ -1451,11 +1472,11 @@ pub fn parse_issue_url(url: &str) -> Option<(String, String, u64)> {
         let issue_str = parts.last().copied();
         let issues_marker = parts.get(parts.len() - 2).copied();
 
-        if owner.is_some() && repo.is_some() && issue_str.is_some()
-            && issues_marker == Some("issues")
+        if let (Some(owner), Some(repo), Some(issue_str), Some("issues")) =
+            (owner, repo, issue_str, issues_marker)
         {
-            if let Ok(number) = issue_str.unwrap().parse::<u64>() {
-                return Some((owner.unwrap().to_string(), repo.unwrap().to_string(), number));
+            if let Ok(number) = issue_str.parse::<u64>() {
+                return Some((owner.to_string(), repo.to_string(), number));
             }
         }
     }
@@ -1510,7 +1531,10 @@ impl GitHubClient {
 pub async fn close_issue(client: &GitHubClient, issue_number: u64) -> Result<()> {
     let url = format!(
         "{}/repos/{}/{}/issues/{}",
-        client.api_base(), client.owner(), client.repo(), issue_number
+        client.api_base(),
+        client.owner(),
+        client.repo(),
+        issue_number
     );
 
     let http_client = reqwest::Client::new();
@@ -1521,10 +1545,7 @@ pub async fn close_issue(client: &GitHubClient, issue_number: u64) -> Result<()>
         .header("Content-Type", "application/json")
         .body(r#"{"state":"closed"}"#);
 
-    request = request.header(
-        "Authorization",
-        format!("Bearer {}", client.auth().token()),
-    );
+    request = request.header("Authorization", format!("Bearer {}", client.auth().token()));
 
     let response = request.send().await?;
     let status = response.status();
@@ -1691,7 +1712,11 @@ mod tests {
 
     #[test]
     fn test_tags_url_format() {
-        let client = GitHubClient::new("myorg", "myrepo");
+        let client = GitHubClient::new(
+            "myorg",
+            "myrepo",
+            crate::github::auth::GitHubAuth::new_with_default_api("ghp_test_token"),
+        );
         let url = client.tags_url();
         assert!(url.contains("myorg"));
         assert!(url.contains("myrepo"));

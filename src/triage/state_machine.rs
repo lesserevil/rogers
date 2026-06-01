@@ -34,8 +34,8 @@ pub enum TriageState {
     DocFound,
     /// No documentation found - doc gap.
     DocGap,
-    /// Filing epic and child beads (human gate state with human signal).
-    FileEpicBeads,
+    /// Filing epic and child tasks (human gate state with human signal).
+    FileEpicTasks,
     /// Issue is complete, awaiting human decision.
     ReadyForReview,
     /// Human decided not to work this.
@@ -62,7 +62,7 @@ impl TriageState {
             TriageState::SearchDocs => None,
             TriageState::DocFound => None,
             TriageState::DocGap => Some("needs-documentation"),
-            TriageState::FileEpicBeads => None,
+            TriageState::FileEpicTasks => None,
             TriageState::ReadyForReview => Some("ready-for-review"),
             TriageState::WillNotDo => Some("will-not-do"),
             TriageState::ReadyForWork => Some("ready-for-work"),
@@ -100,7 +100,7 @@ impl TriageState {
             TriageState::SearchDocs => "Searching Docs",
             TriageState::DocFound => "Documentation Found",
             TriageState::DocGap => "Documentation Gap",
-            TriageState::FileEpicBeads => "Filing Epic Beads",
+            TriageState::FileEpicTasks => "Filing Epic Backlog",
             TriageState::ReadyForReview => "Ready for Review",
             TriageState::WillNotDo => "Will Not Do",
             TriageState::ReadyForWork => "Ready for Work",
@@ -124,7 +124,7 @@ impl TriageState {
             TriageState::SearchDocs,
             TriageState::DocFound,
             TriageState::DocGap,
-            TriageState::FileEpicBeads,
+            TriageState::FileEpicTasks,
             TriageState::ReadyForReview,
             TriageState::WillNotDo,
             TriageState::ReadyForWork,
@@ -170,8 +170,8 @@ pub enum TriageEvent {
     HumanReadyForWork,
     /// Human approved epic breakdown (any human signal after READY_FOR_WORK).
     HumanApprovedEpic,
-    /// Epic and child beads have been created.
-    BeadsCreated,
+    /// Epic and child tasks have been created.
+    TasksCreated,
     /// Issue closed.
     IssueClosed,
     /// Detected epic-scale work requiring breakdown.
@@ -212,11 +212,11 @@ pub fn valid_transitions(state: TriageState) -> Vec<(TriageEvent, TriageState)> 
         ],
         TriageState::DocFound => vec![(TriageEvent::IssueClosed, TriageState::Closed)],
         TriageState::DocGap => vec![
-            (TriageEvent::BeadsCreated, TriageState::ReadyForReview),
+            (TriageEvent::TasksCreated, TriageState::ReadyForReview),
             (TriageEvent::IssueClosed, TriageState::Closed),
         ],
-        TriageState::FileEpicBeads => vec![
-            (TriageEvent::BeadsCreated, TriageState::InProgress),
+        TriageState::FileEpicTasks => vec![
+            (TriageEvent::TasksCreated, TriageState::InProgress),
             (TriageEvent::HumanApprovedEpic, TriageState::InProgress),
         ],
         TriageState::ReadyForReview => vec![
@@ -225,8 +225,8 @@ pub fn valid_transitions(state: TriageState) -> Vec<(TriageEvent, TriageState)> 
         ],
         TriageState::WillNotDo => vec![(TriageEvent::IssueClosed, TriageState::Closed)],
         TriageState::ReadyForWork => vec![
-            (TriageEvent::EpicDetected, TriageState::FileEpicBeads),
-            (TriageEvent::BeadsCreated, TriageState::InProgress),
+            (TriageEvent::EpicDetected, TriageState::FileEpicTasks),
+            (TriageEvent::TasksCreated, TriageState::InProgress),
             (TriageEvent::HumanApprovedEpic, TriageState::InProgress),
         ],
         TriageState::InProgress => vec![(TriageEvent::IssueClosed, TriageState::Closed)],
@@ -383,7 +383,7 @@ impl TriageStateMachine {
             (TriageState::SearchDocs, TriageEvent::DocFound) => TriageState::DocFound,
             (TriageState::SearchDocs, TriageEvent::DocGapFound) => TriageState::DocGap,
             (TriageState::DocFound, TriageEvent::IssueClosed) => TriageState::Closed,
-            (TriageState::DocGap, TriageEvent::BeadsCreated) => TriageState::ReadyForReview,
+            (TriageState::DocGap, TriageEvent::TasksCreated) => TriageState::ReadyForReview,
 
             // Human decision gate - KEY: these only happen on human action
             // LLM can suggest but CANNOT auto-transition these states
@@ -395,14 +395,14 @@ impl TriageStateMachine {
             // Will not do flow
             (TriageState::WillNotDo, TriageEvent::IssueClosed) => TriageState::Closed,
 
-            // Ready for work flow - FILE_EPIC_BEADS state for epic detection
-            (TriageState::ReadyForWork, TriageEvent::EpicDetected) => TriageState::FileEpicBeads,
-            (TriageState::ReadyForWork, TriageEvent::BeadsCreated) => TriageState::InProgress,
+            // Ready for work flow - FILE_EPIC_TASKS state for epic detection
+            (TriageState::ReadyForWork, TriageEvent::EpicDetected) => TriageState::FileEpicTasks,
+            (TriageState::ReadyForWork, TriageEvent::TasksCreated) => TriageState::InProgress,
             (TriageState::ReadyForWork, TriageEvent::HumanApprovedEpic) => TriageState::InProgress,
 
-            // File epic beads state
-            (TriageState::FileEpicBeads, TriageEvent::BeadsCreated) => TriageState::InProgress,
-            (TriageState::FileEpicBeads, TriageEvent::HumanApprovedEpic) => TriageState::InProgress,
+            // File epic tasks state
+            (TriageState::FileEpicTasks, TriageEvent::TasksCreated) => TriageState::InProgress,
+            (TriageState::FileEpicTasks, TriageEvent::HumanApprovedEpic) => TriageState::InProgress,
 
             // In progress tracking
             (TriageState::InProgress, TriageEvent::IssueClosed) => TriageState::Closed,
@@ -693,7 +693,7 @@ mod tests {
     #[test]
     fn test_ready_for_work_to_in_progress() {
         let mut sm = TriageStateMachine::from_state(TriageState::ReadyForWork);
-        let result = sm.transition(TriageEvent::BeadsCreated);
+        let result = sm.transition(TriageEvent::TasksCreated);
         assert!(result.is_ok());
         assert_eq!(sm.state(), TriageState::InProgress);
     }
@@ -815,7 +815,7 @@ mod tests {
             TriageState::ReadyForReview,
             TriageState::WillNotDo,
             TriageState::ReadyForWork,
-            TriageState::FileEpicBeads,
+            TriageState::FileEpicTasks,
             TriageState::InProgress,
             TriageState::Closed,
         ];
@@ -893,18 +893,18 @@ mod tests {
         assert!(sm.transition(TriageEvent::IssueClosed).is_ok());
         assert_eq!(sm.state(), TriageState::Closed);
 
-        // Test SEARCH_DOCS -> DOC_GAP -> READY_FOR_REVIEW (after beads created)
+        // Test SEARCH_DOCS -> DOC_GAP -> READY_FOR_REVIEW (after tasks created)
         let mut sm = TriageStateMachine::from_state(TriageState::SearchDocs);
         assert!(sm.transition(TriageEvent::DocGapFound).is_ok());
         assert_eq!(sm.state(), TriageState::DocGap);
-        assert!(sm.transition(TriageEvent::BeadsCreated).is_ok());
+        assert!(sm.transition(TriageEvent::TasksCreated).is_ok());
         assert_eq!(sm.state(), TriageState::ReadyForReview);
 
-        // Test READY_FOR_WORK -> FILE_EPIC_BEADS -> IN_PROGRESS (epic flow)
+        // Test READY_FOR_WORK -> FILE_EPIC_TASKS -> IN_PROGRESS (epic flow)
         let mut sm = TriageStateMachine::from_state(TriageState::ReadyForWork);
         assert!(sm.transition(TriageEvent::EpicDetected).is_ok());
-        assert_eq!(sm.state(), TriageState::FileEpicBeads);
-        assert!(sm.transition(TriageEvent::BeadsCreated).is_ok());
+        assert_eq!(sm.state(), TriageState::FileEpicTasks);
+        assert!(sm.transition(TriageEvent::TasksCreated).is_ok());
         assert_eq!(sm.state(), TriageState::InProgress);
 
         // Test WILL_NOT_DO -> CLOSE_ISSUE
@@ -932,7 +932,7 @@ mod tests {
             TriageEvent::DocGapFound,
             TriageEvent::StalePing,
             TriageEvent::StaleClose,
-            TriageEvent::BeadsCreated,
+            TriageEvent::TasksCreated,
             TriageEvent::EpicDetected,
             TriageEvent::RequestorResponded,
         ];
@@ -983,9 +983,9 @@ mod tests {
         }
 
         // Only explicit transition events should work on ReadyForWork
-        // BeadsCreated progresses to InProgress
+        // TasksCreated progresses to InProgress
         let mut sm = TriageStateMachine::from_state(TriageState::ReadyForWork);
-        assert!(sm.transition(TriageEvent::BeadsCreated).is_ok());
+        assert!(sm.transition(TriageEvent::TasksCreated).is_ok());
         assert_eq!(sm.state(), TriageState::InProgress);
     }
 
@@ -1106,23 +1106,23 @@ mod tests {
         assert_eq!(sm.state(), TriageState::NewUnclassified);
     }
 
-    /// Test FILE_EPIC_BEADS state as explicit transition between READY_FOR_WORK and IN_PROGRESS
+    /// Test FILE_EPIC_TASKS state as explicit transition between READY_FOR_WORK and IN_PROGRESS
     #[test]
-    fn test_file_epic_beads_transition() {
-        // Test READY_FOR_WORK -> FILE_EPIC_BEADS (via EpicDetected)
+    fn test_file_epic_tasks_transition() {
+        // Test READY_FOR_WORK -> FILE_EPIC_TASKS (via EpicDetected)
         let mut sm = TriageStateMachine::from_state(TriageState::ReadyForWork);
         assert!(sm.transition(TriageEvent::EpicDetected).is_ok());
-        assert_eq!(sm.state(), TriageState::FileEpicBeads);
+        assert_eq!(sm.state(), TriageState::FileEpicTasks);
 
-        // Test FILE_EPIC_BEADS -> IN_PROGRESS (via BeadsCreated)
-        assert!(sm.transition(TriageEvent::BeadsCreated).is_ok());
+        // Test FILE_EPIC_TASKS -> IN_PROGRESS (via TasksCreated)
+        assert!(sm.transition(TriageEvent::TasksCreated).is_ok());
         assert_eq!(sm.state(), TriageState::InProgress);
     }
 
-    /// Test FILE_EPIC_BEADS -> IN_PROGRESS (via HumanApprovedEpic)
+    /// Test FILE_EPIC_TASKS -> IN_PROGRESS (via HumanApprovedEpic)
     #[test]
-    fn test_file_epic_beads_human_approval() {
-        let mut sm = TriageStateMachine::from_state(TriageState::FileEpicBeads);
+    fn test_file_epic_tasks_human_approval() {
+        let mut sm = TriageStateMachine::from_state(TriageState::FileEpicTasks);
 
         // Human approval also transitions to InProgress
         assert!(sm.transition(TriageEvent::HumanApprovedEpic).is_ok());
@@ -1149,7 +1149,7 @@ mod tests {
         assert!(TriageState::SearchDocs.label().is_none());
         assert!(TriageState::DocFound.label().is_none());
         assert!(TriageState::Closed.label().is_none());
-        assert!(TriageState::FileEpicBeads.label().is_none());
+        assert!(TriageState::FileEpicTasks.label().is_none());
     }
 
     /// Test the requestor response mechanism
@@ -1244,8 +1244,8 @@ mod tests {
         sm.transition(TriageEvent::HumanReadyForWork).unwrap();
         assert_eq!(sm.state(), TriageState::ReadyForWork);
 
-        // Epic beads created
-        sm.transition(TriageEvent::BeadsCreated).unwrap();
+        // Epic tasks created
+        sm.transition(TriageEvent::TasksCreated).unwrap();
         assert_eq!(sm.state(), TriageState::InProgress);
 
         // Issue closed

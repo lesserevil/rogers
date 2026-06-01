@@ -123,8 +123,8 @@ Respond with ONLY the comment text (no preamble or explanation).
 /// Prompt for analyzing whether an issue requires epic-scale breakdown.
 ///
 /// Epic-scale issues span multiple codebase areas or have sequential dependencies,
-/// requiring breakdown into an epic bead + child beads. Standard work can be
-/// handled as a single epic bead.
+/// requiring breakdown into an epic task + child tasks. Standard work can be
+/// handled as a single epic task.
 ///
 /// Epic-scale indicators:
 /// - Multiple distinct codebase areas (CLI, API, DB, UI, config)
@@ -143,35 +143,35 @@ Standard (single epic) issues:
 - One logical unit of acceptance criteria
 
 Analyze the issue and respond with a JSON object:
-{"is_epic_scale": true/false, "reasons": [...], "child_beads": [{"title": "...", "description": "..."}]}
+{"is_epic_scale": true/false, "reasons": [...], "child_tasks": [{"title": "...", "description": "..."}]}
 
-If is_epic_scale is true, provide one child_beads entry per distinct unit of work.
-Each child_beads title should indicate the codebase area it touches.
-Do NOT provide more than 5 child beads - group if needed.
+If is_epic_scale is true, provide one child_tasks entry per distinct unit of work.
+Each child_tasks title should indicate the codebase area it touches.
+Do NOT provide more than 5 child tasks - group if needed.
 
 Issue content:
 {issue_content}
 "#;
 
-/// Prompt for breaking down an epic-scale issue into child bead specifications.
+/// Prompt for breaking down an epic-scale issue into child task specifications.
 ///
-/// Given an issue determined to be epic-scale, generate specific child bead
+/// Given an issue determined to be epic-scale, generate specific child task
 /// titles and descriptions following the two rules:
 /// 1. **Single codebase part** - One entry per area (CLI, API, DB, UI, config)
-/// 2. **No "...and then..." scope** - Each bead fits in one non-compound sentence
-pub const EPIC_BREAKDOWN_PROMPT: &str = r#"You are breaking down an epic-scale GitHub issue into child bead specifications.
+/// 2. **No "...and then..." scope** - Each task fits in one non-compound sentence
+pub const EPIC_BREAKDOWN_PROMPT: &str = r#"You are breaking down an epic-scale GitHub issue into child task specifications.
 
-Each child bead must follow two rules:
+Each child task must follow two rules:
 1. **Single codebase part.** Touches at most one distinct area: CLI, UI, API, database, config, auth, etc.
-2. **No "...and then..." scope.** Description fits in one non-compound sentence. If it naturally continues with "and then...", split into separate beads.
+2. **No "...and then..." scope.** Description fits in one non-compound sentence. If it naturally continues with "and then...", split into separate tasks.
 
-Generate child bead specifications as a JSON array:
+Generate child task specifications as a JSON array:
 [
-  {"title": "Area: Short description of this unit", "description": "Concrete scope: what this bead does specifically", "priority": 2}
+  {"title": "Area: Short description of this unit", "description": "Concrete scope: what this task does specifically", "priority": 2}
 ]
 
-Maximum 5 child beads. Priority: 0=critical, 1=high, 2=medium, 3=low.
-Group related work into a single bead rather than splitting finely.
+Maximum 5 child tasks. Priority: 0=critical, 1=high, 2=medium, 3=low.
+Group related work into a single task rather than splitting finely.
 
 Issue title: {issue_title}
 Issue body: {issue_body}
@@ -179,19 +179,19 @@ Issue body: {issue_body}
 Respond with ONLY the JSON array, no preamble.
 "#;
 
-/// Prompt for generating a standalone child bead description with all required sections.
+/// Prompt for generating a standalone child task description with all required sections.
 ///
-/// A standalone bead is one that a naive but competent junior developer can implement
-/// without consulting other beads or the epic description. Each bead MUST include:
+/// A standalone task is one that a naive but competent junior developer can implement
+/// without consulting other tasks or the epic description. Each task MUST include:
 /// 1. **WHAT TO DO** - Concrete files, packages, functions, or commands to create/modify
 /// 2. **WHY** - User-visible behavior, constraint, or design rule this serves
 /// 3. **HOW TO VERIFY** - Test, command, or observable result that proves work is done
 /// 4. **EDGE CASES AND PITFALLS** - Non-obvious constraints a careful reader could miss
 /// 5. **PROJECT-SPECIFIC TERMINOLOGY** - Project terms explained inline
-pub const STANDALONE_BEAD_PROMPT: &str = r#"Generate a standalone child bead description for implementation.
+pub const STANDALONE_TASK_PROMPT: &str = r#"Generate a standalone child task description for implementation.
 
-A standalone bead provides ALL context needed for a naive but competent junior developer
-to implement it WITHOUT consulting other beads or the parent epic.
+A standalone task provides ALL context needed for a naive but competent junior developer
+to implement it WITHOUT consulting other tasks or the parent epic.
 
 REQUIRED SECTIONS (write all 5):
 1. **WHAT TO DO**: Name concrete files, packages, functions, and commands to create or modify.
@@ -202,7 +202,7 @@ REQUIRED SECTIONS (write all 5):
 
 RULES:
 - Single codebase part only (CLI OR API OR DB OR UI OR Config OR Auth)
-- No "and then..." patterns - each bead scope should fit in one non-compound sentence
+- No "and then..." patterns - each task scope should fit in one non-compound sentence
 - Write for a naive junior dev who can write code and run tools but hasn't read the plan
 
 FORMAT your response as a JSON object:
@@ -211,23 +211,23 @@ FORMAT your response as a JSON object:
   "description": "Full standalone description with all 5 sections formatted as markdown"
 }
 
-Bead scope: {bead_scope}
+Task scope: {task_scope}
 Codebase area: {codebase_area}
 Acceptance criteria context: {ac_context}
 
 Respond with ONLY the JSON object, no preamble or explanation.
 "#;
 
-/// Prompt for validating that a child bead description is standalone-ready.
+/// Prompt for validating that a child task description is standalone-ready.
 ///
-/// This prompt helps an LLM validate that generated beads meet standalone criteria:
+/// This prompt helps an LLM validate that generated tasks meet standalone criteria:
 /// - All 5 required sections present
-/// - Single codebase part (no CLI+API+DB+UI in one bead)
+/// - Single codebase part (no CLI+API+DB+UI in one task)
 /// - No compound "and then..." patterns
-pub const STANDALONE_VALIDATION_PROMPT: &str = r#"Validate whether a child bead description is standalone-ready.
+pub const STANDALONE_VALIDATION_PROMPT: &str = r#"Validate whether a child task description is standalone-ready.
 
-A standalone-ready bead can be implemented by a naive but competent junior developer
-WITHOUT consulting other beads, the parent epic, or out-of-band knowledge.
+A standalone-ready task can be implemented by a naive but competent junior developer
+WITHOUT consulting other tasks, the parent epic, or out-of-band knowledge.
 
 Check for these issues:
 
@@ -238,7 +238,7 @@ Check for these issues:
    - EDGE CASES AND PITFALLS (or EDGE CASES)
    - PROJECT-SPECIFIC TERMINOLOGY (or TERMINOLOGY)
 
-2. **MULTIPLE CODEBASE AREAS**: Flag if bead touches multiple distinct areas:
+2. **MULTIPLE CODEBASE AREAS**: Flag if task touches multiple distinct areas:
    - CLI alone
    - API alone
    - Database alone
@@ -247,15 +247,15 @@ Check for these issues:
    - Auth alone
    (Exception: API + Database may be combined as they're closely related)
 
-3. **COMPOUND PATTERNS**: Flag if bead has sequential work patterns:
+3. **COMPOUND PATTERNS**: Flag if task has sequential work patterns:
    - "and then" patterns
    - "first... second..." patterns
    - "Step 1... Step 2..." numbered patterns
    - "after that" or "afterwards"
-   - Sequential work that should be separate beads
+   - Sequential work that should be separate tasks
 
-Bead description to validate:
-{bead_description}
+Task description to validate:
+{task_description}
 
 Respond with a JSON object:
 {
@@ -265,28 +265,28 @@ Respond with a JSON object:
 }
 "#;
 
-/// Prompt for splitting a compound bead into separate standalone beads.
-pub const BEAD_SPLIT_PROMPT: &str = r#"Split a compound bead into separate standalone beads.
+/// Prompt for splitting a compound task into separate standalone tasks.
+pub const TASK_SPLIT_PROMPT: &str = r#"Split a compound task into separate standalone tasks.
 
-The following bead has compound scope (touches multiple areas or has sequential patterns).
-Split it into 2-5 separate beads, each touching ONE distinct codebase area.
+The following task has compound scope (touches multiple areas or has sequential patterns).
+Split it into 2-5 separate tasks, each touching ONE distinct codebase area.
 
-Original bead:
-{original_bead}
+Original task:
+{original_task}
 
-RULES FOR SPLIT BEADS:
-1. Each bead touches only ONE codebase area: CLI, API, DB, UI, Config, or Auth
-2. No "and then..." patterns in any single bead
-3. Each bead is standalone: includes all 5 sections
-4. Maximum 5 beads - group closely related work
-5. Preserve ordering if beads have dependencies
+RULES FOR SPLIT BACKLOG:
+1. Each task touches only ONE codebase area: CLI, API, DB, UI, Config, or Auth
+2. No "and then..." patterns in any single task
+3. Each task is standalone: includes all 5 sections
+4. Maximum 5 tasks - group closely related work
+5. Preserve ordering if tasks have dependencies
 
 FORMAT as JSON array:
 [
   {
     "title": "Area: Brief description",
     "description": "Standalone description (5 sections) for this unit",
-    "has_dependency_on": null or "Area: Previous bead title"
+    "has_dependency_on": null or "Area: Previous task title"
   }
 ]
 
@@ -643,7 +643,7 @@ Respond with valid JSON:
         if let Some(ref body) = metadata.body {
             prompt.push_str("## Body\n");
             prompt.push_str(body);
-            prompt.push_str("\n");
+            prompt.push('\n');
         }
 
         prompt.push_str(&format!("Author: @{}\n", metadata.author));
@@ -744,7 +744,7 @@ pub struct BreakdownPrompt {
 }
 
 impl BreakdownPrompt {
-    /// Create a breakdown prompt for epic-scale detection and child bead generation.
+    /// Create a breakdown prompt for epic-scale detection and child task generation.
     pub fn for_epic_breakdown(metadata: &IssueMetadata, domain_context: Option<&str>) -> Self {
         let system_prompt = Self::breakdown_system_prompt();
         let user_prompt = Self::breakdown_user_prompt(metadata, domain_context);
@@ -757,13 +757,13 @@ impl BreakdownPrompt {
 
     /// System prompt for epic breakdown.
     fn breakdown_system_prompt() -> String {
-        r#"You are Rodgers, analyzing whether a GitHub issue represents epic-scale work and generating child bead breakdowns.
+        r#"You are Rodgers, analyzing whether a GitHub issue represents epic-scale work and generating child task breakdowns.
 
-CHILD BEAD RULES (from AGENTS.md):
-- Single codebase part: Each bead should touch at most one distinct area (CLI, UI, API, DB, config, docs)
-- No 'and then': Each bead's scope should be describable in a single, non-compound sentence
-- Standalone: A naive but competent junior developer could implement it without consulting other beads
-- One acceptance criterion or cohesive concern per child bead
+CHILD TASK RULES (from AGENTS.md):
+- Single codebase part: Each task should touch at most one distinct area (CLI, UI, API, DB, config, docs)
+- No 'and then': Each task's scope should be describable in a single, non-compound sentence
+- Standalone: A naive but competent junior developer could implement it without consulting other tasks
+- One acceptance criterion or cohesive concern per child task
 
 EPIC-SCALE INDICATORS:
 1. Work spans multiple areas of the project (e.g., "UI and API", "backend and docs")
@@ -775,14 +775,14 @@ OUTPUT FORMAT:
 Respond with valid JSON (no markdown code blocks) with these fields:
 - primary_areas: array of strings (distinct work areas: ui, api, backend, database, cli, docs, config)
 - sub_work_items: array of objects with:
-  - title: string (concise title for the child bead)
-  - scope_description: string (detailed description of what this child bead covers, following standalone bead rules)
+  - title: string (concise title for the child task)
+  - scope_description: string (detailed description of what this child task covers, following standalone task rules)
 - complexity_notes: string (optional notes about the breakdown and dependencies)
 
 IMPORTANT:
-- Generate at least 2 child beads for epic work
-- Each child bead should be independently implementable
-- Focus on distinct codebase areas as child bead scopes
+- Generate at least 2 child tasks for epic work
+- Each child task should be independently implementable
+- Focus on distinct codebase areas as child task scopes
 - Consider AGENTS.md standalone rules: complete, self-contained descriptions"#
             .to_string()
     }
@@ -825,7 +825,7 @@ IMPORTANT:
 Analyze this issue for epic-scale work:
 1. Is this epic-scale (multi-area or sequential work)?
 2. What distinct work areas are involved?
-3. Break down into standalone child beads following AGENTS.md rules.
+3. Break down into standalone child tasks following AGENTS.md rules.
 
 Consider the project structure and how work could be parallelized."#,
         );
@@ -1015,7 +1015,7 @@ mod tests {
         let metadata = create_test_metadata();
         let prompt = BreakdownPrompt::for_epic_breakdown(&metadata, None);
 
-        assert!(prompt.system_prompt.contains("CHILD BEAD"));
+        assert!(prompt.system_prompt.contains("CHILD TASK"));
         assert!(prompt.system_prompt.contains("epic-scale"));
         assert!(prompt.user_prompt.contains("Issue to Analyze"));
     }

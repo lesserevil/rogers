@@ -1,0 +1,45 @@
+project_name: Rogers
+default_status: To Do
+statuses:
+- To Do
+- In Progress
+- Done
+labels:
+- rodgers:type=architecture
+- epic
+- tasks-migrated
+- rodgers:type=backport
+- rodgers:type=doctor
+- rodgers:type=feature-bug
+- rodgers:type=init
+- rodgers:type=issue-templates
+- rodgers:type=question-routing
+- rodgers:type=release-management
+- rodgers:type=triage-workflow
+- rodgers:parent=rogers-6ny
+- rodgers:parent=rogers-4qr
+- asking_question
+- rodgers:parent=rogers-atj
+- rodgers:parent=rogers-ykp
+- rodgers:parent=rogers-zql
+- rodgers:parent=rogers-d7h
+- rodgers:parent=rogers-4en
+- rodgers:parent=rogers-zjm
+- rodgers:parent=rogers-jh3
+- feature
+- needs-human
+- yolo-watchdog
+- merged
+- duplicate
+- merge-conflict
+date_format: yyyy-mm-dd
+max_column_width: 20
+auto_open_browser: true
+default_port: 6420
+remote_operations: true
+auto_commit: false
+filesystem_only: false
+bypass_git_hooks: false
+check_active_branches: true
+active_branch_days: 30
+task_prefix: task

@@ -4,18 +4,19 @@
 //! with options and prompts for confirmation before applying fixes.
 //!
 //! Fix flow per drift event:
-//! 1. Present event: issue URL, bead ID, mismatch description
+//! 1. Present event: issue URL, task ID, mismatch description
 //! 2. Show options:
-//!    A. Close GitHub issue to match bead (for closed_bead_open_issue)
-//!    B. Reopen bead and link to correct issue (for in_progress_bead_closed_issue)
-//!    C. File new bead for manual work, close orphaned bead
+//!    A. Close GitHub issue to match task (for closed_task_open_issue)
+//!    B. Reopen task and link to correct issue (for in_progress_task_closed_issue)
+//!    C. File new task for manual work, close orphaned task
 //! 3. Prompt for confirmation (y/n/skip)
 //! 4. On confirmation: apply fix via API
 //! 5. Next event...
 
 use crate::doctor::{DriftEvent, DriftSeverity};
-use crate::github::GitHubClient;
+use crate::github::auth::GitHubAuth;
 use crate::github::client::{close_issue, parse_issue_url};
+use crate::github::GitHubClient;
 use std::io::{self, Write};
 
 /// Result of applying a single fix
@@ -72,9 +73,9 @@ impl FixSession {
         // Present the event
         self.present_event(event);
 
-        // For orphan beads, show orphan-specific options
-        if event.event_type == "orphan_bead" {
-            return self.prompt_orphan_bead(event).await;
+        // For orphan tasks, show orphan-specific options
+        if event.event_type == "orphan_task" {
+            return self.prompt_orphan_task(event).await;
         }
 
         // For other drift types, show standard options
@@ -126,9 +127,9 @@ impl FixSession {
             let _ = writeln!(self.output, "  GitHub Issue: {}", issue_url);
         }
 
-        // Bead ID if available
-        if let Some(ref bead_id) = event.bead_id {
-            let _ = writeln!(self.output, "  Bead ID: {}", bead_id);
+        // Task ID if available
+        if let Some(ref task_id) = event.task_id {
+            let _ = writeln!(self.output, "  Task ID: {}", task_id);
         }
 
         let _ = writeln!(self.output, "{}", "─".repeat(60));
@@ -139,29 +140,29 @@ impl FixSession {
         let _ = writeln!(self.output, "  Options:");
 
         match event.event_type.as_str() {
-            "closed_bead_open_issue" => {
-                let _ = writeln!(self.output, "    A) Close GitHub issue to match bead");
+            "closed_task_open_issue" => {
+                let _ = writeln!(self.output, "    A) Close GitHub issue to match task");
             }
-            "in_progress_bead_closed_issue" => {
-                let _ = writeln!(self.output, "    B) Reopen bead and link to correct issue");
+            "in_progress_task_closed_issue" => {
+                let _ = writeln!(self.output, "    B) Reopen task and link to correct issue");
             }
             _ => {
-                let _ = writeln!(self.output, "    A) Close GitHub issue to match bead");
-                let _ = writeln!(self.output, "    B) Reopen bead and link to correct issue");
+                let _ = writeln!(self.output, "    A) Close GitHub issue to match task");
+                let _ = writeln!(self.output, "    B) Reopen task and link to correct issue");
             }
         }
         let _ = writeln!(
             self.output,
-            "    C) File new bead for manual work, close orphaned bead"
+            "    C) File new task for manual work, close orphaned task"
         );
         let _ = writeln!(self.output);
     }
 
-    /// Present options for orphan beads (no GitHub link)
+    /// Present options for orphan tasks (no GitHub link)
     fn present_orphan_options(&mut self) {
         let _ = writeln!(self.output, "  Options:");
         let _ = writeln!(self.output, "    A) Attribute to existing issue");
-        let _ = writeln!(self.output, "    B) Close the bead");
+        let _ = writeln!(self.output, "    B) Close the task");
         let _ = writeln!(self.output);
     }
 
@@ -187,7 +188,7 @@ impl FixSession {
         }
     }
 
-    /// Apply Option A: Close GitHub issue to match bead
+    /// Apply Option A: Close GitHub issue to match task
     async fn apply_option_a(&mut self, event: &DriftEvent) -> FixResult {
         let Some(issue_url) = &event.github_issue_url else {
             return FixResult {
@@ -211,9 +212,13 @@ impl FixSession {
             issue_number
         );
 
-        let mut client = GitHubClient::new(&owner, &repo).with_token(&self.token);
+        let mut client = GitHubClient::new(
+            &owner,
+            &repo,
+            GitHubAuth::new_with_default_api(&self.token),
+        );
         if let Some(ref api_url_str) = self.api_url {
-            client = client.with_api_base(api_url_str);
+            client = GitHubClient::new(&owner, &repo, GitHubAuth::new(&self.token, api_url_str));
         }
         match close_issue(&client, issue_number).await {
             Ok(()) => {
@@ -239,55 +244,55 @@ impl FixSession {
         }
     }
 
-    /// Apply Option B: Reopen bead and link to correct issue
+    /// Apply Option B: Reopen task and link to correct issue
     async fn apply_option_b(&mut self, event: &DriftEvent) -> FixResult {
-        // This would require access to the beads database
+        // This would require access to the Backlog.md task store
         // For now, we provide guidance for manual action
-        let bead_id = event.bead_id.as_deref().unwrap_or("unknown");
+        let task_id = event.task_id.as_deref().unwrap_or("unknown");
 
         let _ = writeln!(
             self.output,
-            "  Manual action required: Please reopen bead {} in the beads database",
-            bead_id
+            "  Manual action required: Please reopen task {} in the Backlog.md task store",
+            task_id
         );
         let _ = writeln!(self.output, "  and link it to the correct GitHub issue.");
 
         FixResult {
             applied: true,
             action: format!(
-                "Guidance provided for bead {} - manual reopen required",
-                bead_id
+                "Guidance provided for task {} - manual reopen required",
+                task_id
             ),
             error: None,
         }
     }
 
-    /// Apply Option C: File new bead for manual work, close orphaned bead
+    /// Apply Option C: File new task for manual work, close orphaned task
     async fn apply_option_c(&mut self, event: &DriftEvent) -> FixResult {
-        let bead_id = event.bead_id.as_deref().unwrap_or("unknown");
+        let task_id = event.task_id.as_deref().unwrap_or("unknown");
 
         let _ = writeln!(
             self.output,
-            "  Manual action required: File a new bead for the work tracked in bead {}",
-            bead_id
+            "  Manual action required: File a new task for the work tracked in task {}",
+            task_id
         );
         let _ = writeln!(
             self.output,
-            "  and close the orphaned bead once the work is done."
+            "  and close the orphaned task once the work is done."
         );
 
         FixResult {
             applied: true,
             action: format!(
-                "Guidance provided for bead {} - manual file-and-close required",
-                bead_id
+                "Guidance provided for task {} - manual file-and-close required",
+                task_id
             ),
             error: None,
         }
     }
 
-    /// Handle orphan bead specifically
-    async fn prompt_orphan_bead(&mut self, event: &DriftEvent) -> FixResult {
+    /// Handle orphan task specifically
+    async fn prompt_orphan_task(&mut self, event: &DriftEvent) -> FixResult {
         self.present_event(event);
         self.present_orphan_options();
 
@@ -296,46 +301,46 @@ impl FixSession {
         match choice {
             FixChoice::A => {
                 // Attribute to existing issue
-                let bead_id = event.bead_id.as_deref().unwrap_or("unknown");
+                let task_id = event.task_id.as_deref().unwrap_or("unknown");
                 let _ = writeln!(
                     self.output,
-                    "  Manual action required: Attribute bead {} to an existing GitHub issue",
-                    bead_id
+                    "  Manual action required: Attribute task {} to an existing GitHub issue",
+                    task_id
                 );
                 let _ = writeln!(
                     self.output,
-                    "  Run 'bd update {} --github-url <issue-url>' to link it.",
-                    bead_id
+                    "  Run 'backlog update {} --github-url <issue-url>' to link it.",
+                    task_id
                 );
 
                 FixResult {
                     applied: true,
                     action: format!(
-                        "Guidance provided for orphan bead {} - manual attribution required",
-                        bead_id
+                        "Guidance provided for orphan task {} - manual attribution required",
+                        task_id
                     ),
                     error: None,
                 }
             }
             FixChoice::B => {
-                // Close the bead
-                let bead_id = event.bead_id.as_deref().unwrap_or("unknown");
+                // Close the task
+                let task_id = event.task_id.as_deref().unwrap_or("unknown");
                 let _ = writeln!(
                     self.output,
-                    "  Manual action required: Close orphan bead {}",
-                    bead_id
+                    "  Manual action required: Close orphan task {}",
+                    task_id
                 );
                 let _ = writeln!(
                     self.output,
-                    "  Run 'bd close {}' to close the bead.",
-                    bead_id
+                    "  Run 'backlog close {}' to close the task.",
+                    task_id
                 );
 
                 FixResult {
                     applied: true,
                     action: format!(
-                        "Guidance provided for orphan bead {} - manual close required",
-                        bead_id
+                        "Guidance provided for orphan task {} - manual close required",
+                        task_id
                     ),
                     error: None,
                 }
@@ -351,11 +356,11 @@ impl FixSession {
                 error: None,
             },
             FixChoice::C => {
-                // Option C ("file new bead for manual work, close orphaned bead") doesn't
-                // apply to orphan beads - they are already orphaned. Guide user to A or B.
+                // Option C ("file new task for manual work, close orphaned task") doesn't
+                // apply to orphan tasks - they are already orphaned. Guide user to A or B.
                 let _ = writeln!(
                     self.output,
-                    "  Option C is not valid for orphan beads. Use A (attribute) or B (close)."
+                    "  Option C is not valid for orphan tasks. Use A (attribute) or B (close)."
                 );
                 FixResult {
                     applied: false,
@@ -448,14 +453,14 @@ mod tests {
     /// Helper to create a test drift event
     fn test_drift_event(
         event_type: &str,
-        bead_id: Option<&str>,
+        task_id: Option<&str>,
         issue_url: Option<&str>,
     ) -> DriftEvent {
         DriftEvent {
             event_type: event_type.to_string(),
             description: format!("Test drift event: {}", event_type),
             github_issue_url: issue_url.map(String::from),
-            bead_id: bead_id.map(String::from),
+            task_id: task_id.map(String::from),
             severity: DriftSeverity::Error,
         }
     }
@@ -542,7 +547,7 @@ mod tests {
         let mut session = create_test_session(output_buffer.clone());
 
         let event = test_drift_event(
-            "closed_bead_open_issue",
+            "closed_task_open_issue",
             Some("b-001"),
             Some("https://github.com/owner/repo/issues/123"),
         );
@@ -554,7 +559,7 @@ mod tests {
 
         let output = String::from_utf8(output_buffer.borrow().clone()).unwrap();
         assert!(output.contains("DRIFT EVENT"));
-        assert!(output.contains("closed_bead_open_issue"));
+        assert!(output.contains("closed_task_open_issue"));
         assert!(output.contains("b-001"));
         assert!(output.contains("issues/123"));
     }
@@ -579,7 +584,7 @@ mod tests {
         // Verify the prompt message is formatted correctly
         // (actual read is mocked in tests via the prompt_choice direction)
         let event = test_drift_event(
-            "in_progress_bead_closed_issue",
+            "in_progress_task_closed_issue",
             Some("b-002"),
             Some("https://github.com/owner/repo/issues/456"),
         );
@@ -588,14 +593,14 @@ mod tests {
         session.present_options(&event);
 
         let output = String::from_utf8(output_buffer.borrow().clone()).unwrap();
-        assert!(output.contains("in_progress_bead_closed_issue"));
+        assert!(output.contains("in_progress_task_closed_issue"));
         // Options should be related to the event type
         assert!(output.contains("Option"));
     }
 
-    /// AC-7 Unit test: Orphan bead shows different options
+    /// AC-7 Unit test: Orphan task shows different options
     #[test]
-    fn test_orphan_bead_shows_different_options() {
+    fn test_orphan_task_shows_different_options() {
         let output_buffer = Rc::new(RefCell::new(Vec::new()));
         let output_box: Box<dyn Write> = Box::new(MockOutput {
             buffer: output_buffer.clone(),
@@ -614,8 +619,8 @@ mod tests {
 
         let output = String::from_utf8(output_buffer.borrow().clone()).unwrap();
         assert!(output.contains("Attribute to existing issue"));
-        assert!(output.contains("Close the bead"));
-        // Should NOT contain standard options like "Close GitHub issue to match bead"
+        assert!(output.contains("Close the task"));
+        // Should NOT contain standard options like "Close GitHub issue to match task"
         // The phrase "GitHub issue" only appears in standard options, not orphan options
         assert!(!output.contains("GitHub issue"));
     }
@@ -651,7 +656,7 @@ mod tests {
         );
 
         let event = test_drift_event(
-            "closed_bead_open_issue",
+            "closed_task_open_issue",
             Some("b-123"),
             Some("https://github.com/myowner/myrepo/issues/789"),
         );
@@ -662,8 +667,8 @@ mod tests {
         // Should contain the drift event separator
         assert!(output.contains("DRIFT EVENT"));
         // Should contain the event type
-        assert!(output.contains("closed_bead_open_issue"));
-        // Should contain the bead ID
+        assert!(output.contains("closed_task_open_issue"));
+        // Should contain the task ID
         assert!(output.contains("b-123"));
         // Should contain the issue URL
         assert!(output.contains("issues/789"));

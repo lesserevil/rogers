@@ -9,13 +9,13 @@ pub mod will_not_do;
 
 use serde::{Deserialize, Serialize};
 
-pub use breakdown::{BreakdownAnalyzer, BreakdownComment, ChildBeadRequest, EpicBreakdown};
+pub use breakdown::{BreakdownAnalyzer, BreakdownComment, ChildTaskRequest, EpicBreakdown};
 pub use completeness::{
-    BugCompletenessRequirements, CompletenessCheckResult, FeatureCompletenessRequirements,
-    check_bug_completeness, check_feature_completeness,
+    check_bug_completeness, check_feature_completeness, BugCompletenessRequirements,
+    CompletenessCheckResult, FeatureCompletenessRequirements,
 };
 pub use will_not_do::{
-    WillNotDoResult, generate_warm_closure_comment, has_will_not_do_label, resolve_issue_type,
+    generate_warm_closure_comment, has_will_not_do_label, resolve_issue_type, WillNotDoResult,
 };
 
 /// A feature or bug issue with relevant metadata.
@@ -60,7 +60,10 @@ impl TransitionSummary {
                 issue.title,
                 summarize_body(&issue.body, 100)
             ),
-            labels_to_add: vec!["ready-for-review".to_string(), "rodgers:triaged".to_string()],
+            labels_to_add: vec![
+                "ready-for-review".to_string(),
+                "rodgers:triaged".to_string(),
+            ],
             labels_to_remove: vec!["needs-information".to_string()],
             applied_needs_information: false,
         }
@@ -74,11 +77,12 @@ impl TransitionSummary {
                 provide the following information:\n\n{}
 
                 We look forward to your response!",
-                issue.author,
-                issue.title,
-                request_message
+                issue.author, issue.title, request_message
             ),
-            labels_to_add: vec!["needs-information".to_string(), "rodgers:triaged".to_string()],
+            labels_to_add: vec![
+                "needs-information".to_string(),
+                "rodgers:triaged".to_string(),
+            ],
             labels_to_remove: vec!["ready-for-review".to_string()],
             applied_needs_information: true,
         }
@@ -95,7 +99,10 @@ impl TransitionSummary {
                 issue.title,
                 summarize_body(&issue.body, 100)
             ),
-            labels_to_add: vec!["ready-for-review".to_string(), "rodgers:triaged".to_string()],
+            labels_to_add: vec![
+                "ready-for-review".to_string(),
+                "rodgers:triaged".to_string(),
+            ],
             labels_to_remove: vec!["needs-information".to_string()],
             applied_needs_information: false,
         }
@@ -109,11 +116,12 @@ impl TransitionSummary {
                 could you please provide additional details:\n\n{}
 
                 This will help us understand the scope and prioritize effectively!",
-                issue.author,
-                issue.title,
-                request_message
+                issue.author, issue.title, request_message
             ),
-            labels_to_add: vec!["needs-information".to_string(), "rodgers:triaged".to_string()],
+            labels_to_add: vec![
+                "needs-information".to_string(),
+                "rodgers:triaged".to_string(),
+            ],
             labels_to_remove: vec!["ready-for-review".to_string()],
             applied_needs_information: true,
         }
@@ -133,7 +141,7 @@ pub fn execute_breakdown(
     BreakdownComment {
         body: format!(
             "Rodgers: Breakdown initiated for issue #{} — \"{}\". \
-            This will be tracked via beads.",
+            This will be tracked via tasks.",
             _issue_number, _title
         ),
         epic_title: _title.to_string(),
@@ -143,7 +151,11 @@ pub fn execute_breakdown(
 
 /// Summarize body content, truncating if needed.
 fn summarize_body(body: &str, max_len: usize) -> String {
-    let cleaned = body.lines().filter(|l| !l.trim().is_empty()).collect::<Vec<_>>().join(" ");
+    let cleaned = body
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
     if cleaned.len() > max_len {
         format!("{}...", &cleaned[..max_len])
     } else {

@@ -473,17 +473,17 @@ impl ReleaseExecutor {
         Ok(())
     }
 
-    /// File a release bead.
+    /// File a release task.
     ///
-    /// Creates a `chore` bead with `rodgers:type=release` to track
+    /// Creates a `chore` task with `rodgers:type=release` to track
     /// the release process.
-    pub fn file_release_bead(
+    pub fn file_release_task(
         &self,
         version: &str,
         source: &str,
         pr_count: usize,
-    ) -> crate::beads::controller::CreateChildRequest {
-        crate::beads::controller::CreateChildRequest {
+    ) -> crate::backlog::controller::CreateChildRequest {
+        crate::backlog::controller::CreateChildRequest {
             title: format!("Release {}", version),
             description: Some(format!(
                 r#"Plan: plans/release-management-plan.md
@@ -498,7 +498,7 @@ WHAT TO DO
 2. Verify the git tag was created
 3. Verify the GitHub Release was created
 4. Confirm CI passes on the release branch
-5. Close this bead when release is verified
+5. Close this task when release is verified
 
 NOTE: Rodgers created the branch, tag, and GitHub Release.
 Artifact builds are handled by CI, not Rodgers."#,
@@ -506,7 +506,7 @@ Artifact builds are handled by CI, not Rodgers."#,
                 source = source,
                 pr_count = pr_count,
             )),
-            bead_type: Some("chore".to_string()),
+            task_type: Some("chore".to_string()),
             rodgers_type: Some("release".to_string()),
             rodgers_labels: Some("rodgers:type=release".to_string()),
             acceptance_criteria: Some(format!(
@@ -611,7 +611,7 @@ mod tests {
     }
 
     #[test]
-    fn test_file_release_bead() {
+    fn test_file_release_task() {
         let github = GitHubClient::new(
             "owner",
             "repo",
@@ -619,13 +619,13 @@ mod tests {
         );
         let executor = ReleaseExecutor::new(github, true);
 
-        let request = executor.file_release_bead("1.2.3", "main", 5);
+        let request = executor.file_release_task("1.2.3", "main", 5);
 
         assert_eq!(request.title, "Release 1.2.3");
         assert!(request.description.as_deref().unwrap_or("").contains("1.2.3"));
         assert!(request.description.as_deref().unwrap_or("").contains("main"));
         assert!(request.description.as_deref().unwrap_or("").contains("5"));
-        assert_eq!(request.bead_type, Some("chore".to_string()));
+        assert_eq!(request.task_type, Some("chore".to_string()));
         assert_eq!(
             request.rodgers_type,
             Some("release".to_string())

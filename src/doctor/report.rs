@@ -69,8 +69,8 @@ impl ReportGenerator {
                     if let Some(ref issue_url) = event.github_issue_url {
                         output.push_str(&format!("     Issue: {}\n", issue_url));
                     }
-                    if let Some(ref bead_id) = event.bead_id {
-                        output.push_str(&format!("     Bead: {}\n", bead_id));
+                    if let Some(ref task_id) = event.task_id {
+                        output.push_str(&format!("     Task: {}\n", task_id));
                     }
                 }
             }
@@ -173,7 +173,7 @@ struct Summary {
 #[cfg(test)]
 mod tests {
     use super::super::{
-        CATEGORY_AUTH, CATEGORY_BEADS, CATEGORY_CONFIG, CATEGORY_DRIFT, CATEGORY_PLANS,
+        CATEGORY_AUTH, CATEGORY_BACKLOG, CATEGORY_CONFIG, CATEGORY_DRIFT, CATEGORY_PLANS,
         CATEGORY_REPO, CategoryResult, CategoryStatus, DoctorResult,
     };
     use super::*;
@@ -206,7 +206,7 @@ mod tests {
             categories: vec![
                 CategoryResult::pass(CATEGORY_CONFIG),
                 CategoryResult::pass(CATEGORY_AUTH),
-                CategoryResult::pass(CATEGORY_BEADS),
+                CategoryResult::pass(CATEGORY_BACKLOG),
                 CategoryResult::pass(CATEGORY_PLANS),
                 CategoryResult::pass(CATEGORY_REPO),
                 CategoryResult::pass(CATEGORY_DRIFT),

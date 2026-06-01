@@ -289,10 +289,7 @@ impl GitClient {
         if has_breaking {
             // Breaking change → bump major, reset minor and patch
             (current_major + 1, 0, 0)
-        } else if commit_types
-            .iter()
-            .any(|t| *t == crate::release::changelog::ConventionalCommitType::Feat)
-        {
+        } else if commit_types.contains(&crate::release::changelog::ConventionalCommitType::Feat) {
             // Feature → bump minor, reset patch
             (current_major, current_minor + 1, 0)
         } else {
@@ -342,7 +339,7 @@ impl GitClient {
             .current_dir(&self.repo_path)
             .args(args)
             .output()
-            .map_err(|e| GitError::Io(e))?;
+            .map_err(GitError::Io)?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();

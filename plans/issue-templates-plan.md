@@ -27,7 +27,7 @@ On first run (or when configured for a new repo), Rodgers checks for the presenc
 
 If all three are present: Rodgers adopts them as the project's canonical templates.
 
-If some or all are missing: Rodgers generates suggested templates (see Default Templates below) and files a bead: "Project is missing issue templates — suggested templates available, review and commit."
+If some or all are missing: Rodgers generates suggested templates (see Default Templates below) and files a task: "Project is missing issue templates — suggested templates available, review and commit."
 
 Rodgers does not auto-commit suggested templates to the repo. A human reviews and commits them first. This is intentional — template choices are a project governance decision.
 
@@ -197,7 +197,7 @@ Rodgers **discovers** templates on startup by listing `.github/ISSUE_TEMPLATE/`.
 
 If a project later adds or modifies a template, Rodgers detects the change on its next run and updates its completeness anchors accordingly.
 
-A bead is filed whenever Rodgers detects a template change: type=`infra`, description: "Template(s) in .github/ISSUE_TEMPLATE/ changed — completeness anchors updated. Please review that the new template fields still cover all required information per plans/feature-bug-plan.md and plans/question-routing-plan.md."
+A task is filed whenever Rodgers detects a template change: type=`infra`, description: "Template(s) in .github/ISSUE_TEMPLATE/ changed — completeness anchors updated. Please review that the new template fields still cover all required information per plans/feature-bug-plan.md and plans/question-routing-plan.md."
 
 ---
 
@@ -217,7 +217,7 @@ A bead is filed whenever Rodgers detects a template change: type=`infra`, descri
 
 ```yaml
 templates:
-  auto_suggest: true          # File a bead with suggested tempaltes if none found (default: true)
+  auto_suggest: true          # File a task with suggested tempaltes if none found (default: true)
   require_use: false         # If true, non-conforming issues are auto-closed (not recommended)
   reformat_consent: true     # Always ask requestor before reformatting (default: true, do not change)
 ```
@@ -227,7 +227,7 @@ templates:
 ## Acceptance Criteria
 
 - [ ] CRIT-1: On startup, Rodgers detects whether `.github/ISSUE_TEMPLATE/` contains bug_report.md, feature_request.md, and question.md
-- [ ] CRIT-2: When a project has no templates and `auto_suggest: true`, Rodgers files a bead with suggested default templates within one triage run
+- [ ] CRIT-2: When a project has no templates and `auto_suggest: true`, Rodgers files a task with suggested default templates within one triage run
 - [ ] CRIT-3: A non-conforming issue (filed without template marker) receives a reformat offer comment within one triage run
 - [ ] CRIT-4: Rodgers never reformats an issue without the requestor's explicit approval
 - [ ] CRIT-5: When a requestor approves a reformat, Rodgers posts the reformatted content as a comment for requestor review before applying it

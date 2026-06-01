@@ -4,7 +4,7 @@
 //! 1. Creates a branch `backport/{sha_short}/{target_branch}`
 //! 2. Cherry-picks the commit
 //! 3. Creates a PR targeting the release branch
-//! 4. On conflict: files a conflict bead and alerts
+//! 4. On conflict: files a conflict task and alerts
 //!
 //! ## Branch Naming
 //!
@@ -49,8 +49,8 @@ pub enum BackportConflictError {
 /// Result of executing a backport.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackportResult {
-    /// Bead ID for this backport.
-    pub bead_id: String,
+    /// Task ID for this backport.
+    pub task_id: String,
     /// Branch name created.
     pub branch_name: String,
     /// PR number (if created).
@@ -94,13 +94,16 @@ pub struct BackportExecutor {
     /// GitHub client (for API-based operations).
     github: GitHubClient,
     /// Token for pushing git branches.
-    push_token: Option<String>,
+    _push_token: Option<String>,
 }
 
 impl BackportExecutor {
     /// Create a new executor.
     pub fn new(github: GitHubClient, push_token: Option<String>) -> Self {
-        Self { github, push_token }
+        Self {
+            github,
+            _push_token: push_token,
+        }
     }
 
     /// Generate the backport branch name.
@@ -171,7 +174,7 @@ impl BackportExecutor {
         };
 
         Ok(BackportResult {
-            bead_id: String::new(), // Set by caller
+            task_id: String::new(), // Set by caller
             branch_name,
             pr_number,
             pr_url: None,
@@ -181,9 +184,18 @@ impl BackportExecutor {
     }
 
     /// Create a git branch from a base branch.
-    async fn create_branch(&mut self, new_branch: &str, base_branch: &str) -> Result<(), BackportExecutionError> {
+    async fn create_branch(
+        &mut self,
+        new_branch: &str,
+        base_branch: &str,
+    ) -> Result<(), BackportExecutionError> {
         let output = Command::new("git")
-            .args(["checkout", "-b", new_branch, &format!("origin/{}", base_branch)])
+            .args([
+                "checkout",
+                "-b",
+                new_branch,
+                &format!("origin/{}", base_branch),
+            ])
             .output()
             .map_err(|e| BackportExecutionError::BranchCreationFailed(e.to_string()))?;
 
@@ -196,7 +208,9 @@ impl BackportExecutor {
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(BackportExecutionError::BranchCreationFailed(stderr.to_string()));
+                return Err(BackportExecutionError::BranchCreationFailed(
+                    stderr.to_string(),
+                ));
             }
         }
 
@@ -242,11 +256,12 @@ impl BackportExecutor {
         title: &str,
         body: Option<&str>,
     ) -> ExecutionResult<PullRequest> {
-        use crate::github::models::CreateIssueRequest;
-
         // Use the GitHub API's PR creation via issues endpoint
         let pr_body = body.map(|s| s.to_string()).unwrap_or_else(|| {
-            format!("Backport of commit to {}.\n\nPlease review and merge.", base)
+            format!(
+                "Backport of commit to {}.\n\nPlease review and merge.",
+                base
+            )
         });
 
         // GitHub's PR creation endpoint - construct URL directly since repo_url is private
@@ -272,7 +287,10 @@ impl BackportExecutor {
 
         match response {
             Ok(resp) if resp.status().is_success() => {
-                let pr: PullRequest = resp.json().await.map_err(|e| BackportExecutionError::PrCreationFailed(e.to_string()))?;
+                let pr: PullRequest = resp
+                    .json()
+                    .await
+                    .map_err(|e| BackportExecutionError::PrCreationFailed(e.to_string()))?;
                 Ok(pr)
             }
             Ok(resp) => {
@@ -288,10 +306,10 @@ impl BackportExecutor {
         }
     }
 
-    /// File a conflict-resolution bead.
+    /// File a conflict-resolution task.
     ///
-    /// Returns the bead title and description for filing via BeadController.
-    pub fn conflict_bead_details(
+    /// Returns the task title and description for filing via TaskController.
+    pub fn conflict_task_details(
         &self,
         commit_sha: &str,
         target_branch: &str,
@@ -335,8 +353,8 @@ NOTES
         (title, description)
     }
 
-    /// Generate a unique bead ID (12 chars, URL-safe).
-    pub fn generate_bead_id() -> String {
+    /// Generate a unique task ID (12 chars, URL-safe).
+    pub fn generate_task_id() -> String {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(1);
         let counter = COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -357,6 +375,7 @@ NOTES
 }
 
 /// Result of a cherry-pick operation.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CherryPickResult {
     /// Cherry-pick succeeded cleanly.
@@ -376,6 +395,7 @@ impl CherryPickResult {
         matches!(self, CherryPickResult::Success)
     }
 
+    #[allow(dead_code)]
     fn error(&self) -> Option<&'static str> {
         match self {
             CherryPickResult::Success | CherryPickResult::Conflict => None,
@@ -413,28 +433,32 @@ mod tests {
     }
 
     #[test]
-    fn test_conflict_bead_details() {
+    fn test_conflict_task_details() {
         let executor = BackportExecutor::new(
-            GitHubClient::new("owner", "repo", crate::github::auth::GitHubAuth::new_with_default_api("ghp_test")),
+            GitHubClient::new(
+                "owner",
+                "repo",
+                crate::github::auth::GitHubAuth::new_with_default_api("ghp_test"),
+            ),
             None,
         );
 
-        let (title, description) = executor.conflict_bead_details(
+        let (title, description) = executor.conflict_task_details(
             "abc123def456789",
             "release/1.x",
             Some("Conflicts in src/login.rs and tests/test_auth.py"),
         );
 
-        assert!(title.contains("resolve conflicts"));
+        assert!(title.to_lowercase().contains("resolve conflicts"));
         assert!(description.contains("abc123def456789"));
         assert!(description.contains("release/1.x"));
         assert!(description.contains("src/login.rs"));
     }
 
     #[test]
-    fn test_generate_bead_id() {
-        let id1 = BackportExecutor::generate_bead_id();
-        let id2 = BackportExecutor::generate_bead_id();
+    fn test_generate_task_id() {
+        let id1 = BackportExecutor::generate_task_id();
+        let id2 = BackportExecutor::generate_task_id();
         assert_ne!(id1, id2);
         // Format is {ts_hex}-{counter_hex} with zero-padding to fixed widths
         // Each hex component is 5 chars (masked to 20 bits), with a dash separator

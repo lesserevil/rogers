@@ -123,7 +123,7 @@ fn apply_env_overrides(config: ReleaseConfig) -> ReleaseConfig {
     // Override voting_window_days
     if result.voting_window_days.is_none() {
         if let Ok(val) = std::env::var("ROGERS_RELEASE_VOTING_WINDOW_DAYS") {
-            if let Ok(days) = val.parse::<u32>() {
+            if let Ok(days) = val.parse::<i32>() {
                 result.voting_window_days = Some(days);
             }
         }
@@ -132,7 +132,7 @@ fn apply_env_overrides(config: ReleaseConfig) -> ReleaseConfig {
     // Override stale_threshold_days
     if result.stale_threshold_days.is_none() {
         if let Ok(val) = std::env::var("ROGERS_RELEASE_STALE_THRESHOLD_DAYS") {
-            if let Ok(days) = val.parse::<u32>() {
+            if let Ok(days) = val.parse::<i32>() {
                 result.stale_threshold_days = Some(days);
             }
         }

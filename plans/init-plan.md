@@ -15,7 +15,7 @@ Run with: `rogers init --repo owner/repo [--fix]`
 
 ## What Rodgers Needs
 
-Before Rodgers can manage a project responsibly, certain prerequisites must be in place. Rodgers should not operate on a project that has open permissions for random contributors to modify labels, create branches freely, or bypass required reviewers. It also needs issue templates to route incoming reports, GitHub Actions for releases, the correct label set, and if the project has an `AGENTS.md` or similar file, Rodgers must read it and reconcile any contradictions with its own bead methodology before operating.
+Before Rodgers can manage a project responsibly, certain prerequisites must be in place. Rodgers should not operate on a project that has open permissions for random contributors to modify labels, create branches freely, or bypass required reviewers. It also needs issue templates to route incoming reports, GitHub Actions for releases, the correct label set, and if the project has an `AGENTS.md` or similar file, Rodgers must read it and reconcile any contradictions with its own task methodology before operating.
 
 `rogers init` verifies all of these. It does not modify GitHub repository settings that require admin privileges — it audits and reports, and with `--fix`, it attempts to apply only the changes that are available to the authenticated user.
 
@@ -104,7 +104,7 @@ If no release workflow is found, Rodgers recommends a template workflow in ` rog
 **Fixability:** info
 **Check:** Report the set of workflows present and whether CI runs on PRs to main.
 
-**Why it matters:** Rodgers creates branches and files beads but does not run CI directly. If there is no CI on PRs, the project cannot validate Rodgers' own work before it merges.
+**Why it matters:** Rodgers creates branches and files tasks but does not run CI directly. If there is no CI on PRs, the project cannot validate Rodgers' own work before it merges.
 
 **What `rogers init` reports:**
 - `warn` → No CI workflow found for PRs targeting main
@@ -151,18 +151,18 @@ With `--fix`, Rodgers creates the category via the GitHub API.
 
 **What `rogers init` does when a file is found:**
 1. Rodgers reads and parses the file
-2. Rodgers compares the bead/issue format instructions found against Rodgers' own bead methodology (built-in types, `rodgers:type` metadata, plan file references, acceptance criteria format)
+2. Rodgers compares the task/issue format instructions found against Rodgers' own task methodology (built-in types, `rodgers:type` metadata, plan file references, acceptance criteria format)
 3. Rodgers surfaces any **contradictions** as `blocker` findings — contradictions mean Rodgers' default behavior would conflict with the project's stated conventions, and Rodgers cannot safely operate until this is resolved
 4. Rodgers surfaces any **gaps** (project describes a workflow Rodgers has no plan for) as `warn` findings
 
 **Contradiction examples:**
-- Project's AGENTS.md requires `--type=issue-tracker` but Rodgers uses only built-in bd types → blocker
-- Project requires a `priority` field in bead descriptions but Rodgers doesn't populate it by default → blocker
-- Project requires all beads to reference a `milestone` tag but Rodgers' `milestone` bead type is optional → warn
+- Project's AGENTS.md requires `--type=issue-tracker` but Rodgers uses only built-in backlog types → blocker
+- Project requires a `priority` field in task descriptions but Rodgers doesn't populate it by default → blocker
+- Project requires all tasks to reference a `milestone` tag but Rodgers' `milestone` task type is optional → warn
 - Project requires PR titles to follow a specific format but Rodgers doesn't control PR titles → warn
 
 **What `rogers init` reports:**
-- `blocker` → A contradiction exists between agent instructions and Rodgers' bead methodology that would cause incorrect behavior
+- `blocker` → A contradiction exists between agent instructions and Rodgers' task methodology that would cause incorrect behavior
 - `warn` → Agent instructions found with gaps Rodgers cannot cover (no plan for the described workflow)
 - `info` → Agent instructions found and fully compatible with Rodgers' methodology
 

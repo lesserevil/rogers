@@ -10,6 +10,6 @@
 pub mod client;
 
 pub use client::{
-    BranchAlreadyExists, GitClient, GitError, TagAlreadyExists, create_annotated_tag,
-    create_release_branch, push_branch_and_tag,
+    create_annotated_tag, create_release_branch, push_branch_and_tag, BranchAlreadyExists,
+    GitClient, GitError, TagAlreadyExists,
 };

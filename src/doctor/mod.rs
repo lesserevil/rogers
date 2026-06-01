@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 /// Category name identifiers
 pub const CATEGORY_CONFIG: &str = "config";
 pub const CATEGORY_AUTH: &str = "auth";
-pub const CATEGORY_BEADS: &str = "beads";
+pub const CATEGORY_BACKLOG: &str = "backlog";
 pub const CATEGORY_PLANS: &str = "plans";
 pub const CATEGORY_REPO: &str = "repo";
 pub const CATEGORY_DRIFT: &str = "drift";
@@ -26,7 +26,7 @@ pub const CATEGORY_DRIFT: &str = "drift";
 pub const ALL_CATEGORIES: &[&str] = &[
     CATEGORY_CONFIG,
     CATEGORY_AUTH,
-    CATEGORY_BEADS,
+    CATEGORY_BACKLOG,
     CATEGORY_PLANS,
     CATEGORY_REPO,
     CATEGORY_DRIFT,
@@ -125,7 +125,7 @@ impl CategoryResult {
     }
 }
 
-/// Drift event representing state divergence between GitHub and beads
+/// Drift event representing state divergence between GitHub and tasks
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DriftEvent {
     /// Drift event type
@@ -134,8 +134,8 @@ pub struct DriftEvent {
     pub description: String,
     /// GitHub issue URL if applicable
     pub github_issue_url: Option<String>,
-    /// Bead ID if applicable
-    pub bead_id: Option<String>,
+    /// Task ID if applicable
+    pub task_id: Option<String>,
     /// Severity level
     pub severity: DriftSeverity,
 }
@@ -243,7 +243,7 @@ mod tests {
             categories: vec![
                 CategoryResult::pass(CATEGORY_CONFIG),
                 CategoryResult::pass(CATEGORY_AUTH),
-                CategoryResult::pass(CATEGORY_BEADS),
+                CategoryResult::pass(CATEGORY_BACKLOG),
                 CategoryResult::pass(CATEGORY_PLANS),
                 CategoryResult::pass(CATEGORY_REPO),
                 CategoryResult::pass(CATEGORY_DRIFT),
@@ -280,10 +280,10 @@ mod tests {
                 CategoryResult::pass(CATEGORY_AUTH),
             ],
             drift_events: vec![DriftEvent {
-                event_type: "closed_bead_open_issue".into(),
-                description: "Bead #b-001 is closed but linked GitHub issue #123 is open".into(),
+                event_type: "closed_task_open_issue".into(),
+                description: "Task #b-001 is closed but linked GitHub issue #123 is open".into(),
                 github_issue_url: Some("https://github.com/owner/repo/issues/123".into()),
-                bead_id: Some("b-001".into()),
+                task_id: Some("b-001".into()),
                 severity: DriftSeverity::Warning,
             }],
             is_healthy: false,
@@ -314,7 +314,7 @@ mod tests {
             categories: vec![
                 CategoryResult::pass(CATEGORY_CONFIG),
                 CategoryResult::pass(CATEGORY_AUTH),
-                CategoryResult::skipped(CATEGORY_BEADS),
+                CategoryResult::skipped(CATEGORY_BACKLOG),
                 CategoryResult::skipped(CATEGORY_PLANS),
                 CategoryResult::skipped(CATEGORY_REPO),
                 CategoryResult::skipped(CATEGORY_DRIFT),
@@ -336,7 +336,7 @@ mod tests {
             categories: vec![
                 CategoryResult::fail(CATEGORY_CONFIG, "config.yaml not found at /path"),
                 CategoryResult::skipped(CATEGORY_AUTH),
-                CategoryResult::skipped(CATEGORY_BEADS),
+                CategoryResult::skipped(CATEGORY_BACKLOG),
                 CategoryResult::skipped(CATEGORY_PLANS),
                 CategoryResult::skipped(CATEGORY_REPO),
                 CategoryResult::skipped(CATEGORY_DRIFT),
@@ -368,7 +368,7 @@ mod tests {
             categories: vec![
                 CategoryResult::pass(CATEGORY_CONFIG),
                 CategoryResult::fail(CATEGORY_AUTH, "GitHub token is invalid (HTTP 401)"),
-                CategoryResult::skipped(CATEGORY_BEADS),
+                CategoryResult::skipped(CATEGORY_BACKLOG),
                 CategoryResult::skipped(CATEGORY_PLANS),
                 CategoryResult::skipped(CATEGORY_REPO),
                 CategoryResult::skipped(CATEGORY_DRIFT),
@@ -397,18 +397,18 @@ mod tests {
     fn test_drift_detected_exits_1_events_listed() {
         let drift_events = vec![
             DriftEvent {
-                event_type: "closed_bead_open_issue".into(),
-                description: "Bead #b-001 is closed but linked GitHub issue #123 is open".into(),
+                event_type: "closed_task_open_issue".into(),
+                description: "Task #b-001 is closed but linked GitHub issue #123 is open".into(),
                 github_issue_url: Some("https://github.com/owner/repo/issues/123".into()),
-                bead_id: Some("b-001".into()),
+                task_id: Some("b-001".into()),
                 severity: DriftSeverity::Error,
             },
             DriftEvent {
-                event_type: "in_progress_bead_closed_issue".into(),
-                description: "Bead #b-002 is in-progress but linked GitHub issue #456 is closed"
+                event_type: "in_progress_task_closed_issue".into(),
+                description: "Task #b-002 is in-progress but linked GitHub issue #456 is closed"
                     .into(),
                 github_issue_url: Some("https://github.com/owner/repo/issues/456".into()),
-                bead_id: Some("b-002".into()),
+                task_id: Some("b-002".into()),
                 severity: DriftSeverity::Warning,
             },
         ];
@@ -417,7 +417,7 @@ mod tests {
             categories: vec![
                 CategoryResult::pass(CATEGORY_CONFIG),
                 CategoryResult::pass(CATEGORY_AUTH),
-                CategoryResult::pass(CATEGORY_BEADS),
+                CategoryResult::pass(CATEGORY_BACKLOG),
                 CategoryResult::pass(CATEGORY_PLANS),
                 CategoryResult::pass(CATEGORY_REPO),
                 CategoryResult::warn(CATEGORY_DRIFT, vec!["2 drift events found".to_string()]),
@@ -441,7 +441,7 @@ mod tests {
                 CategoryResult::fail(CATEGORY_CONFIG, "Missing required keys: github.owner"),
                 CategoryResult::fail(CATEGORY_AUTH, "Cannot access repository (HTTP 404)"),
                 CategoryResult::fail(CATEGORY_PLANS, "One or more canonical plan files not found"),
-                CategoryResult::pass(CATEGORY_BEADS),
+                CategoryResult::pass(CATEGORY_BACKLOG),
                 CategoryResult::pass(CATEGORY_REPO),
                 CategoryResult::pass(CATEGORY_DRIFT),
             ],
@@ -487,16 +487,16 @@ mod tests {
             categories: vec![
                 CategoryResult::fail(CATEGORY_CONFIG, "config.yaml not valid"),
                 CategoryResult::fail(CATEGORY_AUTH, "Token expired"),
-                CategoryResult::pass(CATEGORY_BEADS),
+                CategoryResult::pass(CATEGORY_BACKLOG),
                 CategoryResult::pass(CATEGORY_PLANS),
                 CategoryResult::pass(CATEGORY_REPO),
                 CategoryResult::warn(CATEGORY_DRIFT, vec!["1 drift event found".to_string()]),
             ],
             drift_events: vec![DriftEvent {
-                event_type: "orphan_bead".into(),
-                description: "Bead #b-099 has no github_issue_url".into(),
+                event_type: "orphan_task".into(),
+                description: "Task #b-099 has no github_issue_url".into(),
                 github_issue_url: None,
-                bead_id: Some("b-099".into()),
+                task_id: Some("b-099".into()),
                 severity: DriftSeverity::Warning,
             }],
             is_healthy: false,

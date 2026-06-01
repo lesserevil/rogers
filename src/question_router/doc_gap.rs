@@ -1,12 +1,12 @@
 //! Documentation gap filing for question routing.
 //!
-//! Creates chore beads to track documentation gaps identified from question issues.
+//! Creates chore tasks to track documentation gaps identified from question issues.
 //! Filed when neither documentation nor code search finds an answer.
 //!
 //! Plan: plans/question-routing-plan.md §Step 3b
 
-use crate::beads::controller::BeadController;
-use crate::beads::schema::bead_type;
+use crate::backlog::controller::TaskController;
+use crate::backlog::schema::task_type;
 use crate::error::Result;
 use crate::github::models::Issue;
 use serde::{Deserialize, Serialize};
@@ -14,19 +14,19 @@ use serde::{Deserialize, Serialize};
 /// Doc gap filing result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocGapResult {
-    /// The bead ID that was created.
-    pub bead_id: String,
+    /// The task ID that was created.
+    pub task_id: String,
     /// The linked GitHub issue URL.
     pub github_issue_url: String,
     /// Accepted doc link pattern (for sync verification).
     pub expected_doc_pattern: String,
 }
 
-/// Doc gap filer for creating documentation gap beads.
+/// Doc gap filer for creating documentation gap tasks.
 #[derive(Debug, Clone)]
 pub struct DocGapFiler {
-    /// Bead controller for creating beads.
-    bead_controller: BeadController,
+    /// Task controller for creating tasks.
+    task_controller: TaskController,
     /// Repository owner.
     owner: String,
     /// Repository name.
@@ -36,20 +36,20 @@ pub struct DocGapFiler {
 impl DocGapFiler {
     /// Create a new doc gap filer.
     pub fn new(
-        bead_controller: BeadController,
+        task_controller: TaskController,
         owner: impl Into<String>,
         repo: impl Into<String>,
     ) -> Self {
         Self {
-            bead_controller,
+            task_controller,
             owner: owner.into(),
             repo: repo.into(),
         }
     }
 
-    /// File a documentation gap bead for a question issue.
+    /// File a documentation gap task for a question issue.
     ///
-    /// Creates a chore bead with `rodgers:type=docs` metadata.
+    /// Creates a chore task with `rodgers:type=docs` metadata.
     pub async fn file_doc_gap(&self, request: DocGapRequest) -> Result<DocGapResult> {
         let github_issue_url = format!(
             "https://github.com/{}/{}/issues/{}",
@@ -63,15 +63,15 @@ impl DocGapFiler {
 The documentation should:
 1. Answer the question at: {}
 2. Be placed in the most relevant existing doc file (or new section)
-3. Link to this bead from the GitHub issue when complete
+3. Link to this task from the GitHub issue when complete
 
 File pattern: docs/**/*.md
 Must contain a section that answers the question above."#,
             request.question_title, github_issue_url
         );
 
-        // Create the bead
-        let create_request = crate::beads::controller::CreateEpicRequest {
+        // Create the task
+        let create_request = crate::backlog::controller::CreateEpicRequest {
             title: format!("Answer question: {}", request.question_title),
             description: Some(format!(
                 "{}\n\n---\n\n**Full Question from GitHub Issue #{}**\n\n{}\n\n---\n\n**Context from original issue:**\n{}",
@@ -80,7 +80,7 @@ Must contain a section that answers the question above."#,
                 request.full_question.clone(),
                 request.issue_body.clone().unwrap_or_default()
             )),
-            bead_type: Some(bead_type::CHORE.to_string()),
+            task_type: Some(task_type::CHORE.to_string()),
             github_issue_url: Some(github_issue_url.clone()),
             rodgers_type: Some("docs".to_string()),
             rodgers_labels: Some("needs-documentation".to_string()),
@@ -89,17 +89,17 @@ Must contain a section that answers the question above."#,
             priority: Some(request.priority.unwrap_or(3)), // Default medium priority
         };
 
-        let bead = self.bead_controller.file_epic(create_request).await?;
+        let task = self.task_controller.file_epic(create_request).await?;
 
         tracing::info!(
-            "Filed doc gap bead {} for issue #{}: {}",
-            bead.id,
+            "Filed doc gap task {} for issue #{}: {}",
+            task.id,
             request.issue_number,
             request.question_title
         );
 
         Ok(DocGapResult {
-            bead_id: bead.id,
+            task_id: task.id,
             github_issue_url,
             expected_doc_pattern: "docs/".to_string(),
         })
@@ -107,7 +107,7 @@ Must contain a section that answers the question above."#,
 
     /// File a doc gap for multiple questions in one issue.
     ///
-    /// Creates separate beads for each question.
+    /// Creates separate tasks for each question.
     pub async fn file_multiple_doc_gaps(
         &self,
         requests: Vec<DocGapRequest>,
@@ -124,7 +124,7 @@ Must contain a section that answers the question above."#,
                         first_issue_number,
                         e
                     );
-                    // Continue with other beads even if one fails
+                    // Continue with other tasks even if one fails
                 }
             }
         }
@@ -132,7 +132,7 @@ Must contain a section that answers the question above."#,
         Ok(results)
     }
 
-    /// Check if a doc gap bead already exists for an issue.
+    /// Check if a doc gap task already exists for an issue.
     pub async fn doc_gap_exists_for_issue(&self, issue_number: i32) -> Result<bool> {
         let github_issue_url = format!(
             "https://github.com/{}/{}/issues/{}",
@@ -140,15 +140,15 @@ Must contain a section that answers the question above."#,
         );
 
         let epic = self
-            .bead_controller
+            .task_controller
             .get_epic_by_issue(&github_issue_url)
             .await?;
         Ok(epic.is_some())
     }
 
-    /// Get pending doc gap beads that need documentation.
+    /// Get pending doc gap tasks that need documentation.
     pub async fn get_pending_doc_gaps(&self) -> Result<Vec<PendingDocGap>> {
-        // This would query for beads with rodgers:type=docs and status=open
+        // This would query for tasks with rodgers:type=docs and status=open
         // For now, return empty - this would be implemented with the actual DB query
         Ok(Vec::new())
     }
@@ -200,11 +200,11 @@ impl DocGapRequest {
 /// Pending documentation gap information.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingDocGap {
-    /// Bead ID.
-    pub bead_id: String,
+    /// Task ID.
+    pub task_id: String,
     /// Linked GitHub issue URL.
     pub github_issue_url: Option<String>,
-    /// Bead title.
+    /// Task title.
     pub title: String,
     /// Status.
     pub status: String,
@@ -231,11 +231,11 @@ fn extract_question_title(title: &str) -> String {
 }
 
 /// Generate the acknowledgment comment for a doc gap filing.
-pub fn generate_doc_gap_comment(requestor: &str, bead_id: &str) -> String {
+pub fn generate_doc_gap_comment(requestor: &str, task_id: &str) -> String {
     format!(
         r#"Hi @{requestor}, thanks for the question!
 
-We do not currently have documentation that answers this. We have opened internal task {bead_id} to add an answer to our documentation — it will be linked here when complete.
+We do not currently have documentation that answers this. We have opened internal task {task_id} to add an answer to our documentation — it will be linked here when complete.
 
 If you have the answer or can help add documentation, we welcome contributions!"#
     )
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn test_extract_question_title_truncation() {
-        let long_title = "This is a very long question title that is definitely longer than eighty characters and should be truncated to fit the bead title requirements";
+        let long_title = "This is a very long question title that is definitely longer than eighty characters and should be truncated to fit the task title requirements";
         let extracted = extract_question_title(long_title);
         assert!(extracted.len() <= 80);
         assert!(extracted.ends_with("..."));
